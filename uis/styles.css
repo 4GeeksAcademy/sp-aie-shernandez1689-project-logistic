@@ -9,3 +9,39 @@
 .success-input {
   border-color: #16a34a;
 }
+
+.error-message,
+.warning-message,
+.success-message {
+  margin-top: 0.5rem;
+  border-radius: 0.75rem;
+  border: 1px solid transparent;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+}
+
+.error-message {
+  border-color: #fecaca;
+  background-color: #fef2f2;
+  color: #b91c1c;
+}
+
+.warning-message {
+  border-color: #fde68a;
+  background-color: #fffbeb;
+  color: #b45309;
+}
+
+.success-message {
+  border-color: #bbf7d0;
+  background-color: #f0fdf4;
+  color: #166534;
+}
+
+.error-message:empty,
+.warning-message:empty,
+.success-message:empty {
+  display: none;
+}

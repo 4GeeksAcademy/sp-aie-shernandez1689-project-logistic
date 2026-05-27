@@ -28,7 +28,7 @@
                 class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
                 placeholder="Example: Nova Commerce"
               />
-              <p id="companyNameError" class="mt-1 text-sm text-red-600"></p>
+              <p id="companyNameError" class="error-message" role="alert"></p>
             </div>
 
             <div>
@@ -41,7 +41,7 @@
                 class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
                 placeholder="Example: Ana Perez"
               />
-              <p id="contactPersonError" class="mt-1 text-sm text-red-600"></p>
+              <p id="contactPersonError" class="error-message" role="alert"></p>
             </div>
 
             <div class="grid gap-4 md:grid-cols-2 md:gap-5">
@@ -55,7 +55,7 @@
                   class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
                   placeholder="name@company.com"
                 />
-                <p id="corporateEmailError" class="mt-1 text-sm text-red-600"></p>
+                <p id="corporateEmailError" class="error-message" role="alert"></p>
               </div>
 
               <div>
@@ -68,7 +68,7 @@
                   class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
                   placeholder="+1 213 555 0147"
                 />
-                <p id="phoneError" class="mt-1 text-sm text-red-600"></p>
+                <p id="phoneError" class="error-message" role="alert"></p>
               </div>
             </div>
 
@@ -81,7 +81,7 @@
                 class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
                 placeholder="https://company.com"
               />
-              <p id="companyWebsiteError" class="mt-1 text-sm text-red-600"></p>
+              <p id="companyWebsiteError" class="error-message" role="alert"></p>
             </div>
           </fieldset>
 
@@ -102,7 +102,7 @@
                   <option value="both">Both</option>
                   <option value="other">Other</option>
                 </select>
-                <p id="operatingCountryError" class="mt-1 text-sm text-red-600"></p>
+                <p id="operatingCountryError" class="error-message" role="alert"></p>
               </div>
 
               <div>
@@ -120,7 +120,7 @@
                   <option value="food">Food</option>
                   <option value="other">Other</option>
                 </select>
-                <p id="productTypeError" class="mt-1 text-sm text-red-600"></p>
+                <p id="productTypeError" class="error-message" role="alert"></p>
               </div>
             </div>
 
@@ -139,8 +139,8 @@
                 <option value="2000+">2000+</option>
                 <option value="not-sure">Not sure</option>
               </select>
-              <p id="monthlyVolumeError" class="mt-1 text-sm text-red-600"></p>
-              <p id="volumeWarning" class="mt-1 text-sm text-amber-700"></p>
+              <p id="monthlyVolumeError" class="error-message" role="alert"></p>
+              <p id="volumeWarning" class="warning-message" role="status" aria-live="polite"></p>
             </div>
           </fieldset>
 
@@ -160,7 +160,7 @@
                 <label for="serviceReverse">Reverse logistics</label>
               </div>
             </div>
-            <p id="servicesInterestError" class="mt-1 text-sm text-red-600"></p>
+            <p id="servicesInterestError" class="error-message" role="alert"></p>
           </fieldset>
 
           <fieldset class="space-y-2 rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:p-4">
@@ -179,7 +179,7 @@
                 <label for="current3plEvaluating">Evaluating options</label>
               </div>
             </div>
-            <p id="current3plError" class="mt-1 text-sm text-red-600"></p>
+            <p id="current3plError" class="error-message" role="alert"></p>
           </fieldset>
 
           <fieldset class="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:p-4">
@@ -197,7 +197,7 @@
                 class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
                 placeholder="Tell us about your operation and logistics needs"
               ></textarea>
-              <p id="commentsError" class="mt-1 text-sm text-red-600"></p>
+              <p id="commentsError" class="error-message" role="alert"></p>
             </div>
 
             <div>
@@ -205,7 +205,7 @@
                 <input id="privacyPolicy" name="privacyPolicy" type="checkbox" required class="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-2 focus:ring-cyan-500/40" />
                 <label for="privacyPolicy" class="text-sm">I accept the privacy policy</label>
               </div>
-              <p id="privacyPolicyError" class="mt-1 text-sm text-red-600"></p>
+              <p id="privacyPolicyError" class="error-message" role="alert"></p>
             </div>
           </fieldset>
 
@@ -222,7 +222,7 @@
             >
               Clear form
             </button>
-            <p id="formSuccess" class="text-sm font-medium text-green-700"></p>
+            <p id="formSuccess" class="success-message" role="status" aria-live="polite"></p>
           </div>
         </form>
       </section>

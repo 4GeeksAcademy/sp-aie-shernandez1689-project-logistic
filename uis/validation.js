@@ -2,6 +2,7 @@ const form = document.getElementById("applicationForm");
 const successMessage = document.getElementById("formSuccess");
 const volumeWarning = document.getElementById("volumeWarning");
 const commentsCounter = document.getElementById("commentsCounter");
+let keepSuccessOnReset = false;
 
 const inputs = {
   companyName: document.getElementById("companyName"),
@@ -74,7 +75,14 @@ function updateCommentsCounter() {
 
 function validateCompanyName() {
   const value = inputs.companyName.value.trim();
-  const message = value.length >= 2 ? "" : "Company name must have at least 2 characters";
+  let message = "";
+
+  if (!value) {
+    message = "Company name is required";
+  } else if (value.length < 2) {
+    message = "Company name must have at least 2 characters";
+  }
+
   setError("companyName", message);
   setInputState(inputs.companyName, message);
   return !message;
@@ -82,7 +90,15 @@ function validateCompanyName() {
 
 function validateContactPerson() {
   const words = inputs.contactPerson.value.trim().split(/\s+/).filter(Boolean);
-  const message = words.length >= 2 ? "" : "Enter first and last name of contact";
+  const rawValue = inputs.contactPerson.value.trim();
+  let message = "";
+
+  if (!rawValue) {
+    message = "Contact person is required";
+  } else if (words.length < 2) {
+    message = "Enter first and last name of contact";
+  }
+
   setError("contactPerson", message);
   setInputState(inputs.contactPerson, message);
   return !message;
@@ -91,9 +107,14 @@ function validateContactPerson() {
 function validateCorporateEmail() {
   const value = inputs.corporateEmail.value.trim();
   const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const message = regex.test(value)
-    ? ""
-    : "Enter a valid corporate email (example: <name@company.com>)";
+  let message = "";
+
+  if (!value) {
+    message = "Corporate email is required";
+  } else if (!regex.test(value)) {
+    message = "Enter a valid corporate email (example: <name@company.com>)";
+  }
+
   setError("corporateEmail", message);
   setInputState(inputs.corporateEmail, message);
   return !message;
@@ -102,9 +123,14 @@ function validateCorporateEmail() {
 function validatePhone() {
   const value = inputs.phone.value.trim();
   const regex = /^\+\d{1,3}[\s\d-]{5,}$/;
-  const message = regex.test(value)
-    ? ""
-    : "Phone must include country code (example: +1 213 555 0147)";
+  let message = "";
+
+  if (!value) {
+    message = "Phone is required";
+  } else if (!regex.test(value)) {
+    message = "Phone must include country code (example: +1 213 555 0147)";
+  }
+
   setError("phone", message);
   setInputState(inputs.phone, message);
   return !message;
@@ -131,14 +157,14 @@ function validateCompanyWebsite() {
 }
 
 function validateOperatingCountry() {
-  const message = inputs.operatingCountry.value ? "" : "Select main operating country";
+  const message = inputs.operatingCountry.value ? "" : "Main operating country is required";
   setError("operatingCountry", message);
   setInputState(inputs.operatingCountry, message);
   return !message;
 }
 
 function validateProductType() {
-  const message = inputs.productType.value ? "" : "Select the type of product you handle";
+  const message = inputs.productType.value ? "" : "Product type is required";
   setError("productType", message);
   setInputState(inputs.productType, message);
   updateVolumeWarning();
@@ -146,7 +172,7 @@ function validateProductType() {
 }
 
 function validateMonthlyVolume() {
-  const message = inputs.monthlyVolume.value ? "" : "Select estimated monthly volume";
+  const message = inputs.monthlyVolume.value ? "" : "Estimated monthly volume is required";
   setError("monthlyVolume", message);
   setInputState(inputs.monthlyVolume, message);
   updateVolumeWarning();
@@ -154,13 +180,13 @@ function validateMonthlyVolume() {
 }
 
 function validateServicesInterest() {
-  const message = getCheckedServicesCount() > 0 ? "" : "Select at least one service of interest";
+  const message = getCheckedServicesCount() > 0 ? "" : "At least one service of interest is required";
   setError("servicesInterest", message);
   return !message;
 }
 
 function validateCurrent3pl() {
-  const message = getCurrent3plValue() ? "" : "Indicate if you currently work with another logistics provider";
+  const message = getCurrent3plValue() ? "" : "Current 3PL selection is required";
   setError("current3pl", message);
   return !message;
 }
@@ -175,9 +201,35 @@ function validateComments() {
 }
 
 function validatePrivacyPolicy() {
-  const message = inputs.privacyPolicy.checked ? "" : "You must accept the privacy policy to continue";
+  const message = inputs.privacyPolicy.checked ? "" : "Privacy policy acceptance is required";
   setError("privacyPolicy", message);
   return !message;
+}
+
+function focusFirstInvalidField() {
+  const orderedCandidates = [
+    inputs.companyName,
+    inputs.contactPerson,
+    inputs.corporateEmail,
+    inputs.phone,
+    inputs.companyWebsite,
+    inputs.operatingCountry,
+    inputs.productType,
+    inputs.monthlyVolume,
+    ...servicesCheckboxes,
+    ...current3plRadios,
+    inputs.comments,
+    inputs.privacyPolicy,
+  ];
+
+  const firstInvalid = orderedCandidates.find((input) => input.classList.contains("error-input"))
+    || servicesCheckboxes.find(() => Boolean(errors.servicesInterest.textContent))
+    || current3plRadios.find(() => Boolean(errors.current3pl.textContent))
+    || (errors.privacyPolicy.textContent ? inputs.privacyPolicy : null);
+
+  if (firstInvalid) {
+    firstInvalid.focus();
+  }
 }
 
 function resetValidationState() {
@@ -193,23 +245,39 @@ function resetValidationState() {
   commentsCounter.textContent = "500 remaining";
 }
 
-inputs.companyName.addEventListener("blur", validateCompanyName);
-inputs.contactPerson.addEventListener("blur", validateContactPerson);
-inputs.corporateEmail.addEventListener("blur", validateCorporateEmail);
-inputs.phone.addEventListener("blur", validatePhone);
-inputs.companyWebsite.addEventListener("blur", validateCompanyWebsite);
-inputs.operatingCountry.addEventListener("change", validateOperatingCountry);
-inputs.productType.addEventListener("change", validateProductType);
-inputs.monthlyVolume.addEventListener("change", validateMonthlyVolume);
-inputs.comments.addEventListener("input", validateComments);
-inputs.privacyPolicy.addEventListener("change", validatePrivacyPolicy);
+function attachRealtimeValidation(input, validateFn, eventName = "input") {
+  input.addEventListener(eventName, () => {
+    successMessage.textContent = "";
+    validateFn();
+  });
+
+  input.addEventListener("blur", validateFn);
+}
+
+attachRealtimeValidation(inputs.companyName, validateCompanyName);
+attachRealtimeValidation(inputs.contactPerson, validateContactPerson);
+attachRealtimeValidation(inputs.corporateEmail, validateCorporateEmail);
+attachRealtimeValidation(inputs.phone, validatePhone);
+attachRealtimeValidation(inputs.companyWebsite, validateCompanyWebsite);
+attachRealtimeValidation(inputs.comments, validateComments);
+
+attachRealtimeValidation(inputs.operatingCountry, validateOperatingCountry, "change");
+attachRealtimeValidation(inputs.productType, validateProductType, "change");
+attachRealtimeValidation(inputs.monthlyVolume, validateMonthlyVolume, "change");
+attachRealtimeValidation(inputs.privacyPolicy, validatePrivacyPolicy, "change");
 
 servicesCheckboxes.forEach((checkbox) => {
-  checkbox.addEventListener("change", validateServicesInterest);
+  checkbox.addEventListener("change", () => {
+    successMessage.textContent = "";
+    validateServicesInterest();
+  });
 });
 
 current3plRadios.forEach((radio) => {
-  radio.addEventListener("change", validateCurrent3pl);
+  radio.addEventListener("change", () => {
+    successMessage.textContent = "";
+    validateCurrent3pl();
+  });
 });
 
 form.addEventListener("submit", (event) => {
@@ -231,17 +299,25 @@ form.addEventListener("submit", (event) => {
     validatePrivacyPolicy(),
   ].every(Boolean);
 
-  if (!allValid) return;
+  if (!allValid) {
+    focusFirstInvalidField();
+    return;
+  }
 
   successMessage.textContent =
     "Thank you for your interest in TrackFlow! We have received your request. Our commercial team will review your information and contact you within the next 24-48 hours to schedule a call and learn about your logistics needs in detail. If you have any urgent inquiry, write to us directly at <comercial@trackflow.com>";
 
+  keepSuccessOnReset = true;
   form.reset();
   resetValidationState();
 });
 
 form.addEventListener("reset", () => {
-  successMessage.textContent = "";
+  if (!keepSuccessOnReset) {
+    successMessage.textContent = "";
+  }
+
+  keepSuccessOnReset = false;
   // Wait a tick so native reset updates values before restoring UI state.
   setTimeout(() => {
     resetValidationState();
