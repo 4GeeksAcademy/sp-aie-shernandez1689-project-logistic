@@ -1,0 +1,11 @@
+/*
+  Tailwind cubre casi toda la UI. Este archivo queda listo para ajustes puntuales.
+*/
+
+.error-input {
+  border-color: #dc2626;
+}
+
+.success-input {
+  border-color: #16a34a;
+}
