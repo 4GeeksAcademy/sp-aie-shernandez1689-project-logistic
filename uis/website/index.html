@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Proyecto Logística - Inicio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "TrackFlow",
+        "url": "https://trackflow.com",
+        "logo": "https://trackflow.com/logo-logistica.svg",
+        "description": "TrackFlow ofrece soluciones de ultima milla y gestion de almacenes para operaciones logisticas.",
+        "email": "contacto@trackflow.com",
+        "telephone": "+34 900 123 456",
+        "areaServed": [
+          {
+            "@type": "City",
+            "name": "Madrid"
+          },
+          {
+            "@type": "City",
+            "name": "Ciudad de Mexico"
+          }
+        ],
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "contactType": "customer support",
+          "email": "contacto@trackflow.com",
+          "telephone": "+34 900 123 456",
+          "availableLanguage": ["es", "en"]
+        },
+        "sameAs": [
+          "https://www.linkedin.com/company/trackflow",
+          "https://x.com/trackflow"
+        ]
+      }
+    </script>
+  </head>
+  <body class="min-h-screen bg-slate-950 text-white">
+    <header role="banner" class="border-b border-cyan-300/20 bg-slate-950/95 backdrop-blur">
+      <nav
+        class="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-4 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-10"
+        aria-label="Navegacion principal"
+      >
+        <a href="#inicio" aria-label="Ir al inicio de TrackFlow" class="text-base font-extrabold tracking-wide text-cyan-200">TrackFlow</a>
+        <ul class="flex flex-wrap gap-3 text-xs text-slate-300 sm:text-sm">
+          <li><a href="#propuesta" class="hover:text-cyan-200">Propuesta</a></li>
+          <li><a href="#servicios" class="hover:text-cyan-200">Caracteristicas</a></li>
+          <li><a href="#experiencias" class="hover:text-cyan-200">Experiencias</a></li>
+          <li><a href="#contacto" class="hover:text-cyan-200">Contacto</a></li>
+          <li><a href="application.html" class="font-semibold text-cyan-300 hover:text-cyan-200">Formulario</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main role="main" class="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6 md:gap-8 md:py-10 lg:px-10 lg:py-12">
+      <section
+        id="inicio"
+        role="region"
+        aria-labelledby="hero-title"
+        class="w-full overflow-hidden rounded-2xl border border-cyan-300/20 bg-gradient-to-br from-slate-900 via-slate-900 to-cyan-950/60 p-5 shadow-2xl shadow-cyan-900/20 sm:rounded-3xl sm:p-8 lg:p-12"
+      >
+        <div class="grid gap-6 md:gap-8 lg:grid-cols-2 lg:items-center lg:gap-10">
+          <div class="text-center md:text-left">
+            <a href="application.html" class="inline-block" aria-label="Ir al formulario desde el logo">
+              <img
+                src="logo-logistica.svg"
+                alt="Logo de TrackFlow con icono de caja para servicios de logistica"
+                class="mx-auto h-14 w-14 rounded-xl ring-2 ring-cyan-300/30 sm:h-16 sm:w-16 md:mx-0"
+              />
+            </a>
+            <p class="mt-4 inline-flex rounded-full border border-cyan-300/30 bg-cyan-400/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-200 sm:mt-6 sm:px-4 sm:text-xs">
+              TrackFlow
+            </p>
+            <h1 id="hero-title" class="mt-4 text-3xl font-black leading-tight text-balance sm:text-4xl lg:text-5xl">
+              Logística inteligente para entregar más rápido, con menos costo y cero fricción.
+            </h1>
+            <p class="mt-4 max-w-xl text-sm text-slate-300 sm:mt-5 sm:text-base md:mx-0 lg:text-lg">
+              En TrackFlow conectamos rutas, inventario y operación en una sola plataforma para que tu empresa
+              reduzca tiempos de entrega, elimine reprocesos y mejore la experiencia del cliente final.
+            </p>
+
+            <div class="mt-6 flex flex-wrap items-center justify-center gap-3 sm:mt-8 sm:gap-4 md:justify-start">
+              <a
+                href="application.html"
+                aria-label="Ir al formulario de aplicacion de TrackFlow"
+                class="inline-flex w-full items-center justify-center rounded-xl bg-cyan-400 px-6 py-3 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 sm:w-auto"
+              >
+                Ir al formulario
+              </a>
+              <span class="text-xs text-slate-300 sm:text-sm">Respuesta estimada en menos de 24 horas</span>
+            </div>
+          </div>
+
+          <aside id="propuesta" role="complementary" aria-labelledby="propuesta-title" class="grid gap-4 rounded-2xl border border-white/10 bg-white/5 p-5 text-center backdrop-blur sm:p-6 md:text-left">
+            <h2 id="propuesta-title" class="text-base font-bold text-cyan-200 sm:text-lg">Nuestra propuesta de valor</h2>
+            <ul class="space-y-3 text-xs text-slate-200 sm:text-sm">
+              <li class="rounded-lg border border-white/10 bg-slate-900/60 p-3">
+                <strong class="text-white">Visibilidad total:</strong> monitoreo en tiempo real de envíos y operaciones.
+              </li>
+              <li class="rounded-lg border border-white/10 bg-slate-900/60 p-3">
+                <strong class="text-white">Optimización automática:</strong> rutas más eficientes para bajar costos logísticos.
+              </li>
+              <li class="rounded-lg border border-white/10 bg-slate-900/60 p-3">
+                <strong class="text-white">Escalabilidad:</strong> solución adaptable al crecimiento de tu negocio.
+              </li>
+            </ul>
+          </aside>
+        </div>
+      </section>
+
+      <section id="servicios" role="region" aria-labelledby="servicios-title" class="grid gap-6 md:grid-cols-2">
+        <h2 id="servicios-title" class="sr-only">Servicios y beneficios</h2>
+        <article class="rounded-2xl border border-cyan-300/20 bg-slate-900/70 p-5 shadow-lg shadow-cyan-900/10 sm:p-7">
+          <h2 class="text-center text-xl font-extrabold text-cyan-200 sm:text-2xl md:text-left">Caracteristicas de TrackFlow</h2>
+          <ul class="mt-4 space-y-3 text-sm text-slate-200 sm:mt-5">
+            <li class="rounded-lg border border-white/10 bg-slate-950/50 p-3">Control en tiempo real de pedidos, rutas y estado de entrega.</li>
+            <li class="rounded-lg border border-white/10 bg-slate-950/50 p-3">Panel unificado para operaciones de ultima milla y gestion de almacenes.</li>
+            <li class="rounded-lg border border-white/10 bg-slate-950/50 p-3">Alertas proactivas ante demoras, incidencias de inventario o cuellos de botella.</li>
+          </ul>
+        </article>
+
+        <article class="rounded-2xl border border-cyan-300/20 bg-slate-900/70 p-5 shadow-lg shadow-cyan-900/10 sm:p-7">
+          <h2 class="text-center text-xl font-extrabold text-cyan-200 sm:text-2xl md:text-left">Beneficios para tu empresa</h2>
+          <ul class="mt-4 space-y-3 text-sm text-slate-200 sm:mt-5">
+            <li class="rounded-lg border border-white/10 bg-slate-950/50 p-3">Menos costos operativos gracias a rutas optimizadas y mejor uso de flota.</li>
+            <li class="rounded-lg border border-white/10 bg-slate-950/50 p-3">Mayor puntualidad en entregas con seguimiento preciso de cada envio.</li>
+            <li class="rounded-lg border border-white/10 bg-slate-950/50 p-3">Mejor experiencia del cliente con informacion clara y tiempos confiables.</li>
+          </ul>
+        </article>
+      </section>
+
+      <section id="experiencias" role="region" aria-labelledby="experiencias-title" class="grid gap-6 md:grid-cols-2">
+        <h2 id="experiencias-title" class="sr-only">Proceso y experiencias de clientes</h2>
+        <article class="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur sm:p-7">
+          <h2 class="text-center text-xl font-extrabold text-cyan-200 sm:text-2xl md:text-left">Como funciona</h2>
+          <ol class="mt-4 space-y-3 text-sm text-slate-200 sm:mt-5">
+            <li class="rounded-lg border border-white/10 bg-slate-900/60 p-3"><strong class="text-white">1. Diagnostico:</strong> analizamos tu operacion actual y los puntos criticos.</li>
+            <li class="rounded-lg border border-white/10 bg-slate-900/60 p-3"><strong class="text-white">2. Integracion:</strong> conectamos pedidos, almacenes y rutas en la plataforma.</li>
+            <li class="rounded-lg border border-white/10 bg-slate-900/60 p-3"><strong class="text-white">3. Mejora continua:</strong> optimizamos con datos para escalar con eficiencia.</li>
+          </ol>
+        </article>
+
+        <article class="rounded-2xl border border-white/10 bg-white/5 p-5 backdrop-blur sm:p-7">
+          <h2 class="text-center text-xl font-extrabold text-cyan-200 sm:text-2xl md:text-left">Experiencias de clientes</h2>
+          <div class="mt-4 space-y-4 text-sm text-slate-200 sm:mt-5">
+            <blockquote class="rounded-lg border border-white/10 bg-slate-900/60 p-4">
+              "Con TrackFlow reducimos un 27% el tiempo promedio de entrega en solo dos meses."
+              <footer class="mt-2 text-sm text-slate-400">Operacion retail, Ciudad de Mexico</footer>
+            </blockquote>
+            <blockquote class="rounded-lg border border-white/10 bg-slate-900/60 p-4">
+              "Ahora tenemos visibilidad total del almacen y menos errores de preparacion."
+              <footer class="mt-2 text-sm text-slate-400">Centro logistico, Madrid</footer>
+            </blockquote>
+          </div>
+        </article>
+      </section>
+
+      <footer id="contacto" role="contentinfo" aria-labelledby="contacto-title" class="rounded-2xl border border-cyan-300/20 bg-slate-900/80 p-5 text-center shadow-lg shadow-cyan-900/10 sm:p-6 md:text-left">
+        <div class="grid gap-6 text-sm text-slate-300 md:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <h2 id="contacto-title" class="text-base font-bold text-cyan-200">TrackFlow</h2>
+            <p class="mt-2">Soluciones de ultima milla y gestion de almacenes para operaciones de alto rendimiento.</p>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-cyan-200">Contacto</h3>
+            <ul class="mt-2 space-y-1">
+              <li>Email: contacto@trackflow.com</li>
+              <li>Telefono: +34 900 123 456</li>
+              <li>Soporte: Lunes a Viernes, 8:00 - 18:00</li>
+            </ul>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-cyan-200">Cobertura</h3>
+            <ul class="mt-2 space-y-1">
+              <li>Madrid, Espana</li>
+              <li>Ciudad de Mexico, Mexico</li>
+              <li>
+                <a href="application.html" aria-label="Ir al formulario de contacto de TrackFlow" class="font-semibold text-cyan-300 hover:text-cyan-200">Ir al formulario de contacto</a>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <p class="mt-6 border-t border-white/10 pt-4 text-xs text-slate-400">
+          © 2026 TrackFlow. Todos los derechos reservados.
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>

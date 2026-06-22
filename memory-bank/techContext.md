@@ -1,22 +1,23 @@
 # Tech Context
 
 ## Stack tecnologico
-- Monorepo con estructura modular por dominios (agents, services, skills, uis, infra, packages).
-- Frontend base en HTML, CSS y JavaScript para interfaces ligeras y validaciones en cliente.
-- Paquetes compartidos en TypeScript dentro de packages/shared para tipos y contratos reutilizables.
-- Scripts de analisis y soporte en Python para procesamiento de datos y tareas operativas.
-- Documentacion bilingue (README.md y README.es.md) para alineacion de equipos tecnicos y no tecnicos.
+- Monorepo modular para organizar UI, documentacion, skills y recursos de soporte.
+- Frontend web con HTML, CSS y JavaScript para la landing y formulario de contacto.
+- Tailwind CSS como requisito explicito de implementacion de interfaz.
+- Validacion de formulario en cliente con reglas, mensajes de error y simulacion de envio exitoso.
+- SEO on-page y datos estructurados con Schema.org (Organization) en la landing.
 
 ## Decisiones de arquitectura tomadas
-- Se adopta un enfoque de monorepo para centralizar codigo, documentacion y flujos de trabajo.
-- Se separan responsabilidades por carpetas de dominio para reducir acoplamiento y facilitar mantenimiento.
-- Se promueve reutilizacion mediante paquetes compartidos y definicion explicita de tipos comunes.
-- Se mantiene una capa de UI simple y desacoplada para iterar rapido en experiencias y validaciones.
-- Se estructura el trabajo para habilitar integraciones futuras con automatizaciones, agentes y servicios.
+- Se define una landing corporativa con secciones fijas en orden obligatorio: Header, Hero, Services, Coverage, Why TrackFlow, Contact y Footer.
+- Se separa el formulario de solicitud de informacion como flujo principal de conversion B2B.
+- Se prioriza base language unico para todo el flujo y se deja bilingue como mejora opcional.
+- Se implementan validaciones deterministicas por campo con mensajes de error exactamente definidos por contexto.
+- Se incluye warning de negocio para volumen 0-100 envios/mes por posible desajuste de servicio.
 
 ## Restricciones tecnicas
-- Debe mantenerse compatibilidad entre multiples modulos sin romper contratos compartidos.
-- Cambios en tipos comunes requieren coordinacion para evitar regresiones en consumidores del monorepo.
-- Se prioriza simplicidad de herramientas base para minimizar friccion de onboarding.
-- La documentacion debe actualizarse en ambos idiomas para conservar coherencia del proyecto.
-- El crecimiento de componentes debe respetar la organizacion existente para evitar duplicidad y deuda tecnica.
+- El formulario debe capturar todos los campos obligatorios definidos en CONTEXT.md.
+- Deben aplicarse validaciones especificas: nombre empresa, contacto, email, telefono, website, servicios, comentarios y privacidad.
+- Deben mostrarse los mensajes de error esperados con el texto indicado en CONTEXT.md.
+- Debe mostrarse mensaje de exito de confirmacion cuando el formulario valida correctamente.
+- La solucion debe ser responsive, accesible y SEO optimized.
+- Se debe incluir markup Schema.org Organization con los datos de TrackFlow.

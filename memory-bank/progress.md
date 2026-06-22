@@ -1,15 +1,15 @@
 # Progress
 
 ## Estado actual del desarrollo
-- Se creo la estructura inicial de memory bank en la raiz del monorepo.
-- Se documento el contexto base del proyecto en projectbrief.md.
-- Se definio el contexto tecnico inicial en techContext.md.
-- La base documental minima ya esta disponible para iniciar planeacion por iteraciones.
+- Se creo y estructuro el banco de memoria del proyecto en memory-bank/.
+- Se alineo projectbrief.md con el negocio TrackFlow y el alcance del hito 1 (website corporativo + captacion de leads).
+- Se alineo techContext.md con stack y restricciones obligatorias: Tailwind, validaciones completas, accesibilidad, SEO y Schema.org.
+- Se definio una skill operativa para sincronizar progreso de trabajo de forma recurrente.
 
 ## Proximos pasos previstos
-1. Validar y ajustar el alcance funcional con los stakeholders del proyecto.
-2. Priorizar requerimientos en un backlog inicial (MVP, mejoras y extras).
-3. Definir hitos de implementacion con entregables por fase.
-4. Establecer criterios de exito y metricas operativas para seguimiento.
-5. Crear un plan de ejecucion tecnico con tareas por modulo del monorepo.
-6. Iniciar la primera iteracion de desarrollo y actualizar este archivo por avance.
+1. Definir el idioma base del sitio y confirmar si la version bilingue entra en este hito.
+2. Implementar la landing en el orden de secciones requerido por CONTEXT.md.
+3. Implementar formulario con todos los campos obligatorios y sus validaciones especificas.
+4. Integrar mensajes de error exactos, warning de bajo volumen y mensaje de exito de envio simulado.
+5. Aplicar criterios de calidad transversal: responsive, accesibilidad y SEO on-page.
+6. Agregar y validar markup Schema.org Organization con datos de TrackFlow.

@@ -1,14 +1,18 @@
 # Project Brief
 
 ## Descripcion del negocio
-Este proyecto se enfoca en la gestion logistica de operaciones de distribucion y seguimiento de entregas. El negocio busca coordinar de forma eficiente recursos, rutas, tiempos y estados de despacho para mejorar la experiencia del cliente y reducir costos operativos.
+TrackFlow es un operador logistico fundado en 2009, con presencia en Los Angeles (Estados Unidos) y Zaragoza (Espana). La empresa ofrece tres servicios para marcas e-commerce de moda, electronica y cosmetica: gestion de almacenes, entrega de ultima milla y logistica inversa. Tiene alrededor de 130 empleados y un ingreso anual aproximado de 9 millones de euros.
+
+Para este hito, el alcance del proyecto es construir el nuevo sitio web corporativo publico de TrackFlow para comunicar la propuesta de valor y captar leads B2B calificados.
 
 ## Objetivos del proyecto
-- Centralizar la informacion operativa en un flujo unico y trazable.
-- Mejorar la planificacion y ejecucion de rutas de entrega.
-- Reducir tiempos de respuesta ante incidencias logisticas.
-- Incrementar la visibilidad del estado de pedidos para equipos internos y clientes.
-- Estandarizar procesos para facilitar escalabilidad y toma de decisiones.
+- Presentar a TrackFlow como operador binacional serio en Estados Unidos y Espana.
+- Explicar con claridad los tres servicios clave: warehousing, last mile y reverse logistics.
+- Capturar solicitudes de informacion con un formulario estructurado para empresas.
+- Mejorar la calidad de los leads para reducir tiempo de calificacion comercial.
+- Cumplir requisitos de experiencia: responsive, accesibilidad, SEO y validacion completa del formulario.
 
 ## Problema que resuelve
-Actualmente, muchas operaciones logisticas dependen de procesos manuales, datos dispersos y poca trazabilidad en tiempo real. Esto genera retrasos, errores de coordinacion y dificultad para medir desempeno. El proyecto resuelve estos puntos al estructurar una solucion que organiza la informacion, mejora el control operativo y permite actuar con mayor rapidez y precision.
+El sitio actual de TrackFlow esta desactualizado, no comunica correctamente la operacion en dos paises, no detalla bien los servicios y recibe consultas ambiguas por correo. Esto provoca perdida de tiempo comercial en la calificacion de prospectos.
+
+El proyecto resuelve este problema con una landing page clara y un formulario de solicitud con campos y validaciones definidas, permitiendo captar informacion util desde el primer contacto y mejorar la conversion de oportunidades B2B.

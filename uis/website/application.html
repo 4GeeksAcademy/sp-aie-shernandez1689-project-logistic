@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Proyecto Logística - Aplicación</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="min-h-screen bg-slate-50 text-slate-900">
+    <main class="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8 lg:py-12">
+      <a href="index.html" class="text-sm font-medium text-slate-600 hover:text-slate-900">← Volver al inicio</a>
+
+      <section class="mt-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-6 lg:p-8">
+        <h1 class="text-xl font-bold tracking-tight sm:text-2xl">Request Information Form</h1>
+        <p class="mt-2 text-sm text-slate-600 sm:text-base">Complete your company details to request a commercial consultation.</p>
+
+        <form id="applicationForm" class="mt-6 space-y-4 sm:mt-8 sm:space-y-5" novalidate>
+          <fieldset class="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:space-y-5 sm:p-4">
+            <legend class="px-1 text-sm font-semibold text-slate-700">Company and contact details</legend>
+            <div>
+              <label for="companyName" class="mb-1 block text-sm font-semibold">Company name</label>
+              <input
+                id="companyName"
+                name="companyName"
+                type="text"
+                required
+                class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
+                placeholder="Example: Nova Commerce"
+              />
+              <p id="companyNameError" class="error-message" role="alert"></p>
+            </div>
+
+            <div>
+              <label for="contactPerson" class="mb-1 block text-sm font-semibold">Contact person</label>
+              <input
+                id="contactPerson"
+                name="contactPerson"
+                type="text"
+                required
+                class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
+                placeholder="Example: Ana Perez"
+              />
+              <p id="contactPersonError" class="error-message" role="alert"></p>
+            </div>
+
+            <div class="grid gap-4 md:grid-cols-2 md:gap-5">
+              <div>
+                <label for="corporateEmail" class="mb-1 block text-sm font-semibold">Corporate email</label>
+                <input
+                  id="corporateEmail"
+                  name="corporateEmail"
+                  type="email"
+                  required
+                  class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
+                  placeholder="name@company.com"
+                />
+                <p id="corporateEmailError" class="error-message" role="alert"></p>
+              </div>
+
+              <div>
+                <label for="phone" class="mb-1 block text-sm font-semibold">Phone</label>
+                <input
+                  id="phone"
+                  name="phone"
+                  type="tel"
+                  required
+                  class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
+                  placeholder="+1 213 555 0147"
+                />
+                <p id="phoneError" class="error-message" role="alert"></p>
+              </div>
+            </div>
+
+            <div>
+              <label for="companyWebsite" class="mb-1 block text-sm font-semibold">Company website (optional)</label>
+              <input
+                id="companyWebsite"
+                name="companyWebsite"
+                type="url"
+                class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
+                placeholder="https://company.com"
+              />
+              <p id="companyWebsiteError" class="error-message" role="alert"></p>
+            </div>
+          </fieldset>
+
+          <fieldset class="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:space-y-5 sm:p-4">
+            <legend class="px-1 text-sm font-semibold text-slate-700">Operational profile</legend>
+            <div class="grid gap-4 md:grid-cols-2 md:gap-5">
+              <div>
+                <label for="operatingCountry" class="mb-1 block text-sm font-semibold">Main operating country</label>
+                <select
+                  id="operatingCountry"
+                  name="operatingCountry"
+                  required
+                  class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
+                >
+                  <option value="">Select an option</option>
+                  <option value="us">United States</option>
+                  <option value="es">Spain</option>
+                  <option value="both">Both</option>
+                  <option value="other">Other</option>
+                </select>
+                <p id="operatingCountryError" class="error-message" role="alert"></p>
+              </div>
+
+              <div>
+                <label for="productType" class="mb-1 block text-sm font-semibold">Product type</label>
+                <select
+                  id="productType"
+                  name="productType"
+                  required
+                  class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
+                >
+                  <option value="">Select an option</option>
+                  <option value="fashion">Fashion</option>
+                  <option value="electronics">Electronics</option>
+                  <option value="cosmetics">Cosmetics</option>
+                  <option value="food">Food</option>
+                  <option value="other">Other</option>
+                </select>
+                <p id="productTypeError" class="error-message" role="alert"></p>
+              </div>
+            </div>
+
+            <div>
+              <label for="monthlyVolume" class="mb-1 block text-sm font-semibold">Estimated monthly shipping volume</label>
+              <select
+                id="monthlyVolume"
+                name="monthlyVolume"
+                required
+                class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
+              >
+                <option value="">Select an option</option>
+                <option value="0-100">0-100</option>
+                <option value="101-500">101-500</option>
+                <option value="501-2000">501-2000</option>
+                <option value="2000+">2000+</option>
+                <option value="not-sure">Not sure</option>
+              </select>
+              <p id="monthlyVolumeError" class="error-message" role="alert"></p>
+              <p id="volumeWarning" class="warning-message" role="status" aria-live="polite"></p>
+            </div>
+          </fieldset>
+
+          <fieldset class="space-y-2 rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:p-4">
+            <legend class="text-sm font-semibold">Services of interest</legend>
+            <div class="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+              <div class="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2">
+                <input id="serviceWarehousing" name="servicesInterest" type="checkbox" value="warehousing" required class="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-2 focus:ring-cyan-500/40" />
+                <label for="serviceWarehousing">Warehousing</label>
+              </div>
+              <div class="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2">
+                <input id="serviceLastMile" name="servicesInterest" type="checkbox" value="last-mile" class="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-2 focus:ring-cyan-500/40" />
+                <label for="serviceLastMile">Last mile</label>
+              </div>
+              <div class="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2">
+                <input id="serviceReverse" name="servicesInterest" type="checkbox" value="reverse-logistics" class="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-2 focus:ring-cyan-500/40" />
+                <label for="serviceReverse">Reverse logistics</label>
+              </div>
+            </div>
+            <p id="servicesInterestError" class="error-message" role="alert"></p>
+          </fieldset>
+
+          <fieldset class="space-y-2 rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:p-4">
+            <legend class="text-sm font-semibold">Do you currently work with another 3PL?</legend>
+            <div class="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
+              <div class="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2">
+                <input id="current3plYes" name="current3pl" type="radio" value="yes" required class="h-4 w-4 border-slate-300 text-cyan-600 focus:ring-2 focus:ring-cyan-500/40" />
+                <label for="current3plYes">Yes</label>
+              </div>
+              <div class="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2">
+                <input id="current3plNo" name="current3pl" type="radio" value="no" class="h-4 w-4 border-slate-300 text-cyan-600 focus:ring-2 focus:ring-cyan-500/40" />
+                <label for="current3plNo">No</label>
+              </div>
+              <div class="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2">
+                <input id="current3plEvaluating" name="current3pl" type="radio" value="evaluating" class="h-4 w-4 border-slate-300 text-cyan-600 focus:ring-2 focus:ring-cyan-500/40" />
+                <label for="current3plEvaluating">Evaluating options</label>
+              </div>
+            </div>
+            <p id="current3plError" class="error-message" role="alert"></p>
+          </fieldset>
+
+          <fieldset class="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:p-4">
+            <legend class="px-1 text-sm font-semibold text-slate-700">Additional details and consent</legend>
+            <div>
+              <div class="mb-1 flex items-center justify-between">
+                <label for="comments" class="block text-sm font-semibold">Comments or specific needs (optional)</label>
+                <span id="commentsCounter" class="text-xs text-slate-500">500 remaining</span>
+              </div>
+              <textarea
+                id="comments"
+                name="comments"
+                rows="5"
+                maxlength="600"
+                class="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 transition placeholder:text-slate-400 focus:border-cyan-500 focus:outline-none focus:ring-4 focus:ring-cyan-500/20"
+                placeholder="Tell us about your operation and logistics needs"
+              ></textarea>
+              <p id="commentsError" class="error-message" role="alert"></p>
+            </div>
+
+            <div>
+              <div class="inline-flex items-center gap-2">
+                <input id="privacyPolicy" name="privacyPolicy" type="checkbox" required class="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-2 focus:ring-cyan-500/40" />
+                <label for="privacyPolicy" class="text-sm">I accept the privacy policy</label>
+              </div>
+              <p id="privacyPolicyError" class="error-message" role="alert"></p>
+            </div>
+          </fieldset>
+
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <button
+              type="submit"
+              class="w-full rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-700 focus:outline-none focus:ring-4 focus:ring-slate-900/20 sm:w-auto"
+            >
+              Request information
+            </button>
+            <button
+              type="reset"
+              class="w-full rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 focus:outline-none focus:ring-4 focus:ring-slate-300/40 sm:w-auto"
+            >
+              Clear form
+            </button>
+            <p id="formSuccess" class="success-message" role="status" aria-live="polite"></p>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <script src="validation.js"></script>
+  </body>
+</html>
