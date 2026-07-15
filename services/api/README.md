@@ -1,6 +1,6 @@
 # Incidents API
 
-Backend service that exposes incident analysis endpoints used by the backoffice UI.
+Backend service that exposes incident analysis endpoints used by the web UI.
 
 ## Endpoints
 
@@ -15,7 +15,7 @@ Backend service that exposes incident analysis endpoints used by the backoffice 
 ## Run locally
 
 ```bash
-cd services/incidents-api
+cd services/api
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -29,10 +29,10 @@ The API starts on `http://localhost:8000`.
 Run one command from the repository root:
 
 ```bash
-python services/incidents-api/app.py
+python services/api/app.py
 ```
 
 Then open:
 
 - `http://localhost:8000/` (main website)
-- `http://localhost:8000/backoffice/` (incidents analysis screen)
+- `http://localhost:8000/web/` (incidents analysis screen)

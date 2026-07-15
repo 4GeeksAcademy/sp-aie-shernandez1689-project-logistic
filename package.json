@@ -4,8 +4,8 @@
   "private": true,
   "description": "Root scripts for incidents analysis project",
   "scripts": {
-    "dev": "python services/incidents-api/app.py",
-    "run-api": "python services/incidents-api/app.py",
+    "dev": "python services/api/app.py",
+    "run-api": "python services/api/app.py",
     "analyze": "python scripts/analyze.py"
   }
 }

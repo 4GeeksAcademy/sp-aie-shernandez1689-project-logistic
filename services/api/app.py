@@ -1,4 +1,4 @@
-"""Incidents analysis API for TrackFlow backoffice."""
+"""Incidents analysis API for TrackFlow web dashboard."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from shared.incidents_analysis import (  # noqa: E402
 
 app = Flask(__name__)
 UIS_ROOT = REPO_ROOT / "uis"
-BACKOFFICE_ROOT = UIS_ROOT / "backoffice"
+WEB_ROOT = UIS_ROOT / "web"
 
 LAST_ANALYSIS_JSON: dict | None = None
 LAST_ANALYSIS_CSV: str | None = None
@@ -82,14 +82,24 @@ def site_logo():
     return send_from_directory(UIS_ROOT, "logo-logistica.svg")
 
 
+@app.get("/web/")
+def web_home():
+    return send_from_directory(WEB_ROOT, "index.html")
+
+
+@app.get("/web/<path:filename>")
+def web_assets(filename: str):
+    return send_from_directory(WEB_ROOT, filename)
+
+
 @app.get("/backoffice/")
-def backoffice_home():
-    return send_from_directory(BACKOFFICE_ROOT, "index.html")
+def backoffice_compat_home():
+    return send_from_directory(WEB_ROOT, "index.html")
 
 
 @app.get("/backoffice/<path:filename>")
-def backoffice_assets(filename: str):
-    return send_from_directory(BACKOFFICE_ROOT, filename)
+def backoffice_compat_assets(filename: str):
+    return send_from_directory(WEB_ROOT, filename)
 
 
 @app.post("/api/inbcidents/analyze")

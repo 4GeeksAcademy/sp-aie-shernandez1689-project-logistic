@@ -11,5 +11,5 @@ Each subfolder inside `services/` must correspond to **one specific service** (f
 
 ## Services in this repository
 
-- `incidents-api/`: Flask API for CSV incidents analysis and results export.
+- `api/`: Flask API for CSV incidents analysis and results export.
 

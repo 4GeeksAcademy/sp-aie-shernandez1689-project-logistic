@@ -9,4 +9,4 @@ Cada subcarpeta dentro de `services/` debe corresponder a **un servicio concreto
 
 ## Servicios en este repositorio
 
-- `incidents-api/`: API en Flask para analisis de incidencias CSV y exportacion de resultados.
+- `api/`: API en Flask para analisis de incidencias CSV y exportacion de resultados.

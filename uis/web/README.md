@@ -1,6 +1,6 @@
-# Backoffice Incidents Analysis
+# Web Incidents Analysis
 
-Static frontend for incidents analysis.
+Static web frontend for incidents analysis.
 
 ## Features
 
