@@ -6,3 +6,8 @@ Cada subcarpeta dentro de `uis/` debe corresponder a **una interfaz de usuario c
 
 - **Propósito principal**: centralizar en un único lugar todas las aplicaciones frontend que dan soporte a los casos de uso de la compañía.
 - **Recomendación**: documenta en este archivo (o en sub-READMEs) las aplicaciones que vayas añadiendo, su objetivo, tecnología usada y cómo ejecutarlas.
+
+## UIs en este repositorio
+
+- `backoffice/`: pantalla de analisis de incidencias con carga de CSV, visualizacion de metricas y exportacion de resultados.
+

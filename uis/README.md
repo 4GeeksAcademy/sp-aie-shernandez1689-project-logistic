@@ -8,3 +8,8 @@ Each subfolder inside `uis/` must correspond to **one specific user interface** 
 - **Recommendation**: document in this file (or in sub-READMEs) the applications you add, their objective, the technology used, and how to run them.
 
 > _Spanish version: [README.es.md](./README.es.md)._
+
+## UIs in this repository
+
+- `backoffice/`: incidents analytics screen with CSV upload, metrics visualization, and results export.
+

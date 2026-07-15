@@ -1,0 +1,78 @@
+:root {
+  --panel-dark: #0b1528;
+  --panel-mid: #11203a;
+  --line-soft: rgba(148, 163, 184, 0.22);
+}
+
+.hero-panel {
+  background:
+    radial-gradient(circle at 85% 15%, rgba(45, 212, 191, 0.22), transparent 40%),
+    radial-gradient(circle at 12% 80%, rgba(56, 189, 248, 0.2), transparent 34%),
+    linear-gradient(135deg, var(--panel-dark), var(--panel-mid));
+  border: 1px solid rgba(125, 211, 252, 0.3);
+  box-shadow: 0 20px 55px rgba(2, 132, 199, 0.2);
+}
+
+.badge {
+  border: 1px solid rgba(167, 243, 208, 0.35);
+  background: rgba(16, 185, 129, 0.16);
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dropzone.drag-active {
+  border-color: rgba(34, 211, 238, 0.9);
+  background: rgba(34, 211, 238, 0.13);
+}
+
+.stat-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 0.9rem;
+  padding: 0.8rem 0.9rem;
+  background: rgba(15, 23, 42, 0.68);
+}
+
+.metric-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid var(--line-soft);
+  border-radius: 0.8rem;
+  padding: 0.6rem 0.8rem;
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.metric-name {
+  font-size: 0.84rem;
+  color: #e2e8f0;
+}
+
+.metric-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #a5f3fc;
+}
+
+#feedback {
+  display: none;
+}
+
+#feedback.show {
+  display: block;
+}
+
+#feedback.ok {
+  border-color: rgba(52, 211, 153, 0.45);
+  background: rgba(16, 185, 129, 0.12);
+  color: #6ee7b7;
+}
+
+#feedback.error {
+  border-color: rgba(251, 113, 133, 0.45);
+  background: rgba(244, 63, 94, 0.12);
+  color: #fecdd3;
+}
