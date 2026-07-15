@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TrackFlow Backoffice - Analisis de Incidencias</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="min-h-screen bg-slate-950 text-slate-100">
+    <header class="border-b border-cyan-300/20 bg-slate-950/90 backdrop-blur">
+      <nav class="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4 sm:px-6 lg:px-10" aria-label="Navegacion principal">
+        <a href="../index.html" class="text-sm font-bold tracking-wide text-cyan-200">TrackFlow</a>
+        <ul class="flex items-center gap-4 text-sm text-slate-300">
+          <li><a href="../index.html" class="hover:text-cyan-200">Sitio</a></li>
+          <li><a href="../application.html" class="hover:text-cyan-200">Formulario</a></li>
+          <li><span class="rounded-full border border-cyan-300/40 bg-cyan-400/10 px-3 py-1 text-cyan-100">Backoffice</span></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main class="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 sm:py-10 lg:px-10">
+      <section class="hero-panel rounded-3xl p-6 sm:p-8">
+        <p class="badge mb-3 inline-flex">TrackFlow CX Intelligence</p>
+        <h1 class="text-2xl font-black tracking-tight sm:text-4xl">Analisis operativo de incidencias</h1>
+        <p class="mt-3 max-w-3xl text-sm text-slate-200 sm:text-base">
+          Carga un CSV de incidencias para validar calidad de datos, detectar registros invalidos y obtener el resumen de metricas por categoria, estado, pais e indice de satisfaccion.
+        </p>
+      </section>
+
+      <section class="mt-6 grid gap-6 lg:grid-cols-[1.2fr_1fr]">
+        <article class="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-cyan-900/10 sm:p-6">
+          <h2 class="text-lg font-bold text-cyan-100">Carga de fichero CSV</h2>
+          <p class="mt-2 text-sm text-slate-300">Formato esperado: UTF-8, separador por coma, con cabecera.</p>
+
+          <form id="uploadForm" class="mt-5 space-y-4" novalidate>
+            <label id="dropzone" for="csvFile" class="dropzone block cursor-pointer rounded-2xl border-2 border-dashed border-cyan-300/40 p-6 text-center transition hover:border-cyan-200 hover:bg-cyan-400/5">
+              <span class="block text-sm font-semibold text-cyan-100">Arrastra aqui el CSV o haz click para seleccionarlo</span>
+              <span id="selectedFileName" class="mt-2 block text-xs text-slate-300">Ningun fichero seleccionado</span>
+            </label>
+            <input id="csvFile" name="file" type="file" accept=".csv,text/csv" class="hidden" />
+
+            <div class="flex flex-wrap gap-3">
+              <button
+                type="submit"
+                class="rounded-xl bg-cyan-400 px-5 py-3 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Analizar CSV
+              </button>
+              <button
+                id="downloadBtn"
+                type="button"
+                class="rounded-xl border border-slate-500 px-5 py-3 text-sm font-semibold text-slate-100 transition hover:border-cyan-300 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled
+              >
+                Descargar resultados CSV
+              </button>
+            </div>
+          </form>
+
+          <p id="feedback" class="mt-4 rounded-xl border border-transparent px-3 py-2 text-sm"></p>
+        </article>
+
+        <article class="rounded-2xl border border-white/10 bg-slate-900/70 p-5 shadow-xl shadow-cyan-900/10 sm:p-6">
+          <h2 class="text-lg font-bold text-cyan-100">Estado de validacion</h2>
+          <div class="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+            <div class="stat-card">
+              <p class="text-xs uppercase tracking-[0.15em] text-slate-400">Total</p>
+              <p id="totalCount" class="mt-1 text-2xl font-black">-</p>
+            </div>
+            <div class="stat-card border-emerald-400/40">
+              <p class="text-xs uppercase tracking-[0.15em] text-emerald-200">Validos</p>
+              <p id="validCount" class="mt-1 text-2xl font-black text-emerald-200">-</p>
+            </div>
+            <div class="stat-card border-rose-400/40">
+              <p class="text-xs uppercase tracking-[0.15em] text-rose-200">Invalidos</p>
+              <p id="invalidCount" class="mt-1 text-2xl font-black text-rose-200">-</p>
+            </div>
+          </div>
+          <p id="contextBadge" class="mt-4 text-xs text-slate-400"></p>
+        </article>
+      </section>
+
+      <section id="resultsPanel" class="mt-6 hidden space-y-6">
+        <article class="grid gap-6 xl:grid-cols-2">
+          <div class="rounded-2xl border border-white/10 bg-slate-900/70 p-5 sm:p-6">
+            <h3 class="text-base font-bold text-cyan-100">Desglose por categoria</h3>
+            <div id="categoryBreakdown" class="mt-4 space-y-2"></div>
+          </div>
+
+          <div class="rounded-2xl border border-white/10 bg-slate-900/70 p-5 sm:p-6">
+            <h3 class="text-base font-bold text-cyan-100">Desglose por estado</h3>
+            <div id="statusBreakdown" class="mt-4 space-y-2"></div>
+          </div>
+        </article>
+
+        <article class="grid gap-6 xl:grid-cols-2">
+          <div class="rounded-2xl border border-white/10 bg-slate-900/70 p-5 sm:p-6">
+            <h3 class="text-base font-bold text-cyan-100">Desglose por pais</h3>
+            <div id="countryBreakdown" class="mt-4 space-y-2"></div>
+          </div>
+
+          <div class="rounded-2xl border border-white/10 bg-slate-900/70 p-5 sm:p-6">
+            <h3 class="text-base font-bold text-cyan-100">Indice de satisfaccion</h3>
+            <p id="satisfactionSummary" class="mt-3 text-sm text-slate-200"></p>
+            <div id="satisfactionBreakdown" class="mt-4 space-y-2"></div>
+          </div>
+        </article>
+
+        <article class="rounded-2xl border border-rose-300/30 bg-rose-400/5 p-5 sm:p-6">
+          <h3 class="text-base font-bold text-rose-100">Registros invalidos por tipo</h3>
+          <div id="invalidBreakdown" class="mt-4 space-y-2"></div>
+        </article>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
