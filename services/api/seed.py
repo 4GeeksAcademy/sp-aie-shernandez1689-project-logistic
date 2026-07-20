@@ -4,6 +4,7 @@ from pathlib import Path
 
 from tinydb import TinyDB
 
+from database import DB_PATH, TABLE_NAME
 from models import SupplierResponse
 
 SUPPLIERS_SEED: list[dict] = [
@@ -168,11 +169,11 @@ SUPPLIERS_SEED: list[dict] = [
 
 
 def seed_suppliers(db_path: Path | None = None) -> tuple[int, int, Path]:
-    target_path = db_path or Path(__file__).resolve().parent / "data" / "tinydb.json"
+    target_path = db_path or DB_PATH
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
     db = TinyDB(target_path)
-    suppliers_table = db.table("suppliers")
+    suppliers_table = db.table(TABLE_NAME)
 
     records = [SupplierResponse(**supplier).model_dump(mode="json") for supplier in SUPPLIERS_SEED]
     existing_keys = {
