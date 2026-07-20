@@ -1,0 +1,1 @@
+{"users": {"1": {"id": "25019bb8-c72c-496d-ba40-2f84d994a93b", "email": "bcrypt3@example.com", "hashed_password": "$2b$12$hdDJu1fgtWzz/OC8/01uJeWWtuUUbFGSi1uQl20PnoWH57sT6DxwS", "is_active": true, "role": "user", "created_at": "2026-07-20T19:17:00.444796+00:00"}}, "profiles": {}}
