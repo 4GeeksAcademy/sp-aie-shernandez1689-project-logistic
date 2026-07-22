@@ -15,6 +15,7 @@ This service implements the first backend milestone for user model and CRUD.
 - REST endpoints under `/users`
 - REST endpoints under `/profiles`
 - Authentication endpoints under `/auth` with JWT
+- Commercial application endpoint under `/applications`
 - Optional profile creation (`name`, `phone`, `address`) when registering
 - Sensitive PostgreSQL modules should reference TinyDB user identity via `user_uuid` only
 
@@ -38,6 +39,8 @@ uvicorn app.main:app --reload
 - Configure JWT using environment variables in `.env`:
 	- `JWT_SECRET_KEY`
 	- `ACCESS_TOKEN_EXPIRE_MINUTES`
+- Optional CORS configuration for local frontend development:
+	- `CORS_ALLOW_ORIGINS` as a comma-separated list of allowed origins
 
 ## Endpoints
 
@@ -55,3 +58,4 @@ uvicorn app.main:app --reload
 - `DELETE /profiles/user/{user_id}` (protected, admin)
 - `POST /auth/login`
 - `GET /auth/me` (protected)
+- `POST /applications`

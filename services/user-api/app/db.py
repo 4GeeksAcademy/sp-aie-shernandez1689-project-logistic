@@ -11,3 +11,4 @@ DB_PATH = DATA_DIR / "db.json"
 db = TinyDB(DB_PATH)
 users_table = db.table("users")
 profiles_table = db.table("profiles")
+applications_table = db.table("applications")

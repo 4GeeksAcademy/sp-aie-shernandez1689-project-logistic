@@ -2,6 +2,8 @@ const form = document.getElementById("applicationForm");
 const successMessage = document.getElementById("formSuccess");
 const volumeWarning = document.getElementById("volumeWarning");
 const commentsCounter = document.getElementById("commentsCounter");
+const submitButton = form?.querySelector('button[type="submit"]');
+const API_BASE_URL = (window.TRACKFLOW_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 let keepSuccessOnReset = false;
 
 const inputs = {
@@ -245,6 +247,50 @@ function resetValidationState() {
   commentsCounter.textContent = "500 remaining";
 }
 
+function getSubmissionPayload() {
+  return {
+    company_name: inputs.companyName.value.trim(),
+    contact_person: inputs.contactPerson.value.trim(),
+    corporate_email: inputs.corporateEmail.value.trim(),
+    phone: inputs.phone.value.trim(),
+    company_website: inputs.companyWebsite.value.trim() || null,
+    operating_country: inputs.operatingCountry.value,
+    product_type: inputs.productType.value,
+    monthly_volume: inputs.monthlyVolume.value,
+    services_interest: servicesCheckboxes.filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.value),
+    current_3pl: getCurrent3plValue(),
+    comments: inputs.comments.value.trim() || null,
+    privacy_policy_accepted: inputs.privacyPolicy.checked,
+  };
+}
+
+async function submitApplication() {
+  const response = await fetch(`${API_BASE_URL}/applications`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(getSubmissionPayload()),
+  });
+
+  if (!response.ok) {
+    let detail = "We could not send your request right now. Please try again.";
+
+    try {
+      const errorPayload = await response.json();
+      if (typeof errorPayload.detail === "string") {
+        detail = errorPayload.detail;
+      }
+    } catch {
+      // Ignore invalid JSON and keep fallback message.
+    }
+
+    throw new Error(detail);
+  }
+
+  return response.json();
+}
+
 function attachRealtimeValidation(input, validateFn, eventName = "input") {
   input.addEventListener(eventName, () => {
     successMessage.textContent = "";
@@ -280,7 +326,7 @@ current3plRadios.forEach((radio) => {
   });
 });
 
-form.addEventListener("submit", (event) => {
+form.addEventListener("submit", async (event) => {
   event.preventDefault();
   successMessage.textContent = "";
 
@@ -304,12 +350,27 @@ form.addEventListener("submit", (event) => {
     return;
   }
 
-  successMessage.textContent =
-    "Thank you for your interest in TrackFlow! We have received your request. Our commercial team will review your information and contact you within the next 24-48 hours to schedule a call and learn about your logistics needs in detail. If you have any urgent inquiry, write to us directly at <comercial@trackflow.com>";
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "Sending...";
+  }
 
-  keepSuccessOnReset = true;
-  form.reset();
-  resetValidationState();
+  try {
+    await submitApplication();
+    successMessage.textContent =
+      "Thank you for your interest in TrackFlow. We received your request and our commercial team will contact you within the next 24-48 hours.";
+
+    keepSuccessOnReset = true;
+    form.reset();
+    resetValidationState();
+  } catch (error) {
+    successMessage.textContent = error.message;
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = "Request information";
+    }
+  }
 });
 
 form.addEventListener("reset", () => {
