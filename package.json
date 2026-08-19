@@ -1,0 +1,16 @@
+{
+  "name": "sp-aie-shernandez1689-project-logistic",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TrackFlow Hito 2 - utilidades TypeScript",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/dev-runner.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "tsx": "^4.19.1"
+  }
+}
