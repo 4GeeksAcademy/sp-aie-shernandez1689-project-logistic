@@ -16,23 +16,23 @@ export function findShipmentById(shipments, id) {
     return null;
 }
 export function binarySearchProductByWeight(sortedProducts, targetWeight) {
-    let left = 0;
-    let right = sortedProducts.length - 1;
-    while (left <= right) {
-        const middle = Math.floor((left + right) / 2);
-        const middleProduct = sortedProducts[middle];
+    let leftIndex = 0;
+    let rightIndex = sortedProducts.length - 1;
+    while (leftIndex <= rightIndex) {
+        const middleIndex = Math.floor((leftIndex + rightIndex) / 2);
+        const middleProduct = sortedProducts[middleIndex];
         if (middleProduct === undefined) {
             return -1;
         }
         const middleWeight = middleProduct.weightKg;
         if (middleWeight === targetWeight) {
-            return middle;
+            return middleIndex;
         }
         if (middleWeight < targetWeight) {
-            left = middle + 1;
+            leftIndex = middleIndex + 1;
         }
         else {
-            right = middle - 1;
+            rightIndex = middleIndex - 1;
         }
     }
     return -1;
