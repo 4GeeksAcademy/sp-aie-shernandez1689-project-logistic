@@ -50,17 +50,17 @@ export function scoreCarrierForShipment(carrier, shipment, product) {
     return roundToTwoDecimals(score);
 }
 export function selectBestCarrier(carriers, shipment, product) {
-    const suitableCarriers = carriers
+    const suitableCarrierCandidates = carriers
         .map((carrier) => {
         const score = scoreCarrierForShipment(carrier, shipment, product);
         const cost = calculateShippingCost(shipment, product, carrier);
         return { carrier, score, cost };
     })
         .filter((item) => item.score >= 50);
-    if (suitableCarriers.length === 0) {
+    if (suitableCarrierCandidates.length === 0) {
         return null;
     }
-    const best = suitableCarriers.reduce((currentBest, candidate) => {
+    const bestCandidate = suitableCarrierCandidates.reduce((currentBest, candidate) => {
         if (candidate.cost < currentBest.cost) {
             return candidate;
         }
@@ -70,9 +70,9 @@ export function selectBestCarrier(carriers, shipment, product) {
         return currentBest;
     });
     return {
-        carrier: best.carrier,
-        score: roundToTwoDecimals(best.score),
-        cost: roundToTwoDecimals(best.cost),
+        carrier: bestCandidate.carrier,
+        score: roundToTwoDecimals(bestCandidate.score),
+        cost: roundToTwoDecimals(bestCandidate.cost),
     };
 }
 export function countProductsByCategory(products) {
@@ -143,11 +143,11 @@ export function findTopCarriers(shipments, topN) {
     }
     return [...usage.entries()]
         .map(([carrier, count]) => ({ carrier, count }))
-        .sort((a, b) => {
-        if (b.count !== a.count) {
-            return b.count - a.count;
+        .sort((leftCarrierUsage, rightCarrierUsage) => {
+        if (rightCarrierUsage.count !== leftCarrierUsage.count) {
+            return rightCarrierUsage.count - leftCarrierUsage.count;
         }
-        return a.carrier.localeCompare(b.carrier);
+        return leftCarrierUsage.carrier.localeCompare(rightCarrierUsage.carrier);
     })
         .slice(0, topN);
 }

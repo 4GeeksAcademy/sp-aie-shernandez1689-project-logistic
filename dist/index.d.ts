@@ -1,2 +1,2 @@
-export * from "./types/domain";
+export * from "./types/models";
 export * from "./utils";
