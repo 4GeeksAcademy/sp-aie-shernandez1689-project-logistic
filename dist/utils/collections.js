@@ -33,33 +33,35 @@ export function filterLowStockProducts(products) {
     return products.filter((product) => product.stockQuantity <= product.minStockThreshold);
 }
 export function sortProductsByStock(products, order) {
-    return [...products].sort((a, b) => {
+    return [...products].sort((leftProduct, rightProduct) => {
         return order === "asc"
-            ? a.stockQuantity - b.stockQuantity
-            : b.stockQuantity - a.stockQuantity;
+            ? leftProduct.stockQuantity - rightProduct.stockQuantity
+            : rightProduct.stockQuantity - leftProduct.stockQuantity;
     });
 }
 export function sortCarriersByReliability(carriers, order) {
-    return [...carriers].sort((a, b) => {
-        return order === "asc" ? a.onTimeRate - b.onTimeRate : b.onTimeRate - a.onTimeRate;
+    return [...carriers].sort((leftCarrier, rightCarrier) => {
+        return order === "asc"
+            ? leftCarrier.onTimeRate - rightCarrier.onTimeRate
+            : rightCarrier.onTimeRate - leftCarrier.onTimeRate;
     });
 }
 export function sortProductsByFields(products, rules) {
     if (rules.length === 0) {
         return [...products];
     }
-    return [...products].sort((a, b) => {
+    return [...products].sort((leftProduct, rightProduct) => {
         for (const rule of rules) {
-            const aValue = a[rule.field];
-            const bValue = b[rule.field];
-            if (aValue === bValue) {
+            const leftValue = leftProduct[rule.field];
+            const rightValue = rightProduct[rule.field];
+            if (leftValue === rightValue) {
                 continue;
             }
-            if (typeof aValue === "string" && typeof bValue === "string") {
-                const comparison = aValue.localeCompare(bValue);
+            if (typeof leftValue === "string" && typeof rightValue === "string") {
+                const comparison = leftValue.localeCompare(rightValue);
                 return rule.order === "asc" ? comparison : -comparison;
             }
-            const comparison = Number(aValue) - Number(bValue);
+            const comparison = Number(leftValue) - Number(rightValue);
             return rule.order === "asc" ? comparison : -comparison;
         }
         return 0;

@@ -1,4 +1,4 @@
-import type { Carrier, Product, ProductCategory, ProductStatus, Shipment, ShipmentStatus, WarehouseLocation } from "../types/domain";
+import type { Carrier, Product, ProductCategory, ProductStatus, Shipment, ShipmentStatus, WarehouseLocation } from "../types/models";
 export interface ProductFilterCriteria {
     warehouse?: WarehouseLocation;
     category?: ProductCategory;
