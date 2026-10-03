@@ -29,6 +29,16 @@ export type Candidate = {
   notes_count: number;
 };
 
+export type CandidateInput = {
+  full_name: string;
+  email: string;
+  phone: string;
+  position: string;
+  linkedin_url: string | null;
+  cv_url: string | null;
+  experience_years: number;
+};
+
 type CandidatePage = {
   total: number;
   page: number;
@@ -43,10 +53,29 @@ export type CandidateNote = {
   created_at: string;
 };
 
+export async function createCandidate(input: CandidateInput): Promise<Candidate> {
+  const response = await request("/records", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error("No se pudo registrar la candidatura. Vuelve a intentarlo.");
+  return await response.json();
+}
+
+export async function updateCandidate(id: string, input: CandidateInput): Promise<void> {
+  const response = await request(`/records/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error("No se pudieron guardar los datos. Vuelve a intentarlo.");
+}
+
 async function request(path: string, options: RequestInit = {}) {
   const baseUrl = process.env.NEXT_PUBLIC_API_URL;
   if (!baseUrl) throw new Error("Falta la URL de la API.");
-  return fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
+  return await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
     ...options,
     cache: "no-store",
     signal: AbortSignal.timeout(15000),
@@ -87,7 +116,7 @@ export async function deleteCandidateNote(id: string, noteId: string): Promise<v
 async function getPage(page: number): Promise<CandidatePage> {
   const response = await request(`/records?page=${page}`);
   if (!response.ok) throw new Error("No se pudieron cargar las candidaturas.");
-  return response.json();
+  return await response.json();
 }
 
 export async function getCandidates(): Promise<Candidate[]> {
@@ -105,7 +134,7 @@ export async function getCandidate(id: string): Promise<Candidate | null> {
   const response = await request(`/records/${encodeURIComponent(id)}`);
   if (response.status === 404) return null;
   if (!response.ok) throw new Error("No se pudo cargar la candidatura.");
-  return response.json();
+  return await response.json();
 }
 
 export async function getCandidateNotes(id: string): Promise<CandidateNote[]> {
