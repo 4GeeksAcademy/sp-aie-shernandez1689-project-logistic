@@ -7,6 +7,7 @@ import {
   stageLabels,
   statusLabels,
 } from "@/lib/candidates";
+import { CandidateNotes, CandidateProgress } from "./candidate-controls";
 
 function webUrl(value: string | null) {
   if (!value) return null;
@@ -46,6 +47,7 @@ export default async function CandidateDetail({
       <div className="detail-grid">
         <section aria-labelledby="candidate-data">
           <h2 id="candidate-data">Datos de la candidatura</h2>
+          <CandidateProgress candidate={candidate} />
           <dl className="candidate-data">
             <div><dt>Nombre completo</dt><dd>{candidate.full_name}</dd></div>
             <div><dt>Puesto</dt><dd>{candidate.position}</dd></div>
@@ -62,21 +64,7 @@ export default async function CandidateDetail({
             <div><dt>Notas registradas</dt><dd>{candidate.notes_count}</dd></div>
           </dl>
         </section>
-        <section className="notes-section" aria-labelledby="candidate-notes">
-          <h2 id="candidate-notes">Notas internas <span className="secondary-count">{notes.length}</span></h2>
-          {notes.length === 0 ? (
-            <p className="empty-state">Esta candidatura no tiene notas.</p>
-          ) : (
-            <ol className="notes-list">
-              {notes.map((note) => (
-                <li key={note.id}>
-                  <time dateTime={note.created_at}>{formatDate(note.created_at)}</time>
-                  <p>{note.content}</p>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
+        <CandidateNotes id={candidate.id} notes={notes} />
       </div>
     </main>
   );
