@@ -6,9 +6,8 @@ import { useState, type FormEvent } from "react";
 import {
   createCandidate,
   updateCandidate,
-  type Candidate,
-  type CandidateInput,
 } from "@/lib/candidates";
+import type { Candidate, CandidateInput } from "@/types/candidates";
 
 type CandidateFormProps = {
   candidate?: Candidate;

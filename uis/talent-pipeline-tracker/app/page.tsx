@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { getCandidates } from "@/lib/candidates";
-import CandidateList from "./candidate-list";
+import CandidateList from "@/components/candidate-list";
 
 export default async function Home() {
   const candidates = await getCandidates();

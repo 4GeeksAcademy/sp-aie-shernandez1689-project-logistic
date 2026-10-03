@@ -7,8 +7,8 @@ import {
   stageLabels,
   statusLabels,
 } from "@/lib/candidates";
-import CandidateForm from "@/app/candidate-form";
-import { CandidateNotes, CandidateProgress } from "./candidate-controls";
+import CandidateForm from "@/components/candidate-form";
+import { CandidateNotes, CandidateProgress } from "@/components/candidate-controls";
 
 export default async function CandidateDetail({
   params,

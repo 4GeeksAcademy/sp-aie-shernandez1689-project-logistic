@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { type Candidate, stageLabels, statusLabels } from "@/lib/candidates";
+import { stageLabels, statusLabels } from "@/lib/candidates";
+import type { Candidate } from "@/types/candidates";
 
 function isKeyOf<T extends object>(labels: T, value: string | null): value is Extract<keyof T, string> {
   return value !== null && Object.hasOwn(labels, value);

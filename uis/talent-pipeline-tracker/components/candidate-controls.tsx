@@ -9,9 +9,8 @@ import {
   stageLabels,
   statusLabels,
   updateCandidateProgress,
-  type Candidate,
-  type CandidateNote,
 } from "@/lib/candidates";
+import type { Candidate, CandidateNote } from "@/types/candidates";
 
 export function CandidateProgress({ candidate }: { candidate: Candidate }) {
   const router = useRouter();

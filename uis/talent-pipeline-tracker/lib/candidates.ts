@@ -1,56 +1,28 @@
-export const statusLabels = {
+import type {
+  Candidate,
+  CandidateInput,
+  CandidateNote,
+  CandidateNotesResponse,
+  CandidatePage,
+  CandidateStage,
+  CandidateStatus,
+} from "@/types/candidates";
+
+export type { Candidate, CandidateInput, CandidateNote } from "@/types/candidates";
+
+export const statusLabels: Record<CandidateStatus, string> = {
   received: "Recibida",
   in_progress: "En proceso",
   selected: "Seleccionada",
   discarded: "Descartada",
 };
 
-export const stageLabels = {
+export const stageLabels: Record<CandidateStage, string> = {
   pending: "Pendiente de revisión",
   review: "En revisión",
   personal_interview: "Entrevista personal",
   technical_interview: "Entrevista técnica",
   offer_presented: "Oferta presentada",
-};
-
-export type Candidate = {
-  id: string;
-  full_name: string;
-  email: string;
-  phone: string | null;
-  position: string;
-  linkedin_url: string | null;
-  cv_url: string | null;
-  status: keyof typeof statusLabels;
-  stage: keyof typeof stageLabels;
-  experience_years: number;
-  applied_at: string;
-  updated_at: string;
-  notes_count: number;
-};
-
-export type CandidateInput = {
-  full_name: string;
-  email: string;
-  phone: string;
-  position: string;
-  linkedin_url: string | null;
-  cv_url: string | null;
-  experience_years: number;
-};
-
-type CandidatePage = {
-  total: number;
-  page: number;
-  limit: number;
-  data: Candidate[];
-};
-
-export type CandidateNote = {
-  id: string;
-  record_id: string;
-  content: string;
-  created_at: string;
 };
 
 export async function createCandidate(input: CandidateInput): Promise<Candidate> {
@@ -140,7 +112,7 @@ export async function getCandidate(id: string): Promise<Candidate | null> {
 export async function getCandidateNotes(id: string): Promise<CandidateNote[]> {
   const response = await request(`/records/${encodeURIComponent(id)}/notes`);
   if (!response.ok) throw new Error("No se pudieron cargar las notas.");
-  const result: { data: CandidateNote[] } = await response.json();
+  const result: CandidateNotesResponse = await response.json();
   return result.data;
 }
 
