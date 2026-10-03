@@ -43,6 +43,10 @@ h1 { font-size: 30px; line-height: 1.2; font-weight: 650; overflow-wrap: anywher
 h2 { font-size: 17px; font-weight: 650; margin-bottom: 20px; }
 .subtitle { margin-top: 10px; color: var(--muted); overflow-wrap: anywhere; }
 .record-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.filters { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 16px; }
+.filters label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.filters input, .filters select { min-width: 220px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 4px; background: #fff; color: var(--foreground); font-size: 14px; }
+.filters + .record-count { display: block; margin-bottom: 12px; }
 .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
 table { width: 100%; min-width: 850px; border-collapse: collapse; text-align: left; }
 th { padding: 14px 20px; background: #eef2ef; color: var(--muted); font-size: 12px; font-weight: 600; }
