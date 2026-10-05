@@ -1,11 +1,16 @@
 {
   "name": "sp-aie-shernandez1689-project-logistic",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "Root scripts for incidents analysis project",
+  "description": "TrackFlow Hito 2 - utilidades TypeScript",
+  "type": "module",
   "scripts": {
-    "dev": "python services/api/app.py",
-    "run-api": "python services/api/app.py",
-    "analyze": "python scripts/analyze.py"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/dev-runner.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "tsx": "^4.19.1"
   }
 }
