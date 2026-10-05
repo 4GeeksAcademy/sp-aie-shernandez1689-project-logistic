@@ -6,3 +6,14 @@ This folder contains **helper scripts** for the monorepo: development automation
 - **Recommendation**: document each script (what it does, parameters, requirements, usage examples) and keep them reproducible (and safe) across environments.
 
 > _Spanish version: [README.es.md](./README.es.md)._
+
+## Scripts in this repository
+
+- `analyze.py`: validates and analyzes incidents CSV files, prints a readable report, and optionally exports `resultados.csv`.
+
+Usage:
+
+```bash
+python scripts/analyze.py incidents.CSV
+```
+
