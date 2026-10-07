@@ -23,25 +23,137 @@
 }
 
 .error-message {
-  border-color: #fecaca;
-  background-color: #fef2f2;
-  color: #b91c1c;
+  border-color: #7f1d1d;
+  background-color: #450a0a;
+  color: #fecaca;
 }
 
 .warning-message {
-  border-color: #fde68a;
-  background-color: #fffbeb;
-  color: #b45309;
+  border-color: #78350f;
+  background-color: #451a03;
+  color: #fde68a;
 }
 
 .success-message {
-  border-color: #bbf7d0;
-  background-color: #f0fdf4;
-  color: #166534;
+  border-color: #166534;
+  background-color: #052e16;
+  color: #bbf7d0;
 }
 
 .error-message:empty,
 .warning-message:empty,
 .success-message:empty {
   display: none;
+}
+
+.application-page {
+  color-scheme: dark;
+}
+
+.application-page main > section {
+  border: 1px solid rgb(103 232 249 / 20%);
+  background: rgb(15 23 42 / 80%);
+  box-shadow: 0 10px 30px rgb(8 145 178 / 10%);
+}
+
+.application-page #applicationForm fieldset {
+  border-color: rgb(255 255 255 / 10%);
+  background: rgb(2 6 23 / 45%);
+}
+
+.application-page #applicationForm legend {
+  color: #a5f3fc;
+}
+
+.application-page #applicationForm input:not([type="checkbox"]):not([type="radio"]),
+.application-page #applicationForm select,
+.application-page #applicationForm textarea {
+  border-color: rgb(255 255 255 / 20%);
+  background-color: #020617;
+  color: #f8fafc;
+}
+
+.application-page #applicationForm input::placeholder,
+.application-page #applicationForm textarea::placeholder {
+  color: #94a3b8;
+}
+
+.application-page #applicationForm input[type="checkbox"],
+.application-page #applicationForm input[type="radio"] {
+  accent-color: #22d3ee;
+}
+
+.application-page #applicationForm fieldset .inline-flex.rounded-lg {
+  border-color: rgb(255 255 255 / 15%);
+  background-color: rgb(15 23 42 / 70%);
+  color: #e2e8f0;
+}
+
+.application-page #applicationForm button[type="submit"] {
+  background-color: #22d3ee;
+  color: #020617;
+}
+
+.application-page #applicationForm button[type="submit"]:hover {
+  background-color: #67e8f9;
+}
+
+.application-page #applicationForm button[type="reset"] {
+  border-color: rgb(255 255 255 / 20%);
+  background-color: rgb(15 23 42 / 70%);
+  color: #e2e8f0;
+}
+
+.application-page #applicationForm button[type="reset"]:hover {
+  background-color: rgb(30 41 59 / 90%);
+}
+
+.application-page a[href="index.html"] {
+  color: #a5f3fc;
+}
+
+.testing-page {
+  color-scheme: dark;
+}
+
+.testing-page main > section,
+.testing-page main > section article {
+  border-color: rgb(103 232 249 / 20%);
+  background-color: rgb(15 23 42 / 75%);
+  box-shadow: 0 10px 30px rgb(8 145 178 / 10%);
+}
+
+.testing-page main > section article h2 {
+  color: #a5f3fc;
+}
+
+.testing-page input,
+.testing-page select {
+  border-color: rgb(255 255 255 / 20%);
+  background-color: #020617;
+  color: #f8fafc;
+}
+
+.testing-page input:focus,
+.testing-page select:focus {
+  outline: 2px solid rgb(34 211 238 / 60%);
+  outline-offset: 2px;
+}
+
+.testing-page button:not(#clearOutput) {
+  background-color: #22d3ee;
+  color: #020617;
+}
+
+.testing-page button:not(#clearOutput):hover {
+  background-color: #67e8f9;
+}
+
+.testing-page #clearOutput {
+  border-color: rgb(255 255 255 / 20%);
+  color: #e2e8f0;
+}
+
+.testing-page #clearOutput:hover {
+  background-color: rgb(30 41 59 / 90%);
 }
