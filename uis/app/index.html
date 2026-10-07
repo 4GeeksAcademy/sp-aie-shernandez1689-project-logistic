@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TrackFlow - Panel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="min-h-screen bg-slate-950 text-white">
+    <main id="authApp" class="mx-auto min-h-screen w-full max-w-5xl px-4 py-8 sm:px-6 lg:px-10">
+      <header class="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-cyan-300/20 bg-slate-900/80 p-5">
+        <div>
+          <p class="text-xs uppercase tracking-[0.2em] text-cyan-200">Vista autenticada</p>
+          <h1 class="mt-2 text-2xl font-black">Panel principal</h1>
+        </div>
+        <button id="logoutButton" class="rounded-xl border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">Cerrar sesión</button>
+      </header>
+
+      <section class="mt-6 grid gap-4 md:grid-cols-2">
+        <article class="rounded-2xl border border-cyan-300/20 bg-slate-900/70 p-5">
+          <h2 class="text-lg font-bold text-cyan-200">Cuenta</h2>
+          <ul class="mt-3 space-y-2 text-sm text-slate-200">
+            <li><strong>Email:</strong> <span id="userEmail">Cargando...</span></li>
+            <li><strong>Rol:</strong> <span id="userRole">Cargando...</span></li>
+          </ul>
+        </article>
+
+        <article class="rounded-2xl border border-cyan-300/20 bg-slate-900/70 p-5">
+          <h2 class="text-lg font-bold text-cyan-200">Perfil</h2>
+          <ul class="mt-3 space-y-2 text-sm text-slate-200">
+            <li><strong>Nombre:</strong> <span id="profileName">Cargando...</span></li>
+            <li><strong>Teléfono:</strong> <span id="profilePhone">Cargando...</span></li>
+            <li><strong>Dirección:</strong> <span id="profileAddress">Cargando...</span></li>
+          </ul>
+        </article>
+      </section>
+
+      <div class="mt-6">
+        <a href="../account/profile/" class="mr-4 text-sm font-semibold text-cyan-300 hover:text-cyan-200">Ir a mi perfil</a>
+        <a href="../index.html" class="text-sm font-semibold text-cyan-300 hover:text-cyan-200">Volver al inicio público</a>
+      </div>
+    </main>
+
+    <script src="../auth.js"></script>
+  </body>
+</html>

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TrackFlow - Iniciar sesión</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="min-h-screen bg-slate-950 text-white">
+    <main class="mx-auto flex min-h-screen w-full max-w-6xl items-center px-4 py-10 sm:px-6 lg:px-10">
+      <section class="grid w-full overflow-hidden rounded-3xl border border-cyan-300/20 bg-slate-900/70 shadow-2xl shadow-cyan-900/20 md:grid-cols-2">
+        <div class="flex flex-col justify-between bg-gradient-to-br from-cyan-900/50 via-slate-900 to-slate-900 p-8">
+          <div>
+            <a href="../index.html" class="text-sm font-semibold text-cyan-200 hover:text-cyan-100">Volver al inicio</a>
+            <h1 class="mt-6 text-3xl font-black leading-tight">Bienvenido de nuevo a TrackFlow</h1>
+            <p class="mt-4 text-sm text-slate-300">Inicia sesión para acceder a tu panel y gestionar tu cuenta.</p>
+          </div>
+          <p class="mt-6 text-xs text-slate-400">Si no tienes cuenta, puedes crearla en segundos.</p>
+        </div>
+
+        <div class="bg-slate-900/90 p-8">
+          <h2 class="text-2xl font-bold">Iniciar sesión</h2>
+          <p class="mt-2 text-sm text-slate-300">Usa tu email y contraseña para entrar.</p>
+
+          <form id="loginForm" class="mt-6 space-y-4" novalidate>
+            <div>
+              <label for="email" class="mb-1 block text-sm font-semibold text-slate-200">Email</label>
+              <input id="email" name="email" type="email" required class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-4 focus:ring-cyan-500/20" placeholder="tu@email.com" />
+              <p id="emailError" class="error-message" role="alert"></p>
+            </div>
+
+            <div>
+              <label for="password" class="mb-1 block text-sm font-semibold text-slate-200">Contraseña</label>
+              <input id="password" name="password" type="password" required minlength="8" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-4 focus:ring-cyan-500/20" placeholder="Mínimo 8 caracteres" />
+              <p id="passwordError" class="error-message" role="alert"></p>
+            </div>
+
+            <button type="submit" class="w-full rounded-xl bg-cyan-400 px-5 py-3 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 focus:outline-none focus:ring-4 focus:ring-cyan-500/40">Iniciar sesión</button>
+            <p id="loginError" class="error-message" role="alert"></p>
+          </form>
+
+          <p class="mt-5 text-sm text-slate-300">¿No tienes cuenta? <a href="../register/index.html" class="font-semibold text-cyan-300 hover:text-cyan-200">Regístrate</a></p>
+        </div>
+      </section>
+    </main>
+
+    <script src="../auth.js"></script>
+  </body>
+</html>

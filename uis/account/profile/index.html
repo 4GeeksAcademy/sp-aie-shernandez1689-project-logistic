@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TrackFlow - Mi perfil</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="../../styles.css" />
+  </head>
+  <body class="min-h-screen bg-slate-950 text-white">
+    <main class="mx-auto min-h-screen w-full max-w-4xl px-4 py-8 sm:px-6 lg:px-10">
+      <header class="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-cyan-300/20 bg-slate-900/80 p-5">
+        <div>
+          <p class="text-xs uppercase tracking-[0.2em] text-cyan-200">Gestión de cuenta</p>
+          <h1 class="mt-2 text-2xl font-black">Perfil de usuario</h1>
+          <p class="mt-2 text-sm text-slate-300">Puedes actualizar tus datos de contacto asociados a la cuenta.</p>
+        </div>
+        <button id="accountLogoutButton" class="rounded-xl border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">Cerrar sesión</button>
+      </header>
+
+      <section class="mt-6 rounded-2xl border border-cyan-300/20 bg-slate-900/70 p-5 sm:p-6">
+        <form id="accountProfileForm" class="space-y-4" novalidate>
+          <div>
+            <label for="accountEmail" class="mb-1 block text-sm font-semibold text-slate-200">Email</label>
+            <input id="accountEmail" type="email" readonly class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-sm text-slate-300" />
+          </div>
+
+          <div>
+            <label for="accountName" class="mb-1 block text-sm font-semibold text-slate-200">Nombre</label>
+            <input id="accountName" name="name" type="text" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-4 focus:ring-cyan-500/20" placeholder="Tu nombre" />
+            <p id="accountNameError" class="error-message" role="alert"></p>
+          </div>
+
+          <div>
+            <label for="accountPhone" class="mb-1 block text-sm font-semibold text-slate-200">Teléfono</label>
+            <input id="accountPhone" name="phone" type="tel" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-4 focus:ring-cyan-500/20" placeholder="+34 600 000 000" />
+            <p id="accountPhoneError" class="error-message" role="alert"></p>
+          </div>
+
+          <div>
+            <label for="accountAddress" class="mb-1 block text-sm font-semibold text-slate-200">Dirección</label>
+            <input id="accountAddress" name="address" type="text" class="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white placeholder:text-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-4 focus:ring-cyan-500/20" placeholder="Calle, ciudad, país" />
+            <p id="accountAddressError" class="error-message" role="alert"></p>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-3 pt-2">
+            <button type="submit" class="rounded-xl bg-cyan-400 px-5 py-3 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 focus:outline-none focus:ring-4 focus:ring-cyan-500/40">Guardar cambios</button>
+            <a href="../../app/" class="rounded-xl border border-slate-600 bg-slate-800 px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-slate-700">Volver al panel</a>
+          </div>
+
+          <p id="accountProfileSuccess" class="success-message" role="status" aria-live="polite"></p>
+          <p id="accountProfileError" class="error-message" role="alert"></p>
+        </form>
+      </section>
+    </main>
+
+    <script src="../../auth.js"></script>
+  </body>
+</html>
