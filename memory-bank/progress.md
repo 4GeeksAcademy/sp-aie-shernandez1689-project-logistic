@@ -10,6 +10,7 @@
   - PUT /users/{id}: solo el propio usuario o admin; role e is_active solo modificables por admin.
   - DELETE /users/{id} elimina tambien el perfil vinculado.
   - Smoke test con TestClient sobre DB temporal: OK (201/409/422/401/403/204/404 segun caso).
+- services/user-api: Profile (id, user_id, name, phone, address) 1:1 con User; GET/PUT /profiles/me verificados (401 sin token, el dueño solo edita su perfil, user_id del body ignorado).
 
 ## Proximos pasos previstos
 1. Definir el idioma base del sitio y confirmar si la version bilingue entra en este hito.
