@@ -30,9 +30,12 @@ def create_user(
     user = UserRecord(email=email, hashed_password=hash_password(password), role=role)
     users_table.insert(user.model_dump())
 
-    if any([name, phone, address]):
+    try:
         profile = ProfileRecord(user_id=user.id, name=name, phone=phone, address=address)
         profiles_table.insert(profile.model_dump())
+    except Exception:
+        users_table.remove(Query().id == user.id)
+        raise
 
     return get_user_by_id_or_raise(user.id)
 

@@ -89,9 +89,14 @@ function renderTable(items) {
 }
 
 async function apiFetch(path, options = {}) {
+  const token = localStorage.getItem("trackflow_access_token");
   const response = await fetch(getApiBase() + path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {}),
+    },
   });
 
   if (!response.ok) {

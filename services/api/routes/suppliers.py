@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from auth import get_current_user, require_roles
 from database import get_suppliers_table
 from models import (
     SupplierCreate,
@@ -15,10 +16,11 @@ from models import (
 )
 
 
-router = APIRouter(prefix="/suppliers", tags=["suppliers"])
+router = APIRouter(prefix="/suppliers", tags=["suppliers"], dependencies=[Depends(get_current_user)])
+require_editor = Depends(require_roles("admin", "manager"))
 
 
-@router.post("", response_model=SupplierCreatedResponse, status_code=201)
+@router.post("", response_model=SupplierCreatedResponse, status_code=201, dependencies=[require_editor])
 def create_supplier(payload: SupplierCreate) -> SupplierCreatedResponse:
     db, suppliers_table = get_suppliers_table()
     try:
@@ -66,7 +68,7 @@ def get_supplier_by_id(supplier_id: int) -> SupplierCreatedResponse:
         db.close()
 
 
-@router.patch("/{supplier_id}/rate", response_model=SupplierCreatedResponse)
+@router.patch("/{supplier_id}/rate", response_model=SupplierCreatedResponse, dependencies=[require_editor])
 def update_supplier_rate(
     supplier_id: int,
     payload: SupplierRateUpdate,
@@ -92,7 +94,7 @@ def update_supplier_rate(
         db.close()
 
 
-@router.patch("/{supplier_id}/status", response_model=SupplierCreatedResponse)
+@router.patch("/{supplier_id}/status", response_model=SupplierCreatedResponse, dependencies=[require_editor])
 def update_supplier_status(
     supplier_id: int,
     payload: SupplierStatusUpdate,
@@ -111,7 +113,7 @@ def update_supplier_status(
         db.close()
 
 
-@router.delete("/{supplier_id}", status_code=204)
+@router.delete("/{supplier_id}", status_code=204, dependencies=[require_editor])
 def delete_supplier(supplier_id: int) -> None:
     db, suppliers_table = get_suppliers_table()
     try:

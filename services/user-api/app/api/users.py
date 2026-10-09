@@ -76,10 +76,10 @@ def update_user_credentials(
             detail="Only the same user or an admin can update this account",
         )
 
-    if payload.role is not None and not is_admin:
+    if (payload.role is not None or payload.is_active is not None) and not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admins can change role",
+            detail="Only admins can change role or active status",
         )
 
     try:
