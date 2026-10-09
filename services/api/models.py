@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 from typing import ClassVar, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, PositiveFloat, field_validator, model_validator
 
@@ -19,6 +20,59 @@ VALID_CATEGORIES: list[str] = [
 ]
 
 VALID_STATUSES: list[str] = ["active", "suspended"]
+
+
+class IncidentCategory(str, Enum):
+    LOST_PARCEL = "lost_parcel"
+    DELIVERY_FAILURE = "delivery_failure"
+    INVENTORY_DISCREPANCY = "inventory_discrepancy"
+    CARRIER_ISSUE = "carrier_issue"
+    RETURNS_ISSUE = "returns_issue"
+    WAREHOUSE_INCIDENT = "warehouse_incident"
+    SYSTEM_FAILURE = "system_failure"
+    CLIENT_COMPLAINT = "client_complaint"
+    OTHER = "other"
+
+
+class IncidentStatus(str, Enum):
+    OPEN = "open"
+    IN_PROGRESS = "in_progress"
+    RESOLVED = "resolved"
+    DISCARDED = "discarded"
+
+
+class IncidentOrigin(str, Enum):
+    CUSTOMER = "customer"
+    BRANCH = "branch"
+    INTERNAL = "internal"
+
+
+class IncidentBranch(str, Enum):
+    CENTRAL = "central"
+    LA_WAREHOUSE = "la_warehouse"
+    LA_OFFICE = "la_office"
+    ZARAGOZA_WAREHOUSE = "zaragoza_warehouse"
+    ZARAGOZA_OFFICE = "zaragoza_office"
+
+
+class Incident(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1)
+    category: IncidentCategory
+    status: IncidentStatus = IncidentStatus.OPEN
+    origin: IncidentOrigin
+    branch: IncidentBranch
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_validator("title", "description")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Field must not be empty")
+        return normalized
 
 
 class SupplierStatus(str, Enum):
