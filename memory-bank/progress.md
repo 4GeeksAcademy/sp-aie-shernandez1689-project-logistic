@@ -12,6 +12,7 @@
   - Smoke test con TestClient sobre DB temporal: OK (201/409/422/401/403/204/404 segun caso).
 - services/user-api: Profile (id, user_id, name, phone, address) 1:1 con User; GET/PUT /profiles/me verificados (401 sin token, el dueño solo edita su perfil, user_id del body ignorado).
 - services/user-api: POST /auth/login (JWT HS256) y GET /auth/me (email, role, profile) verificados; login valida password antes de revelar estado inactivo.
+- services/user-api: get_current_user devuelve 401 + WWW-Authenticate ante cualquier fallo (cabecera, firma, expiracion, usuario inexistente o inactivo); JWT exige claims exp y sub. JWT_SECRET_KEY y ACCESS_TOKEN_EXPIRE_MINUTES se leen de .env (ignorado por git; plantilla en .env.example).
 
 ## Proximos pasos previstos
 1. Definir el idioma base del sitio y confirmar si la version bilingue entra en este hito.

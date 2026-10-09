@@ -48,7 +48,12 @@ def create_access_token(subject: str, email: str, role: str, expires_minutes: in
 
 def decode_access_token(token: str) -> dict:
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM],
+            options={"require": ["exp", "sub"]},
+        )
     except ExpiredSignatureError as exc:
         raise ValueError("Token expired") from exc
     except InvalidTokenError as exc:
