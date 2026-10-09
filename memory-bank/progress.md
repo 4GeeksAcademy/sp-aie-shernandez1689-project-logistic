@@ -5,6 +5,11 @@
 - Se alineo projectbrief.md con el negocio TrackFlow y el alcance del hito 1 (website corporativo + captacion de leads).
 - Se alineo techContext.md con stack y restricciones obligatorias: Tailwind, validaciones completas, accesibilidad, SEO y Schema.org.
 - Se definio una skill operativa para sincronizar progreso de trabajo de forma recurrente.
+- services/user-api: modelo User (TinyDB) con RoleEnum (admin/manager/user), capa de servicios y CRUD /users.
+  - POST /users crea siempre el Profile vinculado (con rollback del User si falla) y fuerza role=user.
+  - PUT /users/{id}: solo el propio usuario o admin; role e is_active solo modificables por admin.
+  - DELETE /users/{id} elimina tambien el perfil vinculado.
+  - Smoke test con TestClient sobre DB temporal: OK (201/409/422/401/403/204/404 segun caso).
 
 ## Proximos pasos previstos
 1. Definir el idioma base del sitio y confirmar si la version bilingue entra en este hito.
