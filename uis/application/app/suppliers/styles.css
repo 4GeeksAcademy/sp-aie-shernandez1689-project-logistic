@@ -39,6 +39,7 @@ body {
 
 .page {
   width: min(1200px, 94vw);
+  min-width: 0;
   margin: 2rem auto 3rem;
   display: grid;
   gap: 1rem;
@@ -46,6 +47,7 @@ body {
 
 .topbar,
 .panel {
+  min-width: 0;
   border: 1px solid var(--line);
   background: var(--card);
   border-radius: 18px;
@@ -118,8 +120,13 @@ h1 {
 
 .grid-two {
   display: grid;
-  grid-template-columns: 1.5fr 1fr;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
   gap: 1rem;
+}
+
+.grid-two > *,
+.table-wrap {
+  min-width: 0;
 }
 
 label {
@@ -316,7 +323,7 @@ th {
   }
 
   .grid-two {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
