@@ -127,12 +127,20 @@ def _to_percent(part: int, whole: int) -> str:
     return f"{(part / whole) * 100:.1f}%"
 
 
-def _parse_csv_rows(csv_text: str) -> list[dict[str, str]]:
+def parse_incident_rows(
+    csv_text: str,
+    *,
+    allow_missing_incident_id: bool = False,
+) -> list[dict[str, str]]:
     reader = csv.DictReader(io.StringIO(csv_text))
     if reader.fieldnames is None:
         raise ValueError("CSV without header row")
 
-    missing_cols = REQUIRED_COLUMNS - set(reader.fieldnames)
+    required_columns = REQUIRED_COLUMNS
+    if allow_missing_incident_id:
+        required_columns = REQUIRED_COLUMNS - {"incident_id"}
+
+    missing_cols = required_columns - set(reader.fieldnames)
     if missing_cols:
         cols = ", ".join(sorted(missing_cols))
         raise ValueError(f"CSV missing required columns: {cols}")
@@ -140,7 +148,7 @@ def _parse_csv_rows(csv_text: str) -> list[dict[str, str]]:
     return list(reader)
 
 
-def _validate_row(row: dict[str, str]) -> tuple[set[str], int | None]:
+def validate_incident_row(row: dict[str, str]) -> tuple[set[str], int | None]:
     violations: set[str] = set()
 
     country = (row.get("country") or "").strip()
@@ -200,12 +208,12 @@ def _validate_row(row: dict[str, str]) -> tuple[set[str], int | None]:
 
 
 def analyze_incidents_from_text(csv_text: str, source_file: str = "uploaded.csv") -> AnalysisResult:
-    rows = _parse_csv_rows(csv_text)
+    rows = parse_incident_rows(csv_text)
     invalid_counter: Counter[str] = Counter()
     valid_rows: list[tuple[dict[str, str], int | None]] = []
 
     for row in rows:
-        violations, score = _validate_row(row)
+        violations, score = validate_incident_row(row)
         if violations:
             invalid_counter.update(violations)
         else:

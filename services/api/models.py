@@ -66,13 +66,20 @@ class Incident(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    @field_validator("title", "description")
+    @field_validator("title")
     @classmethod
-    def validate_required_text(cls, value: str) -> str:
+    def validate_title(cls, value: str) -> str:
         normalized = value.strip()
         if not normalized:
             raise ValueError("Field must not be empty")
         return normalized
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Field must not be empty")
+        return value
 
 
 class SupplierStatus(str, Enum):
