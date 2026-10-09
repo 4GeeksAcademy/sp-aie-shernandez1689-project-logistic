@@ -5,7 +5,7 @@ from enum import Enum
 from typing import ClassVar, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, PositiveFloat, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, field_validator, model_validator
 
 
 VALID_CATEGORIES: list[str] = [
@@ -55,8 +55,7 @@ class IncidentBranch(str, Enum):
     ZARAGOZA_OFFICE = "zaragoza_office"
 
 
-class Incident(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid4()))
+class IncidentFields(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     description: str = Field(min_length=1)
     category: IncidentCategory
@@ -80,6 +79,22 @@ class Incident(BaseModel):
         if not value.strip():
             raise ValueError("Field must not be empty")
         return value
+
+
+class Incident(IncidentFields):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class IncidentCreate(IncidentFields):
+    model_config = ConfigDict(extra="forbid")
+
+
+class IncidentStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: IncidentStatus
 
 
 class SupplierStatus(str, Enum):

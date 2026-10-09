@@ -1,6 +1,21 @@
 # Incidents API
 
-Backend service that exposes incident analysis endpoints used by the web UI.
+Backend service that exposes incident management and CSV analysis endpoints.
+
+## Incident management API
+
+The FastAPI app (`uvicorn main:app` from `services/api`) exposes these
+authenticated endpoints. Creating incidents and changing their status require
+the `admin` or `manager` role.
+
+- `POST /api/incidents`: create an incident; invalid or missing fields return
+  HTTP 400 with a descriptive validation message.
+- `GET /api/incidents`: list incidents; optional filters are `status`,
+  `origin`, `branch`, and `category`.
+- `GET /api/incidents/summary`: totals by status, category, origin, and branch.
+- `GET /api/incidents/{id}`: retrieve one incident; returns HTTP 404 if absent.
+- `PATCH /api/incidents/{id}/status`: update status only and enforce the
+  lifecycle transitions defined in `CONTEXT-inc.md`.
 
 ## Endpoints
 
