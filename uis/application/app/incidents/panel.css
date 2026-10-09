@@ -46,6 +46,12 @@
   color: var(--muted);
 }
 
+.summary-state[hidden],
+.load-state[hidden],
+.state-panel[hidden] {
+  display: none;
+}
+
 .summary-state p {
   margin: 0;
 }
@@ -88,6 +94,10 @@
 
 .summary-group {
   min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.9rem;
+  background: rgba(17, 42, 61, 0.7);
 }
 
 .summary-group h3 {
@@ -225,27 +235,27 @@
 }
 
 .status-open {
-  border-color: #e5ca7a;
-  background: #fff6d9;
-  color: #6f4c00;
+  border-color: rgba(251, 191, 36, 0.38);
+  background: rgba(120, 82, 15, 0.22);
+  color: #fde68a;
 }
 
 .status-in_progress {
-  border-color: #9bc9c0;
-  background: #e5f4f1;
-  color: #145d55;
+  border-color: rgba(103, 232, 249, 0.34);
+  background: rgba(8, 145, 178, 0.2);
+  color: #a5f3fc;
 }
 
 .status-resolved {
-  border-color: #a8d4af;
-  background: #e9f6eb;
-  color: #246037;
+  border-color: rgba(74, 222, 128, 0.34);
+  background: rgba(22, 101, 52, 0.22);
+  color: #bbf7d0;
 }
 
 .status-discarded {
-  border-color: #c7cecd;
-  background: #eef1f0;
-  color: #4d5b5a;
+  border-color: rgba(148, 163, 184, 0.32);
+  background: rgba(71, 85, 105, 0.24);
+  color: #cbd5e1;
 }
 
 .state-editor {

@@ -17,7 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from services.api.models import Incident  # noqa: E402
-from shared.incidents_analysis import (  # noqa: E402
+from packages.shared.incidents_validation import (  # noqa: E402
     parse_incident_rows,
     validate_incident_row,
 )

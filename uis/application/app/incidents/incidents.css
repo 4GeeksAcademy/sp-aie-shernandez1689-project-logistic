@@ -13,6 +13,12 @@
   min-width: 0;
 }
 
+.incident-field > label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.18rem;
+}
+
 .incident-field--wide {
   grid-column: 1 / -1;
 }
@@ -22,8 +28,8 @@
 .incident-field textarea {
   width: 100%;
   min-height: 48px;
-  color: var(--text);
-  background: #fff;
+  color: #f4f8fb;
+  background: #0b1c2b;
 }
 
 .incident-field textarea {
@@ -34,7 +40,7 @@
 .incident-field input:focus,
 .incident-field select:focus,
 .incident-field textarea:focus {
-  outline: 3px solid #88d6cb;
+  outline: 3px solid rgba(103, 232, 249, 0.28);
   outline-offset: 1px;
 }
 
@@ -50,8 +56,8 @@
 }
 
 .branch-field.branch-highlight {
-  border-color: var(--brand);
-  background: #e7f3ed;
+  border-color: var(--brand-strong);
+  background: rgba(34, 211, 238, 0.1);
 }
 
 .field-hint,
@@ -133,6 +139,10 @@
   border-top-color: #fff;
   border-radius: 50%;
   animation: spin 700ms linear infinite;
+}
+
+.spinner[hidden] {
+  display: none;
 }
 
 @keyframes spin {
