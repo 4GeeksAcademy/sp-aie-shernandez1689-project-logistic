@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from flask import Flask, jsonify, make_response, request, send_from_directory
+from werkzeug.exceptions import HTTPException as WerkzeugHTTPException
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -25,6 +26,15 @@ WEB_ROOT = UIS_ROOT / "web"
 
 LAST_ANALYSIS_JSON: dict | None = None
 LAST_ANALYSIS_CSV: str | None = None
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(error: Exception):
+    if isinstance(error, WerkzeugHTTPException):
+        return error
+
+    app.logger.exception("Unhandled Flask API exception")
+    return _error_response("Error interno del servidor.", 500)
 
 
 def _error_response(message: str, status_code: int):
@@ -145,4 +155,4 @@ def latest_result():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    app.run(host="0.0.0.0", port=8000, debug=False)

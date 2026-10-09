@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from tinydb import Query as TinyQuery
 
@@ -35,24 +36,19 @@ VALID_TRANSITIONS = {
 }
 
 
-def _validation_message(error: ValidationError) -> str:
-    issues = [
-        f"{'.'.join(str(part) for part in issue['loc'])}: {issue['msg']}"
-        for issue in error.errors(include_url=False)
-    ]
-    return "Invalid incident: " + "; ".join(issues)
-
-
 @router.post("", response_model=Incident, status_code=201, dependencies=[require_editor])
 def create_incident(payload: Any = Body(default=None)) -> Incident:
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Incident body must be a JSON object")
+        raise HTTPException(
+            status_code=400,
+            detail={"field": "body", "message": "Se esperaba un objeto JSON."},
+        )
 
     try:
         incident_data = IncidentCreate.model_validate(payload)
         incident = Incident(**incident_data.model_dump())
     except ValidationError as error:
-        raise HTTPException(status_code=400, detail=_validation_message(error)) from error
+        raise RequestValidationError(error.errors()) from error
 
     db, incidents_table = get_incidents_table()
     try:
@@ -138,12 +134,15 @@ def update_incident_status(
     payload: Any = Body(default=None),
 ) -> Incident:
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Status body must be a JSON object")
+        raise HTTPException(
+            status_code=400,
+            detail={"field": "body", "message": "Se esperaba un objeto JSON."},
+        )
 
     try:
         status_update = IncidentStatusUpdate.model_validate(payload)
     except ValidationError as error:
-        raise HTTPException(status_code=400, detail=_validation_message(error)) from error
+        raise RequestValidationError(error.errors()) from error
 
     db, incidents_table = get_incidents_table()
     try:
@@ -157,8 +156,13 @@ def update_incident_status(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Invalid status transition: {current_status.value} -> "
-                    f"{next_status.value}"
+                    {
+                        "field": "status",
+                        "message": (
+                            f"No se permite cambiar de {current_status.value} "
+                            f"a {next_status.value}."
+                        ),
+                    }
                 ),
             )
 
