@@ -7,7 +7,8 @@ from pathlib import Path
 
 import jwt
 from dotenv import load_dotenv
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from tinydb import Query, TinyDB
 
@@ -21,6 +22,8 @@ load_dotenv(USER_API_DIR / ".env")
 
 JWT_ALGORITHM = "HS256"
 USER_DB_PATH = Path(os.getenv("USER_DB_PATH", USER_API_DIR / "data" / "db.json"))
+
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 class CurrentUser(BaseModel):
@@ -54,14 +57,16 @@ def _find_user(user_id: str) -> dict | None:
         db.close()
 
 
-def get_current_user(authorization: str = Header(default="")) -> CurrentUser:
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> CurrentUser:
+    token = credentials.credentials.strip() if credentials else ""
+    if not token:
         raise _unauthorized("Missing Bearer token")
 
     try:
         payload = jwt.decode(
-            token.strip(),
+            token,
             _get_secret(),
             algorithms=[JWT_ALGORITHM],
             options={"require": ["exp", "sub"]},

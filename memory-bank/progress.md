@@ -15,6 +15,7 @@
 - services/user-api: get_current_user devuelve 401 + WWW-Authenticate ante cualquier fallo (cabecera, firma, expiracion, usuario inexistente o inactivo); JWT exige claims exp y sub. JWT_SECRET_KEY y ACCESS_TOKEN_EXPIRE_MINUTES se leen de .env (ignorado por git; plantilla en .env.example).
 - Proteccion de rutas: en user-api solo son publicas POST /auth/login, POST /users, POST /applications, / y /health; el resto devuelve 401 sin token y 403 sobre recursos ajenos.
 - services/api (/suppliers, 6 rutas): nueva dependencia auth.get_current_user que valida el JWT de user-api (mismo JWT_SECRET_KEY) y busca el usuario en la DB de user-api (USER_DB_PATH). Lectura: cualquier usuario autenticado; escritura (POST/PATCH/DELETE): solo admin o manager (403 para user). suppliers.js envia el token guardado en localStorage.
+- get_current_user (ambos servicios) usa HTTPBearer(auto_error=False): Swagger /docs muestra boton Authorize (un parametro Header "Authorization" es ignorado por OpenAPI). Verificado con servidores reales (copia en /tmp): registro 201 -> login -> /auth/me y /suppliers 200; sin token, mal formado, manipulado o expirado -> 401.
 
 ## Proximos pasos previstos
 1. Definir el idioma base del sitio y confirmar si la version bilingue entra en este hito.

@@ -1,8 +1,12 @@
-from fastapi import Header, HTTPException, status
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.models import AuthUser
 from app.security import decode_access_token
 from app.services.users import get_user_auth_record
+
+
+bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def _unauthorized(detail: str) -> HTTPException:
@@ -13,13 +17,15 @@ def _unauthorized(detail: str) -> HTTPException:
     )
 
 
-def get_current_user(authorization: str = Header(default="")) -> AuthUser:
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> AuthUser:
+    token = credentials.credentials.strip() if credentials else ""
+    if not token:
         raise _unauthorized("Missing Bearer token")
 
     try:
-        payload = decode_access_token(token.strip())
+        payload = decode_access_token(token)
     except ValueError as exc:
         raise _unauthorized(str(exc)) from exc
 
