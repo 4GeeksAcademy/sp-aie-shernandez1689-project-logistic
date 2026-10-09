@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 from app.api.deps import get_current_user
 from app.models import (
@@ -40,8 +40,8 @@ def login(payload: LoginRequest) -> TokenResponse:
 
 
 @router.post("/forgot-password")
-def forgot_password(payload: ForgotPasswordRequest) -> dict[str, str]:
-    request_password_reset(payload.email)
+def forgot_password(payload: ForgotPasswordRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
+    background_tasks.add_task(request_password_reset, payload.email)
     return {"message": "If the account exists, a password reset email will be sent."}
 
 
