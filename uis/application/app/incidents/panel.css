@@ -5,6 +5,118 @@
   align-items: end;
 }
 
+.summary-section {
+  display: grid;
+  gap: 0.9rem;
+  padding: 0.2rem 0 0.4rem;
+}
+
+.summary-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.summary-heading .eyebrow {
+  margin-bottom: 0.25rem;
+}
+
+.summary-heading h2 {
+  font-size: 1.25rem;
+}
+
+.summary-heading code,
+.summary-group code {
+  color: var(--muted);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72em;
+  font-weight: 500;
+}
+
+.summary-retry {
+  min-height: 44px;
+}
+
+.summary-state {
+  display: flex;
+  min-height: 3.25rem;
+  align-items: center;
+  gap: 0.7rem;
+  color: var(--muted);
+}
+
+.summary-state p {
+  margin: 0;
+}
+
+.summary-error {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  color: var(--danger);
+}
+
+.summary-error button {
+  min-height: 44px;
+}
+
+.summary-total {
+  margin: 0 0 0.85rem;
+  color: var(--muted);
+}
+
+.summary-total strong {
+  margin-left: 0.25rem;
+  color: var(--text);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 1.2rem;
+}
+
+.summary-empty-note {
+  margin: -0.4rem 0 0.9rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.8rem;
+}
+
+.summary-group {
+  min-width: 0;
+}
+
+.summary-group h3 {
+  margin: 0 0 0.55rem;
+  font-size: 0.95rem;
+}
+
+.summary-values {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+}
+
+.summary-values dt {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.summary-values dd {
+  margin: 0;
+  color: var(--text);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.82rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .incident-filters select,
 .incident-filters button {
   min-height: 48px;
@@ -189,12 +301,29 @@
 }
 
 @media (max-width: 900px) {
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .incident-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 640px) {
+  .summary-heading {
+    align-items: flex-start;
+  }
+
+  .summary-heading h2 {
+    font-size: 1.1rem;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+  }
+
   .incident-filters {
     grid-template-columns: 1fr;
   }

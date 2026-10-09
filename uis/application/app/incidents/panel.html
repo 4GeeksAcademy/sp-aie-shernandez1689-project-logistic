@@ -29,6 +29,45 @@
         </nav>
       </header>
 
+      <section id="summarySection" class="summary-section" aria-labelledby="summary-title" aria-busy="true">
+        <div class="summary-heading">
+          <div>
+            <p class="eyebrow">Seguimiento operativo</p>
+            <h2 id="summary-title">Resumen de incidencias <code>summary</code></h2>
+          </div>
+        </div>
+        <div id="summaryLoading" class="summary-state" role="status" aria-live="polite">
+          <span class="loading-spinner" aria-hidden="true"></span>
+          <p>Cargando métricas…</p>
+        </div>
+        <div id="summaryError" class="summary-state summary-error" role="alert" hidden>
+          <p id="summaryErrorMessage">No se pudo cargar el resumen.</p>
+          <button id="summaryErrorRetryButton" type="button">Reintentar</button>
+        </div>
+        <div id="summaryContent" hidden>
+          <p class="summary-total">Total de incidencias: <strong id="summaryTotal">0</strong></p>
+          <p id="summaryEmptyNote" class="summary-empty-note" hidden>Aún no hay incidencias registradas; las métricas están en cero.</p>
+          <div class="summary-grid">
+            <section class="summary-group" aria-labelledby="summary-status-title">
+              <h3 id="summary-status-title">Estado <code>status</code></h3>
+              <dl id="summaryStatus" class="summary-values"></dl>
+            </section>
+            <section class="summary-group" aria-labelledby="summary-category-title">
+              <h3 id="summary-category-title">Categoría <code>category</code></h3>
+              <dl id="summaryCategory" class="summary-values"></dl>
+            </section>
+            <section class="summary-group" aria-labelledby="summary-origin-title">
+              <h3 id="summary-origin-title">Origen <code>origin</code></h3>
+              <dl id="summaryOrigin" class="summary-values"></dl>
+            </section>
+            <section class="summary-group" aria-labelledby="summary-branch-title">
+              <h3 id="summary-branch-title">Sede <code>branch</code></h3>
+              <dl id="summaryBranch" class="summary-values"></dl>
+            </section>
+          </div>
+        </div>
+      </section>
+
       <section class="panel" aria-labelledby="filters-title">
         <div class="panel-head">
           <h2 id="filters-title">Filtrar incidencias</h2>

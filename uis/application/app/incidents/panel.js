@@ -37,8 +37,63 @@ const ALLOWED_TRANSITIONS = {
   resolved: [],
   discarded: [],
 };
+const SUMMARY_DIMENSIONS = [
+  {
+    key: "status",
+    targetId: "summaryStatus",
+    values: [
+      ["open", "Abierta"],
+      ["in_progress", "En progreso"],
+      ["resolved", "Resuelta"],
+      ["discarded", "Descartada"],
+    ],
+  },
+  {
+    key: "category",
+    targetId: "summaryCategory",
+    values: [
+      ["lost_parcel", "Paquete extraviado"],
+      ["delivery_failure", "Fallo de entrega"],
+      ["inventory_discrepancy", "Discrepancia de inventario"],
+      ["carrier_issue", "Problema de carrier"],
+      ["returns_issue", "Problema de devoluciones"],
+      ["warehouse_incident", "Incidente en almacén"],
+      ["system_failure", "Fallo de sistema"],
+      ["client_complaint", "Queja de cliente"],
+      ["other", "Otro"],
+    ],
+  },
+  {
+    key: "origin",
+    targetId: "summaryOrigin",
+    values: [
+      ["customer", "Cliente"],
+      ["branch", "Sede"],
+      ["internal", "Interno"],
+    ],
+  },
+  {
+    key: "branch",
+    targetId: "summaryBranch",
+    values: [
+      ["central", "Central"],
+      ["la_warehouse", "Los Ángeles — Almacén"],
+      ["la_office", "Los Ángeles — Oficina"],
+      ["zaragoza_warehouse", "Zaragoza — Almacén"],
+      ["zaragoza_office", "Zaragoza — Oficina"],
+    ],
+  },
+];
 
 const dom = {
+  summarySection: document.getElementById("summarySection"),
+  summaryLoading: document.getElementById("summaryLoading"),
+  summaryError: document.getElementById("summaryError"),
+  summaryErrorMessage: document.getElementById("summaryErrorMessage"),
+  summaryErrorRetryButton: document.getElementById("summaryErrorRetryButton"),
+  summaryContent: document.getElementById("summaryContent"),
+  summaryTotal: document.getElementById("summaryTotal"),
+  summaryEmptyNote: document.getElementById("summaryEmptyNote"),
   statusFilter: document.getElementById("statusFilter"),
   originFilter: document.getElementById("originFilter"),
   branchFilter: document.getElementById("branchFilter"),
@@ -59,6 +114,7 @@ const dom = {
 
 let incidents = [];
 let activeLoad;
+let activeSummaryLoad;
 
 function getApiBase() {
   const saved = localStorage.getItem(API_STORAGE_KEY) || DEFAULT_API_BASE;
@@ -77,12 +133,79 @@ function friendlyError(status) {
   return "No se pudo completar la solicitud. Inténtalo de nuevo.";
 }
 
+function friendlySummaryError(status) {
+  if (status === 401) return "Tu sesión expiró. Inicia sesión nuevamente.";
+  if (status === 403) return "No tienes permiso para consultar el resumen.";
+  if (status >= 500) return "El resumen no está disponible ahora. Puedes reintentarlo.";
+  return "No se pudo cargar el resumen. Comprueba la conexión e inténtalo de nuevo.";
+}
+
 function requestHeaders() {
   const token = localStorage.getItem(TOKEN_STORAGE_KEY);
   return {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
+}
+
+function setSummaryState(state) {
+  dom.summaryLoading.hidden = state !== "loading";
+  dom.summaryError.hidden = state !== "error";
+  dom.summaryContent.hidden = state !== "content";
+  dom.summarySection.setAttribute("aria-busy", String(state === "loading"));
+}
+
+function renderSummary(summary) {
+  dom.summaryTotal.textContent = summary.total.toLocaleString("es-ES");
+  dom.summaryEmptyNote.hidden = summary.total !== 0;
+
+  for (const dimension of SUMMARY_DIMENSIONS) {
+    const target = document.getElementById(dimension.targetId);
+    const rows = [];
+    for (const [value, label] of dimension.values) {
+      const term = document.createElement("dt");
+      term.textContent = `${label} · ${value}`;
+      const count = document.createElement("dd");
+      count.textContent = summary[dimension.key][value].toLocaleString("es-ES");
+      rows.push(term, count);
+    }
+    target.replaceChildren(...rows);
+  }
+
+  setSummaryState("content");
+}
+
+function isValidSummary(summary) {
+  if (!summary || !Number.isInteger(summary.total) || summary.total < 0) return false;
+  return SUMMARY_DIMENSIONS.every((dimension) => {
+    const totals = summary[dimension.key];
+    return totals && dimension.values.every(([value]) => Number.isInteger(totals[value]) && totals[value] >= 0);
+  });
+}
+
+async function loadSummary() {
+  activeSummaryLoad?.abort();
+  const controller = new AbortController();
+  activeSummaryLoad = controller;
+  setSummaryState("loading");
+
+  try {
+    const response = await fetch(`${getApiBase()}/api/incidents/summary`, {
+      headers: requestHeaders(),
+      signal: controller.signal,
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !isValidSummary(result)) {
+      throw { status: response.status || 500 };
+    }
+    renderSummary(result);
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    dom.summaryErrorMessage.textContent = friendlySummaryError(error.status || 0);
+    setSummaryState("error");
+  } finally {
+    if (activeSummaryLoad === controller) activeSummaryLoad = null;
+  }
 }
 
 function selectedFilters() {
@@ -325,6 +448,8 @@ function init() {
   dom.reloadButton.addEventListener("click", loadIncidents);
   dom.retryButton.addEventListener("click", loadIncidents);
   dom.clearFiltersButton.addEventListener("click", clearFilters);
+  dom.summaryErrorRetryButton.addEventListener("click", loadSummary);
+  loadSummary();
   loadIncidents();
 }
 
