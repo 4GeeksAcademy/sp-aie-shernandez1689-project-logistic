@@ -56,6 +56,29 @@
   box-shadow: 0 10px 30px rgb(8 145 178 / 10%);
 }
 
+.application-page main > div:first-child,
+.application-page main > div:first-child a,
+.application-page main > a {
+  color: #a5f3fc;
+}
+
+.application-page main > div:first-child a:hover,
+.application-page main > a:hover {
+  color: #cffafe;
+}
+
+.application-page main > section h1 {
+  color: #f8fafc;
+}
+
+.application-page main > section p:not(.error-message):not(.warning-message):not(.success-message) {
+  color: #cbd5e1;
+}
+
+.application-page #applicationForm label {
+  color: #e2e8f0;
+}
+
 .application-page #applicationForm fieldset {
   border-color: rgb(255 255 255 / 10%);
   background: rgb(2 6 23 / 45%);
@@ -106,6 +129,10 @@
 
 .application-page #applicationForm button[type="reset"]:hover {
   background-color: rgb(30 41 59 / 90%);
+}
+
+.application-page #applicationForm button[type="reset"] {
+  border: 1px solid rgb(255 255 255 / 20%);
 }
 
 .application-page a[href="index.html"] {

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4efe7" />
+    <title>TrackFlow | Panel de incidencias</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../suppliers/styles.css" />
+    <link rel="stylesheet" href="./panel.css" />
+  </head>
+  <body>
+    <div class="backdrop" aria-hidden="true"></div>
+    <main class="page">
+      <header class="topbar" role="banner">
+        <div>
+          <p class="eyebrow">TrackFlow Backoffice</p>
+          <h1>Panel de incidencias</h1>
+        </div>
+        <nav class="menu-links" aria-label="Navegación principal">
+          <a href="./index.html">Registrar incidencia</a>
+          <a href="../suppliers/index.html">Proveedores</a>
+          <a href="../../../app/index.html">Panel</a>
+        </nav>
+      </header>
+
+      <section id="summarySection" class="summary-section" aria-labelledby="summary-title" aria-busy="true">
+        <div class="summary-heading">
+          <div>
+            <p class="eyebrow">Seguimiento operativo</p>
+            <h2 id="summary-title">Resumen de incidencias <code>summary</code></h2>
+          </div>
+        </div>
+        <div id="summaryLoading" class="summary-state" role="status" aria-live="polite">
+          <span class="loading-spinner" aria-hidden="true"></span>
+          <p>Cargando métricas…</p>
+        </div>
+        <div id="summaryError" class="summary-state summary-error" role="alert" hidden>
+          <p id="summaryErrorMessage">No se pudo cargar el resumen.</p>
+          <button id="summaryErrorRetryButton" type="button">Reintentar</button>
+        </div>
+        <div id="summaryContent" hidden>
+          <p class="summary-total">Total de incidencias: <strong id="summaryTotal">0</strong></p>
+          <p id="summaryEmptyNote" class="summary-empty-note" hidden>Aún no hay incidencias registradas; las métricas están en cero.</p>
+          <div class="summary-grid">
+            <section class="summary-group" aria-labelledby="summary-status-title">
+              <h3 id="summary-status-title">Estado <code>status</code></h3>
+              <dl id="summaryStatus" class="summary-values"></dl>
+            </section>
+            <section class="summary-group" aria-labelledby="summary-category-title">
+              <h3 id="summary-category-title">Categoría <code>category</code></h3>
+              <dl id="summaryCategory" class="summary-values"></dl>
+            </section>
+            <section class="summary-group" aria-labelledby="summary-origin-title">
+              <h3 id="summary-origin-title">Origen <code>origin</code></h3>
+              <dl id="summaryOrigin" class="summary-values"></dl>
+            </section>
+            <section class="summary-group" aria-labelledby="summary-branch-title">
+              <h3 id="summary-branch-title">Sede <code>branch</code></h3>
+              <dl id="summaryBranch" class="summary-values"></dl>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="filters-title">
+        <div class="panel-head">
+          <h2 id="filters-title">Filtrar incidencias</h2>
+          <p>El listado se actualiza al cambiar los filtros.</p>
+        </div>
+        <div class="incident-filters">
+          <label for="statusFilter">Estado
+            <select id="statusFilter">
+              <option value="">Todos los estados</option>
+              <option value="open">Abierta</option>
+              <option value="in_progress">En progreso</option>
+              <option value="resolved">Resuelta</option>
+              <option value="discarded">Descartada</option>
+            </select>
+          </label>
+          <label for="originFilter">Origen
+            <select id="originFilter">
+              <option value="">Todos los orígenes</option>
+              <option value="customer">Cliente</option>
+              <option value="branch">Sede</option>
+              <option value="internal">Interno</option>
+            </select>
+          </label>
+          <label for="branchFilter">Sede
+            <select id="branchFilter">
+              <option value="">Todas las sedes</option>
+              <option value="central">Central</option>
+              <option value="la_warehouse">Los Ángeles — Almacén</option>
+              <option value="la_office">Los Ángeles — Oficina</option>
+              <option value="zaragoza_warehouse">Zaragoza — Almacén</option>
+              <option value="zaragoza_office">Zaragoza — Oficina</option>
+            </select>
+          </label>
+          <button id="reloadButton" class="ghost" type="button">Actualizar</button>
+        </div>
+      </section>
+
+      <p id="pageFeedback" class="feedback" role="status" aria-live="polite"></p>
+
+      <section id="loadingState" class="panel load-state" role="status" aria-live="polite" hidden>
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <p>Cargando incidencias…</p>
+      </section>
+
+      <section id="errorState" class="panel state-panel" role="alert" hidden>
+        <h2>No se pudo cargar el listado</h2>
+        <p id="errorMessage">Comprueba la conexión e inténtalo de nuevo.</p>
+        <button id="retryButton" type="button">Reintentar</button>
+      </section>
+
+      <section id="emptyState" class="panel state-panel" aria-live="polite" hidden>
+        <h2 id="emptyTitle">No hay incidencias</h2>
+        <p id="emptyMessage"></p>
+        <div class="empty-actions">
+          <button id="clearFiltersButton" class="ghost" type="button" hidden>Limpiar filtros</button>
+          <a href="./index.html">Registrar incidencia</a>
+        </div>
+      </section>
+
+      <section id="resultsPanel" class="panel" aria-labelledby="results-title" hidden>
+        <div class="panel-head results-head">
+          <h2 id="results-title">Incidencias</h2>
+          <p id="resultsSummary"></p>
+        </div>
+        <div class="table-wrap" role="region" aria-label="Listado de incidencias" tabindex="0">
+          <table class="incidents-table">
+            <thead>
+              <tr>
+                <th scope="col">Incidencia</th>
+                <th scope="col">Categoría</th>
+                <th scope="col">Origen</th>
+                <th scope="col">Sede</th>
+                <th scope="col">Estado</th>
+                <th scope="col">Creada</th>
+                <th scope="col">Gestión</th>
+              </tr>
+            </thead>
+            <tbody id="incidentsBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="./panel.js"></script>
+  </body>
+</html>
