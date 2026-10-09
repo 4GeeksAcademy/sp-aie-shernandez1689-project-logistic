@@ -22,6 +22,7 @@
         <div class="bg-slate-900/90 p-8">
           <h2 class="text-2xl font-bold">Iniciar sesión</h2>
           <p class="mt-2 text-sm text-slate-300">Usa tu email y contraseña para entrar.</p>
+          <p id="loginSuccess" class="success-message" role="status" aria-live="polite"></p>
 
           <form id="loginForm" class="mt-6 space-y-4" novalidate>
             <div>
@@ -36,6 +37,7 @@
               <p id="passwordError" class="error-message" role="alert"></p>
             </div>
 
+            <a href="../forgot-password/" class="block text-sm font-semibold text-cyan-300 hover:text-cyan-200">¿Olvidaste tu contraseña?</a>
             <button type="submit" class="w-full rounded-xl bg-cyan-400 px-5 py-3 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 focus:outline-none focus:ring-4 focus:ring-cyan-500/40">Iniciar sesión</button>
             <p id="loginError" class="error-message" role="alert"></p>
           </form>

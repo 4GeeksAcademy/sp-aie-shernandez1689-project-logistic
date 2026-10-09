@@ -185,6 +185,13 @@ function bindLoginView() {
   const form = document.getElementById("loginForm");
   if (!form) return;
 
+  const query = new URLSearchParams(window.location.search);
+  if (query.get("password") === "reset") {
+    setElementText("loginSuccess", "Contraseña restablecida correctamente. Ya puedes iniciar sesión.");
+    query.delete("password");
+    window.history.replaceState(null, "", `${window.location.pathname}${query.size ? `?${query}` : ""}`);
+  }
+
   const submitButton = form.querySelector('button[type="submit"]');
   const emailInput = document.getElementById("email");
   const passwordInput = document.getElementById("password");
@@ -373,7 +380,155 @@ async function bindAccountProfileView() {
   }
 }
 
+async function bindPasswordView() {
+  const form = document.getElementById("passwordForm");
+  if (!form) return;
+
+  const mode = form.dataset.passwordMode;
+  const loginPath = form.dataset.loginPath;
+  const fields = form.querySelector("fieldset");
+  const submitButton = form.querySelector('button[type="submit"]');
+  const submitLabel = submitButton.textContent;
+  const resetToken = new URLSearchParams(window.location.search).get("token");
+  const recoveryLink = document.getElementById("passwordRecoveryLink");
+  let sending = false;
+  let completed = false;
+
+  function showResetError() {
+    setElementText("passwordFormError", "El enlace de restablecimiento no es válido o ha caducado. Solicita uno nuevo.");
+    recoveryLink.hidden = false;
+    fields.disabled = true;
+    submitButton.textContent = submitLabel;
+    completed = true;
+  }
+
+  if (mode === "reset" && !resetToken) {
+    showResetError();
+    return;
+  }
+
+  if (mode === "change") {
+    fields.disabled = true;
+    const auth = await requireAuthenticatedUser(loginPath);
+    if (!auth) {
+      if (getToken()) {
+        setElementText("passwordFormError", "No se pudo comprobar tu sesión. Recarga la página para volver a intentarlo.");
+      }
+      return;
+    }
+    fields.disabled = false;
+  }
+
+  const newPassword = form.elements.namedItem("new_password");
+  const confirmation = form.elements.namedItem("confirm_password");
+  if (newPassword && confirmation) {
+    [newPassword, confirmation].forEach((input) => {
+      input.addEventListener("input", () => {
+        newPassword.setCustomValidity("");
+        confirmation.setCustomValidity("");
+        clearFieldErrors(["new_password", "confirm_password"]);
+      });
+    });
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (sending || completed || fields.disabled) return;
+    setElementText("passwordFormError", "");
+    setElementText("passwordFormSuccess", "");
+    clearFieldErrors(["email", "current_password", "new_password", "confirm_password"]);
+
+    if (newPassword) {
+      newPassword.setCustomValidity("");
+      confirmation.setCustomValidity("");
+      if (Array.from(newPassword.value).length < 8 || new TextEncoder().encode(newPassword.value).length > 72) {
+        const message = "La contraseña debe tener al menos 8 caracteres y no superar 72 bytes.";
+        newPassword.setCustomValidity(message);
+        setFieldError("new_password", message);
+      } else if (newPassword.value !== confirmation.value) {
+        const message = "Las contraseñas no coinciden.";
+        confirmation.setCustomValidity(message);
+        setFieldError("confirm_password", message);
+      }
+    }
+    if (!form.reportValidity()) return;
+
+    const payload = mode === "forgot"
+      ? { email: form.elements.namedItem("email").value.trim() }
+      : mode === "reset"
+        ? { token: resetToken, new_password: newPassword.value }
+        : { current_password: form.elements.namedItem("current_password").value, new_password: newPassword.value };
+
+    sending = true;
+    fields.disabled = true;
+    form.setAttribute("aria-busy", "true");
+    submitButton.textContent = "Enviando...";
+
+    try {
+      const options = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      };
+      const result = mode === "change"
+        ? await requestProtectedJson("/auth/change-password", options, loginPath)
+        : await requestJson(`/auth/${mode === "forgot" ? "forgot-password" : "reset-password"}`, options);
+
+      if (result.redirected) {
+        completed = true;
+        return;
+      }
+      if (!result.response.ok) {
+        if (mode === "reset" && result.response.status === 400) {
+          showResetError();
+          return;
+        }
+        if (mode === "change" && result.response.status === 400) {
+          setFieldError("current_password", "La contraseña actual es incorrecta.");
+          return;
+        }
+        if (result.response.status === 422) {
+          throw normalizeErrorPayload(result.payload, "Revisa los datos del formulario.");
+        }
+        throw new Error("No se pudo completar la solicitud. Inténtalo de nuevo.");
+      }
+
+      if (mode === "forgot") {
+        completed = true;
+        setElementText("passwordFormSuccess", "Si esa dirección está registrada, recibirás un enlace en breve");
+        submitButton.textContent = "Solicitud enviada";
+      } else if (mode === "reset") {
+        completed = true;
+        clearToken();
+        window.location.href = `${loginPath}?password=reset`;
+      } else {
+        form.reset();
+        setElementText("passwordFormSuccess", "Contraseña actualizada correctamente.");
+      }
+    } catch (errorData) {
+      if (errorData.fieldErrors) {
+        Object.entries(errorData.fieldErrors).forEach(([fieldName, message]) => {
+          setFieldError(fieldName, message);
+        });
+      }
+      setElementText("passwordFormError", errorData.fieldErrors
+        ? "Revisa los datos del formulario."
+        : errorData instanceof TypeError
+          ? "No se pudo conectar con el servidor. Inténtalo de nuevo."
+          : errorData.message || "No se pudo completar la solicitud. Inténtalo de nuevo.");
+    } finally {
+      sending = false;
+      form.setAttribute("aria-busy", "false");
+      if (!completed) {
+        fields.disabled = false;
+        submitButton.textContent = submitLabel;
+      }
+    }
+  });
+}
+
 bindLoginView();
 bindRegisterView();
 bindAppView();
 bindAccountProfileView();
+bindPasswordView();

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TrackFlow - Recuperar contrase&#241;a</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body class="min-h-screen bg-slate-950 text-white">
+    <main class="mx-auto flex min-h-screen w-full max-w-lg flex-col justify-center px-5 py-10 sm:px-8">
+      <a href="../index.html" class="text-xl font-bold text-cyan-200">TrackFlow</a>
+      <h1 class="mt-8 text-2xl font-bold">Recuperar contrase&#241;a</h1>
+      <form id="passwordForm" data-password-mode="forgot" data-login-path="../login/" class="mt-6" novalidate>
+        <fieldset class="min-w-0 space-y-5 disabled:opacity-60">
+          <div>
+            <label for="email" class="mb-2 block text-sm font-semibold">Email</label>
+            <input id="email" name="email" type="email" required autocomplete="email" aria-describedby="emailError" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-3 text-base focus:border-cyan-400 focus:outline-none focus:ring-4 focus:ring-cyan-500/20" />
+            <p id="emailError" class="error-message" role="alert"></p>
+          </div>
+          <button type="submit" class="w-full rounded-lg bg-cyan-400 px-4 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-300 focus:outline-none focus:ring-4 focus:ring-cyan-500/40 disabled:cursor-not-allowed">Enviar enlace</button>
+        </fieldset>
+        <p id="passwordFormSuccess" class="success-message" role="status" aria-live="polite"></p>
+        <p id="passwordFormError" class="error-message" role="alert"></p>
+      </form>
+      <a href="../login/" class="mt-6 text-sm font-semibold text-cyan-300 hover:text-cyan-200">Volver a iniciar sesi&#243;n</a>
+    </main>
+    <script src="../auth.js"></script>
+  </body>
+</html>
