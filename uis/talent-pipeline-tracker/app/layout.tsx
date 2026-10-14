@@ -30,6 +30,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <Link className="brand" href="/">TrackFlow<span>Talent Pipeline Tracker</span></Link>
             <nav aria-label="Navegación principal">
               <Link className="nav-link" href="/">Candidaturas</Link>
+              <Link className="nav-link ml-6" href="/backoffice/inventory/products">SKU</Link>
+              <Link className="nav-link ml-6" href="/backoffice/inventory/orders">Movimientos de stock</Link>
             </nav>
           </div>
         </header>
