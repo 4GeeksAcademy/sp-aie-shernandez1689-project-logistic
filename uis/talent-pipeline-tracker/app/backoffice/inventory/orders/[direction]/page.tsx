@@ -19,15 +19,22 @@ export default function OrderPage() {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
   const [exitType, setExitType] = useState<ExitType>("dispatch");
+  const [quantity, setQuantity] = useState("");
+  const [quantityError, setQuantityError] = useState("");
+  const [stockResult, setStockResult] = useState<{ selection: string; product?: Product; error?: string } | null>(null);
+  const selectedStock = stockResult?.selection === productId ? stockResult : null;
+  const stockProduct = inbound ? product : selectedStock?.product;
+  const stockPending = !inbound && !!productId && !selectedStock;
+  const exceedsStock = !inbound && stockProduct && Number(quantity) > stockProduct.current_stock;
 
   useEffect(() => {
     let active = true;
     const id = Number(new URLSearchParams(window.location.search).get("sku_id"));
     const load = async () => {
-      if (!validDirection || (!inbound && (!Number.isSafeInteger(id) || id <= 0))) {
+      if (!validDirection) {
         throw new Error("Selecciona un producto y un tipo de orden válidos desde el inventario.");
       }
-      return inbound ? getProducts() : [await getProduct(id)];
+      return getProducts();
     };
     load()
       .then((data) => {
@@ -49,9 +56,28 @@ export default function OrderPage() {
     return () => { active = false; };
   }, [inbound, validDirection, router]);
 
+  useEffect(() => {
+    if (inbound || !productId) return;
+    let active = true;
+    getProduct(Number(productId))
+      .then((data) => {
+        if (active) setStockResult({ selection: productId, product: data });
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        if (reason instanceof InventoryApiError && reason.status === 401) {
+          clearAccessToken();
+          router.replace("/login");
+          return;
+        }
+        setStockResult({ selection: productId, error: reason instanceof Error ? reason.message : "No se pudo consultar el stock." });
+      });
+    return () => { active = false; };
+  }, [inbound, productId, router]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!product || saving) return;
+    if (!stockProduct || saving) return;
     const form = event.currentTarget;
     const data = new FormData(form);
     const quantity = Number(data.get("quantity"));
@@ -61,9 +87,10 @@ export default function OrderPage() {
     }
     setSaving(true);
     setError("");
+    setQuantityError("");
     setSuccess(false);
     try {
-      const input = { sku_id: product.id, warehouse: product.warehouse, quantity };
+      const input = { sku_id: stockProduct.id, warehouse: stockProduct.warehouse, quantity };
       if (inbound) {
         const reference = String(data.get("reference") ?? "").trim();
         if (!reference) throw new Error("La referencia de recepción es obligatoria.");
@@ -76,6 +103,7 @@ export default function OrderPage() {
       if (inbound) {
         form.reset();
         setProductId("");
+        setQuantity("");
       }
       setSuccess(true);
     } catch (reason) {
@@ -84,7 +112,11 @@ export default function OrderPage() {
         router.replace("/login");
         return;
       }
-      setError(reason instanceof Error ? reason.message : "No se pudo registrar la orden.");
+      if (!inbound && reason instanceof InventoryApiError && reason.status === 400) {
+        setQuantityError(reason.message);
+      } else {
+        setError(reason instanceof Error ? reason.message : "No se pudo registrar la orden.");
+      }
     } finally {
       setSaving(false);
     }
@@ -100,16 +132,26 @@ export default function OrderPage() {
       {!loading && !error && products.length === 0 && <p className="empty-state">No hay productos disponibles para registrar una orden.</p>}
       {!loading && products.length > 0 && (inbound || !success) && (
         <form className="candidate-form max-w-2xl" onSubmit={submit}>
-          {product && <><h2>{product.name}</h2><p className="subtitle mb-6">{product.sku} · {product.client_name} · {product.warehouse} · Stock actual: {product.current_stock}</p></>}
+          {product && <><h2>{product.name}</h2><p className="subtitle mb-6">{product.sku} · {product.client_name} · {product.warehouse}{inbound && ` · Stock actual: ${product.current_stock}`}</p></>}
           <fieldset disabled={saving} className="candidate-form-grid">
             <legend className="sr-only">Datos de la orden</legend>
-            {inbound && <label className="candidate-form-wide">Producto
-              <select aria-label="Producto" name="sku_id" value={productId} onChange={(event) => { setProductId(event.target.value); setSuccess(false); }} required className="w-full rounded-md border border-[var(--border)] bg-[var(--surface)] p-2 text-[var(--foreground)]">
+            <label className="candidate-form-wide">Producto
+              <select aria-label="Producto" name="sku_id" value={productId} onChange={(event) => { setProductId(event.target.value); setSuccess(false); setQuantity(""); setQuantityError(""); setStockResult(null); setError(""); }} required className="w-full rounded-md border border-[var(--border)] bg-[var(--surface)] p-2 text-[var(--foreground)]">
                 <option value="">Selecciona un producto</option>
                 {products.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.sku} · {item.warehouse}</option>)}
               </select>
-            </label>}
-            <label>Cantidad<input name="quantity" type="number" min={1} step={1} required /></label>
+            </label>
+            {!inbound && <div className="candidate-form-wide" aria-live="polite">
+              {stockPending && <p role="status">Consultando stock...</p>}
+              {selectedStock?.error && <p role="alert" className="action-error">{selectedStock.error}</p>}
+              {stockProduct && <p id="stock-current" role="status">Stock actual: <strong>{stockProduct.current_stock}</strong> unidades · {stockProduct.warehouse}</p>}
+            </div>}
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <label htmlFor="quantity">Cantidad</label>
+              <input id="quantity" name="quantity" type="number" min={1} step={1} required value={quantity} onChange={(event) => { setQuantity(event.target.value); setQuantityError(""); }} disabled={!inbound && !stockProduct} aria-invalid={!!quantityError} aria-describedby={!inbound ? [stockProduct && "stock-current", exceedsStock && "quantity-warning", quantityError && "quantity-error"].filter(Boolean).join(" ") || undefined : undefined} className="w-full min-w-0 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-[var(--foreground)]" />
+              {exceedsStock && <p id="quantity-warning" role="status" className="text-amber-300">La cantidad supera el stock disponible ({stockProduct.current_stock} unidades).</p>}
+              {quantityError && <p id="quantity-error" role="alert" className="action-error">{quantityError}</p>}
+            </div>
             {inbound ? <label>Referencia de recepción<input name="reference" required /></label> : (
               <>
                 <label>Tipo de salida
@@ -120,7 +162,7 @@ export default function OrderPage() {
                 {exitType === "dispatch" && <label className="candidate-form-wide">Número de seguimiento<input name="tracking_number" required /></label>}
               </>
             )}
-            <button type="submit" className="candidate-form-wide" disabled={saving || !product}>{saving ? "Registrando..." : inbound ? "Registrar entrada" : "Registrar salida"}</button>
+            <button type="submit" className="candidate-form-wide" disabled={saving || !stockProduct}>{saving ? "Registrando..." : inbound ? "Registrar entrada" : "Registrar salida"}</button>
           </fieldset>
         </form>
       )}
