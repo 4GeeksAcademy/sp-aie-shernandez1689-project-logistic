@@ -4,6 +4,65 @@ from typing import Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, field_validator
+from sqlalchemy import CheckConstraint, Column, DateTime
+from sqlmodel import Field as SQLField, SQLModel
+
+
+class SKU(SQLModel, table=True):
+    __table_args__ = (
+        CheckConstraint("category IN ('fashion', 'electronics', 'cosmetics')"),
+        CheckConstraint("warehouse IN ('LA', 'ZGZ')"),
+    )
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    name: str
+    sku: str = SQLField(index=True)
+    client_name: str
+    category: str
+    warehouse: str
+
+
+class StockEntry(SQLModel, table=True):
+    __table_args__ = (
+        CheckConstraint("quantity > 0"),
+        CheckConstraint("warehouse IN ('LA', 'ZGZ')"),
+    )
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    sku_id: int = SQLField(foreign_key="sku.id", index=True)
+    quantity: int
+    reference: str
+    warehouse: str
+    created_at: datetime = SQLField(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    user_uuid: str
+
+
+class StockExit(SQLModel, table=True):
+    __table_args__ = (
+        CheckConstraint("quantity > 0"),
+        CheckConstraint("warehouse IN ('LA', 'ZGZ')"),
+        CheckConstraint("exit_type IN ('dispatch', 'loss')"),
+        CheckConstraint(
+            "(exit_type = 'dispatch' AND tracking_number IS NOT NULL "
+            "AND length(trim(tracking_number)) > 0) "
+            "OR (exit_type = 'loss' AND tracking_number IS NULL)"
+        ),
+    )
+
+    id: int | None = SQLField(default=None, primary_key=True)
+    sku_id: int = SQLField(foreign_key="sku.id", index=True)
+    quantity: int
+    exit_type: str
+    tracking_number: str | None = None
+    warehouse: str
+    created_at: datetime = SQLField(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    user_uuid: str
 
 
 class RoleEnum(str, Enum):
