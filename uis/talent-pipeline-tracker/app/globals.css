@@ -63,6 +63,8 @@ td { padding: 16px 20px; border-top: 1px solid var(--border); vertical-align: mi
 td:nth-child(1) { width: 28%; }
 td:nth-child(2) { width: 27%; }
 td:nth-child(4) { min-width: 150px; }
+.orders-table td:nth-child(1) { width: 30%; }
+.orders-table td:nth-child(2) { width: auto; }
 tbody tr:hover { background: #123041; }
 .candidate-name { font-weight: 600; color: var(--foreground); }
 .secondary-text { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }

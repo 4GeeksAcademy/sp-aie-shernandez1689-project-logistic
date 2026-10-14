@@ -31,6 +31,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <nav aria-label="Navegación principal">
               <Link className="nav-link" href="/">Candidaturas</Link>
               <Link className="nav-link ml-6" href="/backoffice/inventory/products">Productos</Link>
+              <Link className="nav-link ml-6" href="/backoffice/inventory/orders">Historial de órdenes</Link>
             </nav>
           </div>
         </header>
