@@ -33,4 +33,5 @@
 - Correccion 1: se sustituyo el CDN Tailwind bloqueante por CSS local compilado (Tailwind 4.3.0). En tres corridas moviles, Performance subio 96 a 100 en home y 95 a 100 en formulario; LCP mediano bajo 2,239 a 904 ms y 2,343 a 1,253 ms. `npm audit --prefix uis` reporta cero vulnerabilidades.
 - Correccion 2: se extrajo `<trackflow-feedback>` y se reutilizo en formulario corporativo, proveedores e incidencias; validado en Chromium (texto, rol status, aria-live polite y display block). Commit `9d1d059`.
 - Medicion final: Lighthouse repetido tras ambas correcciones en las mismas cinco URL/modo; informes, muestras moviles adicionales y capturas guardados en `audit/after/`.
-- Siguiente paso: aplicar las mejoras secundarias pendientes (contraste, metadescripciones y API activa para el backoffice) en cambios independientes; verificar impacto de usuarios con CrUX/RUM tras despliegue.
+- Entregables: AUDIT.md incluye puntuaciones iniciales, causas raiz y analisis de refactor; REPORT.md resume correcciones e impacto before/after. Las muestras baseline moviles repetidas se preservan en audit/before/.
+- Siguiente paso: aplicar las mejoras secundarias pendientes (contraste y metadescripciones) y repetir el backoffice con el API activo; verificar impacto de usuarios con CrUX/RUM tras despliegue.

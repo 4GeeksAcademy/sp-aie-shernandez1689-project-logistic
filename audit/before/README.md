@@ -16,6 +16,8 @@ Rutas: `/index.html`, `/application.html` y `/application/app/suppliers/index.ht
 
 Cada medicion tiene un informe HTML y su fuente JSON con el detalle completo. Las capturas muestran el resumen del informe de escritorio de inicio corporativo y del directorio de proveedores:
 
+Para las comparaciones before/after se guardan dos corridas moviles adicionales por cada pagina. La mediana y rango del LCP inicial fueron 2,239 ms (2,201-2,240) para inicio y 2,343 ms (2,343-2,366) para el formulario; las cuatro muestras adicionales estan enlazadas al final.
+
 - [Informe corporativo: inicio en escritorio](corporate-home-desktop.report.html)
 - [Datos JSON: inicio en escritorio](corporate-home-desktop.report.json)
 - [Informe corporativo: inicio en movil](corporate-home-mobile.report.html)
@@ -28,5 +30,9 @@ Cada medicion tiene un informe HTML y su fuente JSON con el detalle completo. La
 - [Datos JSON: proveedores en escritorio](backoffice-suppliers-desktop.report.json)
 - [Captura del informe corporativo](corporate-report.png)
 - [Captura del informe de backoffice](backoffice-report.png)
+- [Inicio movil, repeticion 2](corporate-home-mobile-repeat-2.json)
+- [Inicio movil, repeticion 3](corporate-home-mobile-repeat-3.json)
+- [Formulario movil, repeticion 2](corporate-application-mobile-repeat-2.json)
+- [Formulario movil, repeticion 3](corporate-application-mobile-repeat-3.json)
 
 El directorio de proveedores es la vista de backoffice con mas elementos visibles (filtros, tabla y formulario). Se sirvio como pagina estatica; no se inicio el API, por lo que la informacion dinamica de proveedores no esta incluida. TBT es una metrica de laboratorio y no sustituye el INP de campo. TTFB corresponde al documento raiz segun Lighthouse. La home corporativa se midio desde la raiz `uis/`, donde el logo devuelve 200. Los informes JSON incluyen la fecha, URL final, configuracion y todas las categorias. La categoria experimental `agentic-browsing` de Lighthouse 13.5.0 se excluye de la tabla para mantener las cuatro puntuaciones solicitadas.

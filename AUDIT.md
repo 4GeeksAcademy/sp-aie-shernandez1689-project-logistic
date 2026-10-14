@@ -20,6 +20,8 @@ Se revisaron el sitio corporativo y las interfaces del backoffice de proveedores
 
 **Abstraccion propuesta:** un helper `setFeedback(node, { message, tone })` compartido que conserve el nodo persistente, aplique una clase de estado consistente y limpie el mensaje anterior. Se puede complementar con un fragmento HTML o un Web Component de estado accesible. Los estilos de cada frontend seguirian siendo locales para conservar su identidad visual.
 
+**Refactor aplicado:** se implemento `<trackflow-feedback>` en [uis/shared/form-feedback.js](uis/shared/form-feedback.js) y se reutilizo en el formulario corporativo, el alta de proveedores y el alta de incidencias. Mantiene el nodo accesible (`role="status"`, `aria-live="polite"`) y expone `setMessage()`; el CSS permanece local y cada vista conserva sus reglas de negocio.
+
 ## 3. Configuracion y transporte de la API en backoffice
 
 **Donde aparece:** `getApiBase()` se repite en [suppliers.js](uis/application/app/suppliers/suppliers.js#L38), [incidents.js](uis/application/app/incidents/incidents.js#L86) y [panel.js](uis/application/app/incidents/panel.js#L119). La cabecera JSON/JWT se construye en [panel.js](uis/application/app/incidents/panel.js#L143); [suppliers.js](uis/application/app/suppliers/suppliers.js#L91) y `submitIncident` implementan sus propias llamadas `fetch` y tratamiento de respuesta.
@@ -39,6 +41,18 @@ Se instalaron en `.agents/skills/` las skills `core-web-vitals` (addyosmani/web-
 
 Se usaron los informes Lighthouse 13.5.0 ya guardados en `audit/before/`, con Chromium 153 y una corrida de laboratorio por URL y modo. No habia herramientas de traza de DevTools disponibles. CrUX no ofrece datos para estas URL locales; INP de campo queda sin medir. TBT es solo la metrica de laboratorio disponible, no un sustituto de INP. Los valores TTFB de 0 ms corresponden al servidor estatico local, no a produccion.
 
+### Puntuaciones iniciales de Lighthouse
+
+| Frontend / pagina | Modo | Performance | Accesibilidad | Buenas practicas | SEO |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Corporativo / inicio | Escritorio | 100 | 100 | 100 | 91 |
+| Corporativo / inicio | Movil | 96 | 100 | 100 | 91 |
+| Corporativo / formulario | Escritorio | 100 | 96 | 100 | 90 |
+| Corporativo / formulario | Movil | 95 | 96 | 100 | 90 |
+| Backoffice / proveedores | Escritorio | 100 | 100 | 96 | 90 |
+
+Los informes fuente y las capturas iniciales estan en [audit/before/README.md](audit/before/README.md).
+
 ### Core Web Vitals de laboratorio
 
 | Frontend / pagina | Modo | LCP | CLS | TBT | INP / CrUX |
@@ -51,11 +65,21 @@ Se usaron los informes Lighthouse 13.5.0 ya guardados en `audit/before/`, con Ch
 
 Los LCP observados estan bajo 2.5 s y los CLS bajo 0.1, pero son mediciones sinteticas de una sola corrida, no percentiles de usuarios. Las puntuaciones de las cuatro categorias por URL/modo permanecen en [el resumen del baseline](audit/before/README.md).
 
+### Causas raiz
+
+1. **Bloqueo del render corporativo:** [uis/index.html](uis/index.html#L7) y [uis/application.html](uis/application.html#L7) ejecutaban Tailwind desde un script CDN en el `head`. El navegador esperaba la descarga y ejecucion del runtime remoto para generar estilos antes de continuar el parseo; era el recurso con mayor ahorro estimado en movil.
+2. **Validacion del formulario en ruta critica:** [uis/application.html](uis/application.html#L251) incluye `validation.js` como script clasico sin `defer`. Lighthouse lo identifica entre los recursos bloqueantes; el codigo se necesita para interaccion, pero no para pintar el contenido inicial.
+3. **Fuente remota de proveedores:** [suppliers/index.html](uis/application/app/suppliers/index.html#L10) referencia el CSS de Google Fonts como stylesheet. La descarga de la hoja tipografica remota bloquea el render y retrasa el texto; los preconnect existentes no eliminan esa espera.
+4. **Nombre accesible no alineado:** el enlace en [uis/index.html](uis/index.html#L102) declara un `aria-label` que reemplaza el nombre accesible calculado desde el texto visible, y el label no contiene ese texto. Lighthouse marca una discrepancia que puede desorientar a usuarios de lector de pantalla.
+5. **Contraste insuficiente del contador:** [uis/application.html](uis/application.html#L209) aplica `text-slate-500` a `#commentsCounter`. En el fondo calculado Lighthouse obtiene 4.03:1, por debajo del 4.5:1 requerido para texto normal WCAG AA.
+6. **Metadescripciones ausentes:** inicio, formulario y proveedores no declaran `meta name="description"` en sus `<head>`. Falta el campo que los buscadores usan como resumen de pagina.
+7. **Error de red del backoffice:** `ERR_CONNECTION_REFUSED` para `127.0.0.1:8000/suppliers` se debe a que el API no estaba levantado durante la medicion local; no prueba un defecto del codigo frontend.
+
 ### Correcciones identificadas
 
 1. **Prioridad alta - quitar Tailwind CDN de la ruta critica.** [uis/index.html](uis/index.html#L7) y [uis/application.html](uis/application.html#L7) cargan `https://cdn.tailwindcss.com/3.4.17` como script en el `head` (~127 KB). Lighthouse estima 1,490 ms de ahorro de bloqueo en inicio movil y 1,470 ms en formulario movil (320-330 ms en escritorio). Compilar Tailwind a CSS estatico/minificado para produccion y medir de nuevo con las mismas condiciones.
 
-2. **Prioridad media - diferir la validacion del formulario y revisar los recursos que bloquean.** [uis/application.html](uis/application.html#L250) carga `validation.js` sin `defer`; Lighthouse le atribuye 452 ms de bloqueo estimado en movil y 81 ms en escritorio, ademas del CSS local. Probar `defer` o un modulo y conservar la validacion/reporte de errores; repetir el audit para comprobar que mejora el render inicial.
+2. **Prioridad media - diferir la validacion del formulario y revisar los recursos que bloquean.** [uis/application.html](uis/application.html#L251) carga `validation.js` sin `defer`; Lighthouse le atribuye 452 ms de bloqueo estimado en movil y 81 ms en escritorio, ademas del CSS local. Probar `defer` o un modulo y conservar la validacion/reporte de errores; repetir el audit para comprobar que mejora el render inicial.
 
 3. **Prioridad media - reducir dependencias remotas del backoffice.** [suppliers/index.html](uis/application/app/suppliers/index.html#L10) bloquea el render esperando el CSS de Google Fonts (1.3 KB, 230 ms estimados); Lighthouse estima 460 ms totales para el insight de bloqueo en escritorio. Considerar alojar localmente solo los pesos usados o usar una pila local; [suppliers.js](uis/application/app/suppliers/suppliers.js) aporta otros 83 ms estimados y puede cargarse de forma diferida tras verificar su inicializacion.
 
