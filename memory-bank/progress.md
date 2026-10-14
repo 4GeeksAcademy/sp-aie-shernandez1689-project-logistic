@@ -25,3 +25,9 @@
 4. Integrar mensajes de error exactos, warning de bajo volumen y mensaje de exito de envio simulado.
 5. Aplicar criterios de calidad transversal: responsive, accesibilidad y SEO on-page.
 6. Agregar y validar markup Schema.org Organization con datos de TrackFlow.
+
+## Medicion inicial de Lighthouse
+- Auditorias iniciales completadas para la home (`uis/index.html`) y el formulario (`uis/application.html`) en escritorio y movil, y el directorio de proveedores del backoffice en escritorio.
+- El logo de la home canonica carga correctamente (HTTP 200); se regeneraron los informes y capturas con estas rutas.
+- Informes HTML/JSON, capturas y resumen guardados en audit/before/.
+- Siguiente paso: priorizar un KPI fuera de objetivo y repetir Lighthouse en las mismas rutas y modos tras aplicar una mejora.
