@@ -41,7 +41,8 @@ function getApiBase() {
 }
 
 function setFeedback(node, message, type = "") {
-  node.textContent = message;
+  if (typeof node.setMessage === "function") node.setMessage(message);
+  else node.textContent = message;
   node.className = "feedback" + (type ? ` ${type}` : "");
 }
 

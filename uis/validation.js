@@ -293,7 +293,7 @@ async function submitApplication() {
 
 function attachRealtimeValidation(input, validateFn, eventName = "input") {
   input.addEventListener(eventName, () => {
-    successMessage.textContent = "";
+    successMessage.setMessage("");
     validateFn();
   });
 
@@ -314,21 +314,21 @@ attachRealtimeValidation(inputs.privacyPolicy, validatePrivacyPolicy, "change");
 
 servicesCheckboxes.forEach((checkbox) => {
   checkbox.addEventListener("change", () => {
-    successMessage.textContent = "";
+    successMessage.setMessage("");
     validateServicesInterest();
   });
 });
 
 current3plRadios.forEach((radio) => {
   radio.addEventListener("change", () => {
-    successMessage.textContent = "";
+    successMessage.setMessage("");
     validateCurrent3pl();
   });
 });
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  successMessage.textContent = "";
+  successMessage.setMessage("");
 
   const allValid = [
     validateCompanyName(),
@@ -357,14 +357,15 @@ form.addEventListener("submit", async (event) => {
 
   try {
     await submitApplication();
-    successMessage.textContent =
-      "Thank you for your interest in TrackFlow. We received your request and our commercial team will contact you within the next 24-48 hours.";
+    successMessage.setMessage(
+      "Thank you for your interest in TrackFlow. We received your request and our commercial team will contact you within the next 24-48 hours."
+    );
 
     keepSuccessOnReset = true;
     form.reset();
     resetValidationState();
   } catch (error) {
-    successMessage.textContent = error.message;
+    successMessage.setMessage(error.message);
   } finally {
     if (submitButton) {
       submitButton.disabled = false;
@@ -375,7 +376,7 @@ form.addEventListener("submit", async (event) => {
 
 form.addEventListener("reset", () => {
   if (!keepSuccessOnReset) {
-    successMessage.textContent = "";
+    successMessage.setMessage("");
   }
 
   keepSuccessOnReset = false;
