@@ -10,7 +10,10 @@
     "dev": "tsx src/dev-runner.ts"
   },
   "devDependencies": {
-    "typescript": "^5.9.2",
-    "tsx": "^4.19.1"
+    "@types/jest": "^29.5.14",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.14",
+    "tsx": "^4.19.1",
+    "typescript": "^5.9.2"
   }
 }

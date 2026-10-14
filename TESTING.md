@@ -92,3 +92,7 @@ En cada fila se especifican camino feliz, límite y fallo. Para endpoints proteg
 ## Prioridad y razones de inclusión
 
 Se priorizan autorización, validación de entradas, integridad de datos y estados de recursos porque los endpoints gestionan credenciales, perfiles y operaciones internas. Los límites cubren valores mínimos/máximos, datos opcionales, listas vacías, filtros sin coincidencias, estados terminales y ausencia de resultados; son puntos donde suelen aparecer errores que un camino feliz no detecta. Los fallos de autenticación/autorización se repiten por endpoint protegido para comprobar que no exista una ruta accidentalmente pública. En las APIs se validarán también los códigos de error y el formato estable del cuerpo de respuesta.
+
+## TypeScript: Jest
+
+Desde la raíz, ejecutar `npx jest --coverage`. Jest usa `jest.config.cjs` y `ts-jest`; `src/utils/validations.test.ts` cubre éxito y fallo de `validateProduct`, `validateShipment` y `validateCarrier`. No hay utilidades TypeScript de autenticación para generar/validar tokens ni para hashear contraseñas en este repositorio; esas funciones pertenecen al backend Python, así que no se duplican ni se inventan para esta suite.
