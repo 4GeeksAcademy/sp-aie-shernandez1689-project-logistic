@@ -1,5 +1,6 @@
 from app.db import profiles_table
-from app.security import create_access_token
+from app.security import create_access_token, create_password_reset_token
+from app.services import users
 
 
 def test_token_authenticates_user_and_returns_profile(client, user, auth_headers):
@@ -27,3 +28,19 @@ def test_token_endpoint_rejects_missing_and_expired_tokens(client, user):
 
     assert missing.status_code == 401
     assert invalid.status_code == 401
+
+
+def test_token_is_rejected_if_user_is_deactivated_after_login(client, user, auth_headers):
+    users.update_user(user["id"], {"is_active": False})
+
+    response = client.get("/auth/me", headers=auth_headers)
+
+    assert response.status_code == 401
+
+
+def test_password_reset_token_cannot_authenticate(client, user):
+    reset_token, _ = create_password_reset_token(user["id"])
+
+    response = client.get("/auth/me", headers={"Authorization": f"Bearer {reset_token}"})
+
+    assert response.status_code == 401

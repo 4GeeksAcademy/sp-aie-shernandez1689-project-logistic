@@ -1,4 +1,5 @@
 from app.services import users
+from app.services.email import EmailDeliveryError
 
 
 def test_forgot_password_schedules_email_for_existing_account(client, user, monkeypatch):
@@ -31,3 +32,15 @@ def test_forgot_password_rejects_malformed_email(client):
     response = client.post("/auth/forgot-password", json={"email": "invalid"})
 
     assert response.status_code == 422
+
+
+def test_forgot_password_clears_reset_token_when_email_delivery_fails(client, user, monkeypatch):
+    def fail_delivery(email, token):
+        raise EmailDeliveryError("provider unavailable")
+
+    monkeypatch.setattr(users, "send_password_reset_email", fail_delivery)
+
+    response = client.post("/auth/forgot-password", json={"email": user["email"]})
+
+    assert response.status_code == 200
+    assert "password_reset_token_hash" not in users.get_user_auth_record(user["id"])
