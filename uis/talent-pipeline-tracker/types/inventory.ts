@@ -2,7 +2,7 @@ export type Warehouse = "LA" | "ZGZ";
 export type Category = "fashion" | "electronics" | "cosmetics";
 export type ExitType = "dispatch" | "loss";
 
-export interface ProductInput {
+export interface SKUInput {
   name: string;
   sku: string;
   client_name: string;
@@ -10,19 +10,19 @@ export interface ProductInput {
   warehouse: Warehouse;
 }
 
-export interface Product extends ProductInput {
+export interface SKU extends SKUInput {
   id: number;
   current_stock: number;
 }
 
-export interface InboundOrderInput {
+export interface StockEntryInput {
   sku_id: number;
   quantity: number;
   reference: string;
   warehouse: Warehouse;
 }
 
-export interface OutboundOrderInput {
+export interface StockExitInput {
   sku_id: number;
   quantity: number;
   exit_type: ExitType;
@@ -30,18 +30,26 @@ export interface OutboundOrderInput {
   warehouse: Warehouse;
 }
 
-export interface InboundOrder extends InboundOrderInput {
+export interface StockEntry extends StockEntryInput {
   id: number;
   created_at: string;
   user_uuid: string;
 }
 
-export interface OutboundOrder extends OutboundOrderInput {
+export interface StockExit extends StockExitInput {
   id: number;
   created_at: string;
   user_uuid: string;
 }
 
-export type InventoryOrder =
-  | (InboundOrder & { order_type: "inbound"; product: Product })
-  | (OutboundOrder & { order_type: "outbound"; product: Product });
+export type StockMovement =
+  | (StockEntry & { order_type: "inbound"; product: SKU })
+  | (StockExit & { order_type: "outbound"; product: SKU });
+
+export type ProductInput = SKUInput;
+export type Product = SKU;
+export type InboundOrderInput = StockEntryInput;
+export type OutboundOrderInput = StockExitInput;
+export type InboundOrder = StockEntry;
+export type OutboundOrder = StockExit;
+export type InventoryOrder = StockMovement;

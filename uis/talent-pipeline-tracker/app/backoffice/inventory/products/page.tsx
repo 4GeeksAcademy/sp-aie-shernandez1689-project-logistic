@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getProducts, type Product } from "@/lib/inventory";
+import { clearAccessToken } from "@/lib/auth";
+import { getProducts, InventoryApiError, type SKU } from "@/lib/inventory";
 
 const categoryLabels = { fashion: "Moda", electronics: "Electrónica", cosmetics: "Cosmética" };
 const warehouseLabels = { LA: "Los Ángeles (LA)", ZGZ: "Zaragoza (ZGZ)" };
@@ -15,7 +17,8 @@ function stockLevel(stock: number) {
 }
 
 export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const router = useRouter();
+  const [products, setProducts] = useState<SKU[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
@@ -25,11 +28,17 @@ export default function ProductsPage() {
     getProducts()
       .then((data) => { if (active) setProducts(data); })
       .catch((reason: unknown) => {
-        if (active) setError(reason instanceof Error ? reason.message : "No se pudieron cargar los productos.");
+        if (!active) return;
+        if (reason instanceof InventoryApiError && reason.status === 401) {
+          clearAccessToken();
+          router.replace("/login");
+          return;
+        }
+        setError(reason instanceof Error ? reason.message : "No se pudieron cargar los SKUs.");
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [attempt]);
+  }, [attempt, router]);
 
   function reload() {
     setError("");
@@ -40,19 +49,19 @@ export default function ProductsPage() {
   return (
     <main className="workspace">
       <header className="page-heading">
-        <div><p className="eyebrow">Inventario · TrackFlow</p><h1>Productos</h1></div>
-        <button type="button" onClick={reload} disabled={loading}>Actualizar productos</button>
+        <div><p className="eyebrow">Inventario · TrackFlow</p><h1>SKU</h1></div>
+        <button type="button" onClick={reload} disabled={loading}>Actualizar SKUs</button>
       </header>
-      {loading && <p role="status" className="empty-state">Cargando productos...</p>}
+      {loading && <p role="status" className="empty-state">Cargando SKUs...</p>}
       {error && <div role="alert"><p className="action-error">{error}</p><button type="button" onClick={reload}>Reintentar</button></div>}
       {!loading && !error && (
         <>
-          <p className="record-count mb-3">{products.length} productos</p>
-          {products.length === 0 ? <p className="empty-state">No hay productos registrados.</p> : (
-            <div className="table-scroll" role="region" aria-label="Productos por almacén" tabIndex={0}>
+          <p className="record-count mb-3">{products.length} SKUs</p>
+          {products.length === 0 ? <p className="empty-state">No hay SKUs registrados.</p> : (
+            <div className="table-scroll" role="region" aria-label="SKUs por almacén" tabIndex={0}>
               <table>
-                <caption className="sr-only">Productos y stock actual de su almacén</caption>
-                <thead><tr>{["ID / SKU", "Producto", "Cliente", "Categoría", "Almacén", "Stock actual", "Órdenes"].map((label) => <th key={label} scope="col">{label}</th>)}</tr></thead>
+                <caption className="sr-only">SKUs y stock actual de su almacén</caption>
+                <thead><tr>{["ID / Código SKU", "Nombre del SKU", "Marca cliente", "Categoría", "Almacén", "Stock actual", "Movimientos de stock"].map((label) => <th key={label} scope="col">{label}</th>)}</tr></thead>
                 <tbody>{products.map((product) => {
                   const level = stockLevel(product.current_stock);
                   return (
@@ -65,8 +74,8 @@ export default function ProductsPage() {
                       <td><strong className="block tabular-nums">{product.current_stock}</strong><span className={`status ${level.className}`}>{level.label}</span></td>
                       <td>
                         <div className="flex flex-col gap-2 min-w-36">
-                          <Link href={`/backoffice/inventory/orders/inbound?sku_id=${product.id}`} aria-label={`Crear entrada para ${product.sku}`}>Crear entrada</Link>
-                          <Link href={`/backoffice/inventory/orders/outbound?sku_id=${product.id}`} aria-label={`Crear salida para ${product.sku}`}>Crear salida</Link>
+                          <Link href={`/backoffice/inventory/orders/inbound?sku_id=${product.id}`} aria-label={`Registrar recepción para ${product.sku}`}>Registrar recepción</Link>
+                          <Link href={`/backoffice/inventory/orders/outbound?sku_id=${product.id}`} aria-label={`Registrar despacho o pérdida para ${product.sku}`}>Registrar despacho o pérdida</Link>
                         </div>
                       </td>
                     </tr>

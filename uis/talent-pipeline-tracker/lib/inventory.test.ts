@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import { createInboundOrder, createOutboundOrder, getProducts, InventoryApiError } from "./inventory";
+import { AuthApiError, requireAuthenticatedUser } from "./auth";
 
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 let token: string | null;
@@ -79,4 +80,33 @@ test("entry and exit requests use the central authenticated client", async () =>
     assert.equal(new Headers(options.headers).get("Authorization"), "Bearer test-token");
     assert.equal(JSON.parse(options.body as string).sku_id, 1);
   }
+});
+
+test("the session guard rejects missing tokens without fetching", async () => {
+  token = null;
+  const fetchMock = mock.method(globalThis, "fetch", async () => Response.json({}));
+  await assert.rejects(requireAuthenticatedUser(), (error: unknown) => error instanceof AuthApiError && error.status === 401);
+  assert.equal(fetchMock.mock.callCount(), 0);
+});
+
+test("the session guard validates the existing token through auth/me", async () => {
+  const fetchMock = mock.method(globalThis, "fetch", async () => Response.json({ email: "operator@example.com", role: "user" }));
+  await requireAuthenticatedUser();
+  const [url, options] = fetchMock.mock.calls[0].arguments as [string, RequestInit];
+  assert.ok(url.endsWith("/auth/me"));
+  assert.equal(new Headers(options.headers).get("Authorization"), "Bearer test-token");
+  assert.equal(options.cache, "no-store");
+});
+
+test("the session guard distinguishes invalid sessions from permission and server failures", async () => {
+  for (const status of [401, 403, 500]) {
+    mock.method(globalThis, "fetch", async () => Response.json({ detail: `Auth failure ${status}` }, { status }));
+    await assert.rejects(requireAuthenticatedUser(), (error: unknown) => error instanceof AuthApiError && error.status === status && error.message === `Auth failure ${status}`);
+    mock.restoreAll();
+  }
+});
+
+test("the session guard exposes connection failures without treating them as logout", async () => {
+  mock.method(globalThis, "fetch", async () => { throw new TypeError("Network failure"); });
+  await assert.rejects(requireAuthenticatedUser(), (error: unknown) => error instanceof AuthApiError && error.status === null && error.message.includes("No se pudo validar"));
 });
