@@ -18,8 +18,21 @@ string. Environment variables take precedence over the `.env` file.
 
 The engine enables connection health checks and defaults to required TLS when
 `sslmode` is absent. Creating the engine does not contact Supabase or create
-tables. Without `DATABASE_URL`, TinyDB authentication remains available, but
-requesting a SQL session raises a configuration error.
+tables. During FastAPI startup, `SQLModel.metadata.create_all(engine)` initializes
+the `sku`, `stockentry` and `stockexit` tables. Connection or schema creation
+errors prevent startup. Without `DATABASE_URL`, initialization is skipped with a
+warning and TinyDB authentication remains available, but requesting a SQL session
+raises a configuration error.
+
+`SKU` stores the client, category and warehouse alongside its name and code;
+`current_stock` is not a stored column. Both movement tables reference `sku.id`,
+record the warehouse and a UTC creation timestamp, and require positive quantities.
+Their `user_uuid` is a string referencing TinyDB, without an SQL foreign key.
+Entries include a reference; exits include an exit type and nullable tracking
+number. Database constraints require nonblank tracking for dispatches and null
+tracking for losses. `create_all` creates missing tables but does not migrate
+existing tables. Stock calculations and insufficient-stock checks belong to the
+inventory endpoints, not to these ORM definitions.
 
 Inject `app.db.DBSession` in inventory route parameters. It is an alias for
 `Annotated[Session, Depends(get_db)]`. Each request gets its own session, closed

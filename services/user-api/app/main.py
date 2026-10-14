@@ -1,18 +1,32 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlmodel import SQLModel
 
+from app import db
 from app.api.applications import router as applications_router
 from app.api.auth import router as auth_router
 from app.api.profiles import router as profiles_router
 from app.api.users import router as users_router
 
 
-app = FastAPI(title="TrackFlow User API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    if db.engine is not None:
+        SQLModel.metadata.create_all(db.engine)
+    else:
+        logging.getLogger(__name__).warning(
+            "DATABASE_URL is not configured; inventory schema initialization skipped"
+        )
+    yield
+
+
+app = FastAPI(title="TrackFlow User API", version="0.1.0", lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)
