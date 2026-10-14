@@ -30,4 +30,5 @@
 - Auditorias iniciales completadas para la home (`uis/index.html`) y el formulario (`uis/application.html`) en escritorio y movil, y el directorio de proveedores del backoffice en escritorio.
 - El logo de la home canonica carga correctamente (HTTP 200); se regeneraron los informes y capturas con estas rutas.
 - Informes HTML/JSON, capturas y resumen guardados en audit/before/.
-- Siguiente paso: priorizar un KPI fuera de objetivo y repetir Lighthouse en las mismas rutas y modos tras aplicar una mejora.
+- Correccion 1: se sustituyo el CDN Tailwind bloqueante por CSS local compilado (Tailwind 4.3.0). En tres corridas moviles, Performance subio 96 a 100 en home y 95 a 100 en formulario; LCP mediano bajo 2,239 a 904 ms y 2,343 a 1,253 ms. `npm audit --prefix uis` reporta cero vulnerabilidades.
+- Siguiente paso: extraer un componente de feedback reutilizable y validarlo en el commit siguiente, sin mezclarlo con la optimizacion Tailwind.

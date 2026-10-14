@@ -1,0 +1,11 @@
+{
+  "name": "trackflow-static-ui",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss --input tailwind.input.css --output tailwind.css --minify"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.3.0",
+    "tailwindcss": "4.3.0"
+  }
+}

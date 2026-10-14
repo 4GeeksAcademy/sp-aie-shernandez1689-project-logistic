@@ -67,4 +67,17 @@ Los LCP observados estan bajo 2.5 s y los CLS bajo 0.1, pero son mediciones sint
 
 - `unused-javascript` estima 38-39 KB recuperables, pero 0 ms de ahorro; no se recomienda podar codigo por este dato aislado.
 - El informe de proveedores registra `ERR_CONNECTION_REFUSED` en `http://127.0.0.1:8000/suppliers`: el API no estaba iniciado durante la auditoria estatica. No se considera una correccion del frontend; repetir con el API activo para revisar tabla, estados y errores funcionales.
-- No se aplicaron estas correcciones. Son recomendaciones del analisis para priorizar y validar en commits separados, con la misma ruta/modo y una nueva medicion de laboratorio; el impacto en usuarios requiere datos CrUX/RUM posteriores.
+- Las recomendaciones secundarias anteriores (contraste, meta descriptions y carga del API) siguen pendientes; no se mezclaron con la correccion prioritaria de rendimiento. Deben validarse en commits separados. El impacto en usuarios requiere datos CrUX/RUM posteriores.
+
+## Correccion aplicada: Tailwind local
+
+Se reemplazo el script CDN de Tailwind 3.4.17, que bloqueaba el render, por CSS estatico compilado con Tailwind CLI 4.3.0. El bundle generado pesa 26.4 KB; `npm audit --prefix uis` termina con 0 vulnerabilidades. Se revisaron las capturas Lighthouse posteriores y el diseño movil conserva sus utilidades y layout.
+
+| Pagina | Modo | Performance antes/despues | LCP antes | LCP despues | Ahorro render-blocking antes/despues |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Inicio | Movil | 96 / 100 | 2,239 ms (2,201-2,240) | 904 ms (901-904) | 1,490 / 250 ms |
+| Formulario | Movil | 95 / 100 | 2,343 ms (2,343-2,366) | 1,253 ms (1,249-1,258) | 1,490 / 410 ms |
+| Inicio | Escritorio | 100 / 100 | 0.6 s | 0.2 s | 320 / 80 ms |
+| Formulario | Escritorio | 100 / 100 | 0.6 s | 0.3 s | 330 / 70 ms |
+
+Las cifras moviles son medianas de tres corridas Lighthouse 13.5.0 con Chromium 153, misma URL local, formulario publico y emulacion movil. Los valores entre parentesis son rangos observados. Desktop tiene una corrida antes y una despues. CLS y TBT permanecen en cero; INP/CrUX no estan disponibles para localhost. El ahorro de render-blocking es una estimacion de Lighthouse, no tiempo real de usuario.
