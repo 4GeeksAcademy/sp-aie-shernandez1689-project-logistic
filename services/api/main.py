@@ -53,7 +53,7 @@ async def request_validation_error_handler(
             message = "El valor no es válido."
         errors.append({"field": field, "message": message})
 
-    return JSONResponse(status_code=400, content={"errors": errors})
+    return JSONResponse(status_code=422, content={"errors": errors})
 
 
 @app.exception_handler(Exception)

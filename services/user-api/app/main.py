@@ -1,7 +1,10 @@
+import logging
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.applications import router as applications_router
 from app.api.auth import router as auth_router
@@ -10,6 +13,61 @@ from app.api.users import router as users_router
 
 
 app = FastAPI(title="TrackFlow User API", version="0.1.0")
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(
+    request: Request,
+    error: RequestValidationError,
+) -> JSONResponse:
+    details = []
+    for issue in error.errors():
+        location = issue.get("loc", ())
+        if location and location[0] in {"body", "query", "path", "header"}:
+            source = location[0]
+            field_parts = location[1:]
+        else:
+            source = "body"
+            field_parts = location
+        safe_parts = [str(part)[:60] for part in field_parts if isinstance(part, (str, int))]
+        error_type = issue.get("type")
+        context = issue.get("ctx") or {}
+
+        if error_type == "missing":
+            message = "Este campo es obligatorio."
+        elif error_type in {"enum", "literal_error"}:
+            message = "El valor no está permitido."
+        elif error_type == "string_too_short" and isinstance(context.get("min_length"), int):
+            message = f"Debe tener al menos {context.get('min_length')} caracteres."
+        elif error_type == "string_too_long" and isinstance(context.get("max_length"), int):
+            message = f"No puede superar {context.get('max_length')} caracteres."
+        elif error_type == "string_type":
+            message = "Debe ser un texto."
+        elif error_type in {"int_type", "int_parsing"}:
+            message = "Debe ser un número entero."
+        elif error_type in {"float_type", "float_parsing"}:
+            message = "Debe ser un número."
+        elif error_type == "json_invalid":
+            message = "El cuerpo JSON no tiene un formato válido."
+        else:
+            message = "El valor no es válido."
+
+        details.append({"loc": [source, *safe_parts], "msg": message})
+
+    return JSONResponse(status_code=422, content={"detail": details})
+
+
+@app.exception_handler(Exception)
+async def unexpected_error_handler(request: Request, error: Exception) -> JSONResponse:
+    logging.getLogger(__name__).error(
+        "Unhandled User API exception (%s)",
+        type(error).__name__,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Error interno del servidor."},
+    )
+
 
 raw_cors_origins = os.getenv(
     "CORS_ALLOW_ORIGINS",

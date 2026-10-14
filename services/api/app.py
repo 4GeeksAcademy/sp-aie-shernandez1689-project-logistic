@@ -31,7 +31,22 @@ LAST_ANALYSIS_CSV: str | None = None
 @app.errorhandler(Exception)
 def handle_unexpected_error(error: Exception):
     if isinstance(error, WerkzeugHTTPException):
-        return error
+        status_code = error.code or 500
+        messages = {
+            400: "La solicitud no es válida.",
+            401: "No estás autenticado.",
+            403: "No tienes permiso para realizar esta acción.",
+            404: "No se encontró el recurso solicitado.",
+            405: "El método solicitado no está permitido.",
+            409: "La solicitud entra en conflicto con el estado actual.",
+            413: "El archivo supera el tamaño permitido.",
+            415: "El tipo de contenido no está permitido.",
+            422: "Los datos enviados no son válidos.",
+        }
+        return _error_response(
+            messages.get(status_code, "No se pudo completar la solicitud."),
+            status_code,
+        )
 
     app.logger.exception("Unhandled Flask API exception")
     return _error_response("Error interno del servidor.", 500)
@@ -121,8 +136,11 @@ def analyze_incidents_endpoint():
 
     try:
         result = analyze_incidents_from_text(csv_text, source_file=file_name)
-    except ValueError as exc:
-        return _error_response(f"Invalid CSV format: {exc}", 400)
+    except ValueError:
+        return _error_response(
+            "El CSV no tiene un formato válido. Comprueba la cabecera y las columnas requeridas.",
+            400,
+        )
 
     global LAST_ANALYSIS_JSON, LAST_ANALYSIS_CSV
     summary = result.to_summary_json()
