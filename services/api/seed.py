@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
+from pydantic import ValidationError
 from tinydb import TinyDB
 
 from database import DB_PATH, TABLE_NAME
@@ -170,35 +172,61 @@ SUPPLIERS_SEED: list[dict] = [
 
 def seed_suppliers(db_path: Path | None = None) -> tuple[int, int, Path]:
     target_path = db_path or DB_PATH
-    target_path.parent.mkdir(parents=True, exist_ok=True)
+    if not SUPPLIERS_SEED or any(not isinstance(item, dict) for item in SUPPLIERS_SEED):
+        raise ValueError("El catálogo de proveedores está vacío o malformado.")
 
-    db = TinyDB(target_path)
-    suppliers_table = db.table(TABLE_NAME)
+    try:
+        records = [
+            SupplierResponse(**supplier).model_dump(mode="json")
+            for supplier in SUPPLIERS_SEED
+        ]
+    except (TypeError, ValidationError) as error:
+        raise ValueError("El catálogo de proveedores contiene datos no válidos.") from error
 
-    records = [SupplierResponse(**supplier).model_dump(mode="json") for supplier in SUPPLIERS_SEED]
-    existing_keys = {
-        (item.get("name"), item.get("country"))
-        for item in suppliers_table.all()
-    }
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        db = TinyDB(target_path)
+    except (OSError, ValueError) as error:
+        raise RuntimeError("No se pudo abrir la base de datos de proveedores.") from error
 
-    records_to_insert = [
-        record
-        for record in records
-        if (record.get("name"), record.get("country")) not in existing_keys
-    ]
+    try:
+        suppliers_table = db.table(TABLE_NAME)
+        try:
+            existing_keys = {
+                (item.get("name"), item.get("country"))
+                for item in suppliers_table.all()
+            }
 
-    if records_to_insert:
-        suppliers_table.insert_multiple(records_to_insert)
+            records_to_insert = [
+                record
+                for record in records
+                if (record.get("name"), record.get("country")) not in existing_keys
+            ]
 
-    skipped_count = len(records) - len(records_to_insert)
-    db.close()
+            if records_to_insert:
+                suppliers_table.insert_multiple(records_to_insert)
+        except (OSError, ValueError) as error:
+            raise RuntimeError("No se pudieron leer o guardar los proveedores.") from error
 
-    return len(records_to_insert), skipped_count, target_path
+        skipped_count = len(records) - len(records_to_insert)
+        return len(records_to_insert), skipped_count, target_path
+    finally:
+        db.close()
 
 
-if __name__ == "__main__":
-    inserted_count, skipped_count, db_file = seed_suppliers()
+def main() -> int:
+    try:
+        inserted_count, skipped_count, db_file = seed_suppliers()
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"Error al cargar proveedores: {error}", file=sys.stderr)
+        return 1
+
     print(
         f"Seed completed. Inserted {inserted_count} suppliers, "
         f"skipped {skipped_count} existing records in {db_file}"
     )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
