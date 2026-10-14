@@ -367,7 +367,11 @@ def test_inventory_end_to_end(inventory_engine, client, auth_headers, user):
     assert [order["order_type"] for order in orders.json()] == ["inbound", "inbound", "outbound", "outbound"]
     for order in orders.json():
         assert order["user_uuid"] == user["id"]
-        assert order["product"] == detail.json()
+        assert order["product"] == {"name": "Serum", "sku": "CSM-001"}
+        expected_fields = {"id", "quantity", "warehouse", "created_at", "user_uuid", "product", "order_type"}
+        if order["order_type"] == "outbound":
+            expected_fields.add("exit_type")
+        assert set(order) == expected_fields
 
 
 def test_inventory_rejects_insufficient_stock_without_writing(inventory_engine, client, auth_headers):
@@ -541,7 +545,7 @@ def test_inventory_seed_matches_context_and_net_stock(inventory_engine, client, 
     orders = client.get("/inventory/orders", headers=auth_headers).json()
     assert len(orders) == 10
     for product in products:
-        movements = [order for order in orders if order["sku_id"] == product["id"] and order["warehouse"] == product["warehouse"]]
+        movements = [order for order in orders if order["product"]["sku"] == product["sku"] and order["warehouse"] == product["warehouse"]]
         incoming = sum(order["quantity"] for order in movements if order["order_type"] == "inbound")
         outgoing = sum(order["quantity"] for order in movements if order["order_type"] == "outbound")
         assert product["current_stock"] == incoming - outgoing

@@ -7,7 +7,8 @@ from app.models import (
     ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
-    ProfileResponse,
+    MessageResponse,
+    ProfileSummaryResponse,
     ResetPasswordRequest,
     TokenResponse,
 )
@@ -39,35 +40,35 @@ def login(payload: LoginRequest) -> TokenResponse:
     return TokenResponse(access_token=token)
 
 
-@router.post("/forgot-password")
-def forgot_password(payload: ForgotPasswordRequest, background_tasks: BackgroundTasks) -> dict[str, str]:
+@router.post("/forgot-password", response_model=MessageResponse)
+def forgot_password(payload: ForgotPasswordRequest, background_tasks: BackgroundTasks) -> MessageResponse:
     background_tasks.add_task(request_password_reset, payload.email)
-    return {"message": "If the account exists, a password reset email will be sent."}
+    return MessageResponse(message="If the account exists, a password reset email will be sent.")
 
 
-@router.post("/reset-password")
-def reset_password_route(payload: ResetPasswordRequest) -> dict[str, str]:
+@router.post("/reset-password", response_model=MessageResponse)
+def reset_password_route(payload: ResetPasswordRequest) -> MessageResponse:
     try:
         reset_password(payload.token, payload.new_password)
     except InvalidPasswordResetError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return {"message": "Password reset successfully."}
+    return MessageResponse(message="Password reset successfully.")
 
 
-@router.post("/change-password")
+@router.post("/change-password", response_model=MessageResponse)
 def change_password_route(
     payload: ChangePasswordRequest,
     current_user: AuthUser = Depends(get_current_user),
-) -> dict[str, str]:
+) -> MessageResponse:
     try:
         change_password(current_user.id, payload.current_password, payload.new_password)
     except IncorrectPasswordError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return {"message": "Password changed successfully."}
+    return MessageResponse(message="Password changed successfully.")
 
 
 @router.get("/me", response_model=AuthMeResponse)
 def auth_me(current_user: AuthUser = Depends(get_current_user)) -> AuthMeResponse:
     profile = get_profile_by_user_id(current_user.id)
-    profile_data = ProfileResponse.model_validate(profile) if profile else None
+    profile_data = ProfileSummaryResponse.model_validate(profile) if profile else None
     return AuthMeResponse(email=current_user.email, role=current_user.role, profile=profile_data)

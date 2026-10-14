@@ -9,8 +9,11 @@ def test_login_returns_access_token_for_valid_credentials(client, user):
     )
 
     assert response.status_code == 200
+    assert set(response.json()) == {"access_token", "token_type"}
     assert response.json()["token_type"] == "bearer"
-    assert decode_access_token(response.json()["access_token"])["sub"] == user["id"]
+    claims = decode_access_token(response.json()["access_token"])
+    assert claims["sub"] == user["id"]
+    assert set(claims) == {"sub", "role", "exp"}
 
 
 def test_login_rejects_inactive_account(client, user):

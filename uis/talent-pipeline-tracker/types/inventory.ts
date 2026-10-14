@@ -42,9 +42,18 @@ export interface StockExit extends StockExitInput {
   user_uuid: string;
 }
 
+export interface StockMovementFields {
+  id: number;
+  quantity: number;
+  warehouse: Warehouse;
+  created_at: string;
+  user_uuid: string;
+  product: Pick<SKU, "name" | "sku">;
+}
+
 export type StockMovement =
-  | (StockEntry & { order_type: "inbound"; product: SKU })
-  | (StockExit & { order_type: "outbound"; product: SKU });
+  | (StockMovementFields & { order_type: "inbound" })
+  | (StockMovementFields & { order_type: "outbound"; exit_type: ExitType });
 
 export type ProductInput = SKUInput;
 export type Product = SKU;

@@ -10,6 +10,7 @@ from database import get_suppliers_table
 from models import (
     SupplierCreate,
     SupplierCreatedResponse,
+    SupplierListResponse,
     SupplierRateUpdate,
     SupplierResponse,
     SupplierStatusUpdate,
@@ -31,11 +32,11 @@ def create_supplier(payload: SupplierCreate) -> SupplierCreatedResponse:
         db.close()
 
 
-@router.get("", response_model=list[SupplierCreatedResponse])
+@router.get("", response_model=list[SupplierListResponse])
 def list_suppliers(
     country: Literal["USA", "Spain"] | None = Query(default=None),
     category: str | None = Query(default=None),
-) -> list[SupplierCreatedResponse]:
+) -> list[SupplierListResponse]:
     db, suppliers_table = get_suppliers_table()
     try:
         documents = suppliers_table.all()
@@ -50,7 +51,7 @@ def list_suppliers(
                 if category in (doc.get("categories") or [])
             ]
 
-        return [SupplierCreatedResponse(id=doc.doc_id, **dict(doc)) for doc in filtered_documents]
+        return [SupplierListResponse.model_validate({**dict(doc), "id": doc.doc_id}) for doc in filtered_documents]
     finally:
         db.close()
 
@@ -113,7 +114,7 @@ def update_supplier_status(
         db.close()
 
 
-@router.delete("/{supplier_id}", status_code=204, dependencies=[require_editor])
+@router.delete("/{supplier_id}", response_model=None, status_code=204, dependencies=[require_editor])
 def delete_supplier(supplier_id: int) -> None:
     db, suppliers_table = get_suppliers_table()
     try:

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_current_user
-from app.models import AuthUser, RoleEnum, UserCreateRequest, UserResponse, UserUpdateRequest
+from app.models import AuthUser, MessageResponse, RoleEnum, UserCreateRequest, UserListResponse, UserResponse, UserUpdateRequest
 from app.services.users import (
     UserAlreadyExistsError,
     UserNotFoundError,
@@ -16,10 +16,10 @@ from app.services.users import (
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register_user(payload: UserCreateRequest) -> UserResponse:
+@router.post("", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+def register_user(payload: UserCreateRequest) -> MessageResponse:
     try:
-        user = create_user(
+        create_user(
             email=payload.email,
             password=payload.password,
             role=RoleEnum.user,
@@ -27,13 +27,13 @@ def register_user(payload: UserCreateRequest) -> UserResponse:
             phone=payload.phone,
             address=payload.address,
         )
-        return UserResponse.model_validate(user)
+        return MessageResponse(message="Account created successfully.")
     except UserAlreadyExistsError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
-@router.get("", response_model=list[UserResponse])
-def get_users(current_user: AuthUser = Depends(get_current_user)) -> list[UserResponse]:
+@router.get("", response_model=list[UserListResponse])
+def get_users(current_user: AuthUser = Depends(get_current_user)) -> list[UserListResponse]:
     if current_user.role != RoleEnum.admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -41,7 +41,7 @@ def get_users(current_user: AuthUser = Depends(get_current_user)) -> list[UserRe
         )
 
     users = list_users()
-    return [UserResponse.model_validate(user) for user in users]
+    return [UserListResponse.model_validate(user) for user in users]
 
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -91,7 +91,7 @@ def update_user_credentials(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
-@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{user_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 def remove_user(user_id: str, current_user: AuthUser = Depends(get_current_user)) -> None:
     is_self = current_user.id == user_id
     is_admin = current_user.role == RoleEnum.admin

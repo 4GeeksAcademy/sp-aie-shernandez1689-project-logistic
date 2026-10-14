@@ -69,11 +69,26 @@ class StockExitResponse(StockExitCreateRequest):
     user_uuid: str = Field(min_length=1)
 
 
-class StockEntryOrderResponse(StockEntryResponse):
+class SKUOrderResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    sku: str
+
+
+class StockOrderResponse(BaseModel):
+    id: int = Field(gt=0)
+    quantity: int = Field(gt=0)
+    warehouse: Warehouse
+    created_at: datetime
+    user_uuid: str = Field(min_length=1)
+    product: SKUOrderResponse
+
+
+class StockEntryOrderResponse(StockOrderResponse):
     order_type: Literal["inbound"] = "inbound"
-    product: SKUResponse
 
 
-class StockExitOrderResponse(StockExitResponse):
+class StockExitOrderResponse(StockOrderResponse):
     order_type: Literal["outbound"] = "outbound"
-    product: SKUResponse
+    exit_type: ExitType

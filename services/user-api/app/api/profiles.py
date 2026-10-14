@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_current_user
-from app.models import AuthUser, ProfileResponse, ProfileUpdateRequest, RoleEnum
+from app.models import AuthUser, ProfileListResponse, ProfileResponse, ProfileUpdateRequest, RoleEnum
 from app.services.profiles import (
     ProfileNotFoundError,
     delete_profile_by_user_id,
@@ -21,10 +21,10 @@ def _ensure_admin(user: AuthUser) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
-@router.get("", response_model=list[ProfileResponse])
-def get_all_profiles(current_user: AuthUser = Depends(get_current_user)) -> list[ProfileResponse]:
+@router.get("", response_model=list[ProfileListResponse])
+def get_all_profiles(current_user: AuthUser = Depends(get_current_user)) -> list[ProfileListResponse]:
     _ensure_admin(current_user)
-    return [ProfileResponse.model_validate(profile) for profile in list_profiles()]
+    return [ProfileListResponse.model_validate(profile) for profile in list_profiles()]
 
 
 @router.get("/me", response_model=ProfileResponse)
@@ -89,7 +89,7 @@ def update_profile_by_user(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
-@router.delete("/user/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/user/{user_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 def remove_profile_by_user(
     user_id: str,
     current_user: AuthUser = Depends(get_current_user),
