@@ -26,8 +26,8 @@ export default async function CandidateDetail({
       <header className="page-heading detail-heading">
         <div>
           <p className="eyebrow">Detalle de candidatura</p>
-          <h1>{candidate.full_name}</h1>
-          <p className="subtitle">{candidate.position}</p>
+          <h1>{candidate.full_name || "Nombre no disponible"}</h1>
+          <p className="subtitle">{candidate.position || "Puesto no especificado"}</p>
         </div>
         <span className={`status status-${candidate.status}`}>
           {statusLabels[candidate.status] ?? "Sin estado"}
@@ -44,7 +44,7 @@ export default async function CandidateDetail({
             <div><dt>Fecha de candidatura</dt><dd><time dateTime={candidate.applied_at}>{formatDate(candidate.applied_at)}</time></dd></div>
             <div><dt>Última actualización</dt><dd><time dateTime={candidate.updated_at}>{formatDate(candidate.updated_at)}</time></dd></div>
             <div><dt>Identificador</dt><dd className="record-id">{candidate.id}</dd></div>
-            <div><dt>Notas registradas</dt><dd>{candidate.notes_count}</dd></div>
+            <div><dt>Notas registradas</dt><dd>{candidate.notes_count ?? notes.length}</dd></div>
           </dl>
         </section>
         <CandidateNotes id={candidate.id} notes={notes} />

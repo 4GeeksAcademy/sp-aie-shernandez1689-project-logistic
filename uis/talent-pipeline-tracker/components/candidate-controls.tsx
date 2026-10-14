@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   addCandidateNote,
@@ -14,22 +14,23 @@ import type { Candidate, CandidateNote } from "@/types/candidates";
 
 export function CandidateProgress({ candidate }: { candidate: Candidate }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  function update(change: { status: Candidate["status"] } | { stage: Candidate["stage"] }) {
+  async function update(change: { status: Candidate["status"] } | { stage: Candidate["stage"] }) {
     setError("");
     setMessage("");
-    startTransition(async () => {
-      try {
-        await updateCandidateProgress(candidate.id, change);
-        setMessage("Candidatura actualizada.");
-        router.refresh();
-      } catch {
-        setError("No se pudo actualizar la candidatura. Vuelve a intentarlo.");
-      }
-    });
+    setIsPending(true);
+    try {
+      await updateCandidateProgress(candidate.id, change);
+      setMessage("Candidatura actualizada.");
+      router.refresh();
+    } catch {
+      setError("No se pudo actualizar la candidatura. Vuelve a intentarlo o contacta con soporte.");
+    } finally {
+      setIsPending(false);
+    }
   }
 
   return (
@@ -68,40 +69,42 @@ export function CandidateProgress({ candidate }: { candidate: Candidate }) {
 export function CandidateNotes({ id, notes }: { id: string; notes: CandidateNote[] }) {
   const router = useRouter();
   const [content, setContent] = useState("");
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  function addNote(event: FormEvent<HTMLFormElement>) {
+  async function addNote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isPending || !content.trim()) return;
     setError("");
     setMessage("");
-    startTransition(async () => {
-      try {
-        await addCandidateNote(id, content);
-        setContent("");
-        setMessage("Nota añadida.");
-        router.refresh();
-      } catch {
-        setError("No se pudo añadir la nota. El texto se ha conservado; vuelve a intentarlo.");
-      }
-    });
+    setIsPending(true);
+    try {
+      await addCandidateNote(id, content);
+      setContent("");
+      setMessage("Nota añadida.");
+      router.refresh();
+    } catch {
+      setError("No se pudo añadir la nota. El texto se ha conservado; vuelve a intentarlo o contacta con soporte.");
+    } finally {
+      setIsPending(false);
+    }
   }
 
-  function deleteNote(noteId: string) {
+  async function deleteNote(noteId: string) {
     if (isPending || !window.confirm("¿Eliminar esta nota? Esta acción no se puede deshacer.")) return;
     setError("");
     setMessage("");
-    startTransition(async () => {
-      try {
-        await deleteCandidateNote(id, noteId);
-        setMessage("Nota eliminada.");
-        router.refresh();
-      } catch {
-        setError("No se pudo eliminar la nota. Vuelve a intentarlo.");
-      }
-    });
+    setIsPending(true);
+    try {
+      await deleteCandidateNote(id, noteId);
+      setMessage("Nota eliminada.");
+      router.refresh();
+    } catch {
+      setError("No se pudo eliminar la nota. Vuelve a intentarlo o contacta con soporte.");
+    } finally {
+      setIsPending(false);
+    }
   }
 
   return (
@@ -127,8 +130,8 @@ export function CandidateNotes({ id, notes }: { id: string; notes: CandidateNote
         <ol className="notes-list">
           {notes.map((note) => (
             <li key={note.id}>
-              <time dateTime={note.created_at}>{formatDate(note.created_at)}</time>
-              <p>{note.content}</p>
+              <time dateTime={note?.created_at ?? ""}>{formatDate(note?.created_at)}</time>
+              <p>{note?.content ?? "Contenido no disponible"}</p>
               <button
                 className="delete-note"
                 type="button"

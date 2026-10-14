@@ -1,4 +1,3 @@
-import { Suspense } from "react";
 import Link from "next/link";
 import { getCandidates } from "@/lib/candidates";
 import CandidateList from "@/components/candidate-list";
@@ -15,9 +14,7 @@ export default async function Home() {
         </div>
         <Link className="create-link" href="/candidates/new">Registrar candidatura</Link>
       </header>
-      <Suspense fallback={<p className="empty-state" role="status">Cargando candidaturas…</p>}>
-        <CandidateList candidates={candidates} />
-      </Suspense>
+      <CandidateList candidates={candidates} />
     </main>
   );
 }
