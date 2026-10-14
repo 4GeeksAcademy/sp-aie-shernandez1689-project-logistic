@@ -20,11 +20,11 @@ trap 'exit 143' TERM
 trap 'exit 130' INT
 
 cd /app/website
-node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port 3000 &
+node node_modules/next/dist/bin/next "${1:-start}" --hostname 0.0.0.0 --port 3000 &
 website_pid=$!
 
 cd /app/backoffice
-node node_modules/next/dist/bin/next start --hostname 0.0.0.0 --port 3001 &
+node node_modules/next/dist/bin/next "${1:-start}" --hostname 0.0.0.0 --port 3001 &
 backoffice_pid=$!
 
 wait -n "$website_pid" "$backoffice_pid"
