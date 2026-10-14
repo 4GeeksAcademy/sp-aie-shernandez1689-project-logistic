@@ -7,11 +7,9 @@ import type {
   Product,
   ProductInput,
 } from "@/types/inventory";
+import { getAccessToken } from "./auth";
 
 export type * from "@/types/inventory";
-
-// Same key used by the existing auth flow (uis/auth.js).
-const TOKEN_KEY = "trackflow_access_token";
 
 export class InventoryApiError extends Error {
   constructor(
@@ -22,11 +20,6 @@ export class InventoryApiError extends Error {
     super(message);
     this.name = "InventoryApiError";
   }
-}
-
-function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(TOKEN_KEY);
 }
 
 function extractError(payload: unknown, status: number): InventoryApiError {
@@ -62,7 +55,7 @@ function extractError(payload: unknown, status: number): InventoryApiError {
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = getToken();
+  const token = getAccessToken();
   if (!token) {
     throw new InventoryApiError("Tu sesión no está iniciada. Inicia sesión para continuar.", 401);
   }
