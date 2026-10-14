@@ -13,6 +13,7 @@ from app.api.applications import router as applications_router
 from app.api.auth import router as auth_router
 from app.api.profiles import router as profiles_router
 from app.api.users import router as users_router
+from app.routers.inventory import router as inventory_router
 
 
 @asynccontextmanager
@@ -101,6 +102,7 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(profiles_router)
 app.include_router(applications_router)
+app.include_router(inventory_router)
 
 
 @app.get("/")

@@ -67,3 +67,13 @@ class StockExitResponse(StockExitCreateRequest):
     id: int = Field(gt=0)
     created_at: datetime
     user_uuid: str = Field(min_length=1)
+
+
+class StockEntryOrderResponse(StockEntryResponse):
+    order_type: Literal["inbound"] = "inbound"
+    product: SKUResponse
+
+
+class StockExitOrderResponse(StockExitResponse):
+    order_type: Literal["outbound"] = "outbound"
+    product: SKUResponse

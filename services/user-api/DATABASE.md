@@ -53,3 +53,36 @@ filtered by SKU and warehouse, then pass that value with the SKU fields to
 `SKUResponse.model_validate`. Movement responses support ORM objects through
 `from_attributes=True`. The schemas validate categories, warehouses, positive
 integer quantities and the dispatch/loss tracking rules before persistence.
+
+## Inventory routes
+
+`app/routers/inventory.py` is registered in the main application under
+`/inventory`. All six routes require a Bearer token from TinyDB authentication,
+including GETs, following the service's existing access policy. Any active
+authenticated user can read and write inventory.
+
+| Method | Path | Response |
+| --- | --- | --- |
+| GET | `/inventory/products` | SKU list with calculated stock |
+| POST | `/inventory/products` | Created SKU, HTTP 201 |
+| GET | `/inventory/products/{id}` | SKU with calculated stock |
+| POST | `/inventory/orders/inbound` | Created StockEntry, HTTP 201 |
+| POST | `/inventory/orders/outbound` | Created StockExit, HTTP 201 |
+| GET | `/inventory/orders` | Chronological movement list with product data |
+
+Each SKU represents one warehouse. Responses calculate stock using only that
+SKU's movements in its warehouse, not a total across warehouses. Movement
+requests must match the SKU's warehouse (HTTP 400); missing SKUs return HTTP 404.
+Outbound requests exceeding available stock return HTTP 400 before any write,
+with `Insufficient stock for SKU '{sku}'. Available: {available}, requested: {quantity}.`
+Invalid request fields or tracking combinations return HTTP 422.
+
+Inbound and outbound operations lock the SKU row with PostgreSQL `FOR UPDATE`
+until commit or rollback, serializing stock changes for that SKU. The lock is
+not implemented by SQLite, which is used for isolated tests.
+
+`GET /inventory/orders` returns both movement types with `order_type` (`inbound`
+or `outbound`), all movement fields including `user_uuid`, and a nested `product`
+of type `SKUResponse`. Its `current_stock` is the current stock, not the stock at
+the time of the movement. IDs are unique within each movement table; use
+`order_type` together with `id` to identify an order.

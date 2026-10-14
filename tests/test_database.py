@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import inspect, text
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 from sqlmodel import SQLModel, Session, create_engine
@@ -12,6 +13,8 @@ from sqlmodel import SQLModel, Session, create_engine
 from app import db
 from app.main import app
 from app.models import SKU, StockEntry, StockExit
+from app.routers.inventory import _get_sku
+from app.security import create_access_token
 from app.schemas import (
     SKUCreateRequest,
     SKUResponse,
@@ -306,3 +309,217 @@ def test_inventory_requests_accept_valid_context_payloads():
     assert dispatch.tracking_number == "TRACK-001"
     loss = StockExitCreateRequest(sku_id=1, quantity=1, exit_type="loss", warehouse="LA")
     assert loss.tracking_number is None
+
+
+@pytest.mark.parametrize("method, path, payload", [
+    ("GET", "/inventory/products", None),
+    ("GET", "/inventory/products/1", None),
+    ("GET", "/inventory/orders", None),
+    ("POST", "/inventory/products", {}),
+    ("POST", "/inventory/orders/inbound", {}),
+    ("POST", "/inventory/orders/outbound", {}),
+])
+def test_inventory_requires_authentication(inventory_engine, client, method, path, payload):
+    response = client.request(method, path, json=payload)
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    with Session(inventory_engine) as session:
+        for table in ("sku", "stockentry", "stockexit"):
+            assert session.exec(text(f"SELECT COUNT(*) FROM {table}")).scalar_one() == 0
+
+
+def test_inventory_end_to_end(inventory_engine, client, auth_headers, user):
+    product = client.post("/inventory/products", headers=auth_headers, json={
+        "name": "Serum", "sku": "CSM-001", "client_name": "GlowLab",
+        "category": "cosmetics", "warehouse": "ZGZ",
+    })
+    assert product.status_code == 201
+    sku_id = product.json()["id"]
+    assert product.json()["current_stock"] == 0
+    for quantity in (10, 5):
+        entry = client.post("/inventory/orders/inbound", headers=auth_headers, json={
+            "sku_id": sku_id, "quantity": quantity, "reference": "PO-2024-0098",
+            "warehouse": "ZGZ",
+        })
+        assert entry.status_code == 201
+        assert entry.json()["user_uuid"] == user["id"]
+        assert entry.json()["created_at"]
+    dispatch = client.post("/inventory/orders/outbound", headers=auth_headers, json={
+        "sku_id": sku_id, "quantity": 4, "exit_type": "dispatch",
+        "tracking_number": "TRACK-001", "warehouse": "ZGZ",
+    })
+    assert dispatch.status_code == 201
+    loss = client.post("/inventory/orders/outbound", headers=auth_headers, json={
+        "sku_id": sku_id, "quantity": 1, "exit_type": "loss", "warehouse": "ZGZ",
+    })
+    assert loss.status_code == 201
+    assert loss.json()["tracking_number"] is None
+    detail = client.get(f"/inventory/products/{sku_id}", headers=auth_headers)
+    assert detail.status_code == 200
+    assert detail.json()["current_stock"] == 10
+    products = client.get("/inventory/products", headers=auth_headers)
+    assert products.status_code == 200
+    assert products.json() == [detail.json()]
+    orders = client.get("/inventory/orders", headers=auth_headers)
+    assert orders.status_code == 200
+    assert len(orders.json()) == 4
+    assert [order["order_type"] for order in orders.json()] == ["inbound", "inbound", "outbound", "outbound"]
+    for order in orders.json():
+        assert order["user_uuid"] == user["id"]
+        assert order["product"] == detail.json()
+
+
+def test_inventory_rejects_insufficient_stock_without_writing(inventory_engine, client, auth_headers):
+    with Session(inventory_engine) as session:
+        product = SKU(id=1, name="Serum", sku="CSM-001", client_name="GlowLab", category="cosmetics", warehouse="ZGZ")
+        session.add(product)
+        session.add(StockEntry(sku_id=1, quantity=3, reference="PO-001", warehouse="ZGZ", user_uuid="tinydb-user"))
+        session.commit()
+    response = client.post("/inventory/orders/outbound", headers=auth_headers, json={
+        "sku_id": 1, "quantity": 4, "exit_type": "loss", "warehouse": "ZGZ",
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Insufficient stock for SKU 'CSM-001'. Available: 3, requested: 4."
+    with Session(inventory_engine) as session:
+        assert session.exec(text("SELECT COUNT(*) FROM stockexit")).scalar_one() == 0
+    response = client.post("/inventory/orders/outbound", headers=auth_headers, json={
+        "sku_id": 1, "quantity": 3, "exit_type": "loss", "warehouse": "ZGZ",
+    })
+    assert response.status_code == 201
+    assert client.get("/inventory/products/1", headers=auth_headers).json()["current_stock"] == 0
+
+
+def test_inventory_stock_is_filtered_by_warehouse(inventory_engine, client, auth_headers):
+    with Session(inventory_engine) as session:
+        session.add_all([
+            SKU(id=1, name="Serum", sku="CSM-LA", client_name="GlowLab", category="cosmetics", warehouse="LA"),
+            SKU(id=2, name="Serum", sku="CSM-ZGZ", client_name="GlowLab", category="cosmetics", warehouse="ZGZ"),
+        ])
+        session.commit()
+        session.add_all([
+            StockEntry(sku_id=1, quantity=20, reference="PO-LA", warehouse="LA", user_uuid="tinydb-user"),
+            StockEntry(sku_id=1, quantity=99, reference="PO-OTHER", warehouse="ZGZ", user_uuid="tinydb-user"),
+            StockEntry(sku_id=2, quantity=15, reference="PO-ZGZ", warehouse="ZGZ", user_uuid="tinydb-user"),
+            StockExit(sku_id=1, quantity=3, exit_type="loss", warehouse="LA", user_uuid="tinydb-user"),
+            StockExit(sku_id=1, quantity=10, exit_type="loss", warehouse="ZGZ", user_uuid="tinydb-user"),
+        ])
+        session.commit()
+    response = client.get("/inventory/products", headers=auth_headers)
+    assert response.status_code == 200
+    assert [product["current_stock"] for product in response.json()] == [17, 15]
+    response = client.post("/inventory/orders/outbound", headers=auth_headers, json={
+        "sku_id": 1, "quantity": 18, "exit_type": "loss", "warehouse": "LA",
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Insufficient stock for SKU 'CSM-LA'. Available: 17, requested: 18."
+    with Session(inventory_engine) as session:
+        assert session.exec(text("SELECT COUNT(*) FROM stockexit")).scalar_one() == 2
+
+
+@pytest.mark.parametrize("path, fields", [
+    ("inbound", {"reference": "PO-001"}), ("outbound", {"exit_type": "loss"}),
+])
+def test_inventory_rejects_missing_sku_and_wrong_warehouse(inventory_engine, client, auth_headers, path, fields):
+    payload = {"sku_id": 1, "quantity": 1, "warehouse": "ZGZ", **fields}
+    response = client.post(f"/inventory/orders/{path}", headers=auth_headers, json=payload)
+    assert response.status_code == 404
+    with Session(inventory_engine) as session:
+        session.add(SKU(id=1, name="Serum", sku="CSM-001", client_name="GlowLab", category="cosmetics", warehouse="LA"))
+        session.commit()
+    response = client.post(f"/inventory/orders/{path}", headers=auth_headers, json=payload)
+    assert response.status_code == 400
+    assert client.get("/inventory/orders", headers=auth_headers).json() == []
+
+
+def test_inventory_missing_product_returns_404(inventory_engine, client, auth_headers):
+    assert client.get("/inventory/products/999", headers=auth_headers).status_code == 404
+    assert client.get("/inventory/products", headers=auth_headers).json() == []
+    assert client.get("/inventory/orders", headers=auth_headers).json() == []
+
+
+@pytest.mark.parametrize("fields", [
+    {"exit_type": "dispatch"},
+    {"exit_type": "loss", "tracking_number": "TRACK-001"},
+    {"exit_type": "loss", "quantity": 0},
+    {"exit_type": "loss", "user_uuid": "forged-user"},
+])
+def test_inventory_validates_outbound_requests(inventory_engine, client, auth_headers, fields):
+    response = client.post("/inventory/orders/outbound", headers=auth_headers, json={
+        "sku_id": 1, "quantity": 1, "warehouse": "LA", **fields,
+    })
+    assert response.status_code == 422
+    assert client.get("/inventory/orders", headers=auth_headers).json() == []
+
+
+def test_inventory_lock_query_uses_postgres_for_update(inventory_engine):
+    with Session(inventory_engine) as session:
+        session.add(SKU(id=1, name="Serum", sku="CSM-001", client_name="GlowLab", category="cosmetics", warehouse="LA"))
+        session.commit()
+        with patch.object(session, "exec", wraps=session.exec) as execute:
+            assert _get_sku(session, 1, lock=True).id == 1
+        statement = execute.call_args.args[0]
+        assert "FOR UPDATE" in str(statement.compile(dialect=postgresql.dialect()))
+
+
+def test_inventory_stock_cannot_be_set_at_creation(inventory_engine, client, auth_headers):
+    payload = {
+        "name": "Serum", "sku": "CSM-001", "client_name": "GlowLab",
+        "category": "cosmetics", "warehouse": "ZGZ",
+    }
+    response = client.post("/inventory/products", headers=auth_headers, json={
+        **payload, "current_stock": 100,
+    })
+    assert response.status_code == 422
+    assert client.get("/inventory/products", headers=auth_headers).json() == []
+    product = client.post("/inventory/products", headers=auth_headers, json=payload)
+    assert product.status_code == 201
+    assert product.json()["current_stock"] == 0
+    assert client.get("/inventory/orders", headers=auth_headers).json() == []
+    sku_id = product.json()["id"]
+    response = client.post("/inventory/orders/outbound", headers=auth_headers, json={
+        "sku_id": sku_id, "quantity": 1, "exit_type": "loss", "warehouse": "ZGZ",
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Insufficient stock for SKU 'CSM-001'. Available: 0, requested: 1."
+    with Session(inventory_engine) as session:
+        assert "current_stock" not in {column["name"] for column in inspect(inventory_engine).get_columns("sku")}
+        assert session.exec(text("SELECT COUNT(*) FROM stockentry")).scalar_one() == 0
+        assert session.exec(text("SELECT COUNT(*) FROM stockexit")).scalar_one() == 0
+
+
+def test_inventory_persists_each_authenticated_users_uuid(
+    inventory_engine, client, auth_headers, user, make_user,
+):
+    product = client.post("/inventory/products", headers=auth_headers, json={
+        "name": "Serum", "sku": "CSM-001", "client_name": "GlowLab",
+        "category": "cosmetics", "warehouse": "ZGZ",
+    })
+    assert product.status_code == 201
+    sku_id = product.json()["id"]
+    inbound = client.post("/inventory/orders/inbound", headers=auth_headers, json={
+        "sku_id": sku_id, "quantity": 5, "reference": "PO-001", "warehouse": "ZGZ",
+    })
+    assert inbound.status_code == 201
+    operator = make_user(email="operator@example.com")
+    token = create_access_token(operator["id"], operator["email"], operator["role"])
+    operator_headers = {"Authorization": f"Bearer {token}"}
+    outbound = client.post("/inventory/orders/outbound", headers=operator_headers, json={
+        "sku_id": sku_id, "quantity": 2, "exit_type": "loss", "warehouse": "ZGZ",
+    })
+    assert outbound.status_code == 201
+    with Session(inventory_engine) as session:
+        assert session.get(StockEntry, inbound.json()["id"]).user_uuid == user["id"]
+        assert session.get(StockExit, outbound.json()["id"]).user_uuid == operator["id"]
+    assert client.get(f"/inventory/products/{sku_id}", headers=operator_headers).json()["current_stock"] == 3
+
+
+@pytest.mark.parametrize("path, fields", [
+    ("inbound", {"reference": "PO-001"}), ("outbound", {"exit_type": "loss"}),
+])
+def test_inventory_rejects_forged_user_uuid(inventory_engine, client, auth_headers, path, fields):
+    response = client.post(f"/inventory/orders/{path}", headers=auth_headers, json={
+        "sku_id": 1, "quantity": 1, "warehouse": "LA",
+        "user_uuid": "forged-user", **fields,
+    })
+    assert response.status_code == 422
+    assert client.get("/inventory/orders", headers=auth_headers).json() == []
