@@ -216,14 +216,14 @@ def seed_suppliers(db_path: Path | None = None) -> tuple[int, int, Path]:
 
 def main() -> int:
     try:
-        inserted_count, skipped_count, db_file = seed_suppliers()
+        inserted_count, skipped_count, _ = seed_suppliers()
     except (OSError, RuntimeError, ValueError) as error:
-        print(f"Error al cargar proveedores: {error}", file=sys.stderr)
+        print(f"Error al cargar proveedores ({type(error).__name__}).", file=sys.stderr)
         return 1
 
     print(
         f"Seed completed. Inserted {inserted_count} suppliers, "
-        f"skipped {skipped_count} existing records in {db_file}"
+        f"skipped {skipped_count} existing records."
     )
     return 0
 
