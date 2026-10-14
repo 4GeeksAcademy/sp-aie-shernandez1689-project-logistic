@@ -86,3 +86,41 @@ or `outbound`), all movement fields including `user_uuid`, and a nested `product
 of type `SKUResponse`. Its `current_stock` is the current stock, not the stock at
 the time of the movement. IDs are unique within each movement table; use
 `order_type` together with `id` to identify an order.
+
+## Demo seed
+
+After configuring `DATABASE_URL`, install the service dependencies and run from
+`services/user-api` before the demo:
+
+```sh
+python -m app.seed_inventory --user-uuid UUID_TINYDB
+```
+
+Replace `UUID_TINYDB` with an active existing user's ID. If exactly one active
+TinyDB user exists, omit `--user-uuid` to select that user automatically. The seed
+does not create users or store credentials. Every movement records the selected
+TinyDB user's ID in `user_uuid`.
+
+The command creates missing SQL tables and inserts the six exact SKUs from
+`CONTEXT-5.MD`, seven entries and three exits in one transaction. It includes two
+receipts with different quantities for the LA shoe SKU, entries in both warehouses,
+two dispatches with tracking and one loss without tracking. It refuses nonempty
+inventory rather than overwriting existing records or duplicating demo movements.
+Any failed insertion rolls back the complete seed. Run it while inventory writes
+are paused, before starting the demo.
+
+Expected stock is calculated from persisted movements, never inserted as a SKU
+column:
+
+| SKU | Warehouse | Entries | Exits | Current stock |
+| --- | --- | --- | --- | --- |
+| CLT-SNK-W-42 | LA | 55 | 15 | 40 |
+| CLT-SNK-W-42-Z | ZGZ | 25 | 5 | 20 |
+| TEC-EAR-001 | LA | 30 | 0 | 30 |
+| CSM-SRM-030 | ZGZ | 50 | 0 | 50 |
+| CLT-CHN-N-32 | LA | 20 | 0 | 20 |
+| TEC-CHG-065 | ZGZ | 35 | 0 | 35 |
+
+Verify these figures with an authenticated `GET /inventory/products` and check
+the ten movements through `GET /inventory/orders`. Missing configuration or an
+ambiguous user selection prevents the seed from running.

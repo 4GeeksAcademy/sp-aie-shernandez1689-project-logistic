@@ -15,6 +15,7 @@ from app.main import app
 from app.models import SKU, StockEntry, StockExit
 from app.routers.inventory import _get_sku
 from app.security import create_access_token
+from app.seed_inventory import SKU_SEED, seed_inventory
 from app.schemas import (
     SKUCreateRequest,
     SKUResponse,
@@ -523,3 +524,65 @@ def test_inventory_rejects_forged_user_uuid(inventory_engine, client, auth_heade
     })
     assert response.status_code == 422
     assert client.get("/inventory/orders", headers=auth_headers).json() == []
+
+
+def test_inventory_seed_matches_context_and_net_stock(inventory_engine, client, auth_headers, user):
+    with Session(inventory_engine) as session:
+        assert seed_inventory(session, user["id"]) == {"skus": 6, "entries": 7, "exits": 3}
+    response = client.get("/inventory/products", headers=auth_headers)
+    assert response.status_code == 200
+    products = response.json()
+    assert [{key: value for key, value in product.items() if key not in {"id", "current_stock"}} for product in products] == SKU_SEED
+    expected_stock = {
+        "CLT-SNK-W-42": 40, "CLT-SNK-W-42-Z": 20, "TEC-EAR-001": 30,
+        "CSM-SRM-030": 50, "CLT-CHN-N-32": 20, "TEC-CHG-065": 35,
+    }
+    assert {product["sku"]: product["current_stock"] for product in products} == expected_stock
+    orders = client.get("/inventory/orders", headers=auth_headers).json()
+    assert len(orders) == 10
+    for product in products:
+        movements = [order for order in orders if order["sku_id"] == product["id"] and order["warehouse"] == product["warehouse"]]
+        incoming = sum(order["quantity"] for order in movements if order["order_type"] == "inbound")
+        outgoing = sum(order["quantity"] for order in movements if order["order_type"] == "outbound")
+        assert product["current_stock"] == incoming - outgoing
+        assert product["current_stock"] >= 0
+    entries = [order for order in orders if order["order_type"] == "inbound"]
+    assert {order["warehouse"] for order in entries} == {"LA", "ZGZ"}
+    shoe_entries = [order["quantity"] for order in entries if order["product"]["sku"] == "CLT-SNK-W-42"]
+    assert sorted(shoe_entries) == [15, 40]
+    exits = [order for order in orders if order["order_type"] == "outbound"]
+    assert {order["exit_type"] for order in exits} == {"dispatch", "loss"}
+    assert all(order["user_uuid"] == user["id"] for order in orders)
+
+
+def test_inventory_seed_refuses_repetition_without_changes(inventory_engine, user):
+    with Session(inventory_engine) as session:
+        seed_inventory(session, user["id"])
+        with pytest.raises(ValueError, match="Inventory must be empty"):
+            seed_inventory(session, user["id"])
+        assert session.exec(text("SELECT COUNT(*) FROM sku")).scalar_one() == 6
+        assert session.exec(text("SELECT COUNT(*) FROM stockentry")).scalar_one() == 7
+        assert session.exec(text("SELECT COUNT(*) FROM stockexit")).scalar_one() == 3
+
+
+def test_inventory_seed_requires_existing_active_tinydb_user(inventory_engine, user):
+    with Session(inventory_engine) as session:
+        with pytest.raises(ValueError, match="active existing TinyDB user"):
+            seed_inventory(session, "unknown-user")
+    from app.services import users
+    users.update_user(user["id"], {"is_active": False})
+    with Session(inventory_engine) as session:
+        with pytest.raises(ValueError, match="active existing TinyDB user"):
+            seed_inventory(session, user["id"])
+        assert session.exec(text("SELECT COUNT(*) FROM sku")).scalar_one() == 0
+
+
+def test_inventory_seed_rolls_back_invalid_stock(inventory_engine, user):
+    from app import seed_inventory as seeder
+    invalid_exits = [{"sku": "CLT-SNK-W-42", "quantity": 56, "exit_type": "loss", "tracking_number": None}]
+    with Session(inventory_engine) as session:
+        with patch.object(seeder, "EXIT_SEED", invalid_exits):
+            with pytest.raises(ValueError, match="cannot exceed entries"):
+                seed_inventory(session, user["id"])
+        for table in ("sku", "stockentry", "stockexit"):
+            assert session.exec(text(f"SELECT COUNT(*) FROM {table}")).scalar_one() == 0
