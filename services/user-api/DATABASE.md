@@ -38,3 +38,18 @@ Inject `app.db.DBSession` in inventory route parameters. It is an alias for
 `Annotated[Session, Depends(get_db)]`. Each request gets its own session, closed
 on success or failure. Routes must explicitly call `session.commit()` for writes;
 uncommitted work is rolled back when the session closes.
+
+## Inventory schemas
+
+`app/schemas.py` defines independent Pydantic classes: `SKUCreateRequest`,
+`SKUResponse`, `StockEntryCreateRequest`, `StockEntryResponse`,
+`StockExitCreateRequest` and `StockExitResponse`. They are not SQLModel tables.
+Requests reject unknown fields. IDs, timestamps and movement `user_uuid` are
+response-only fields; routes obtain the user identifier from TinyDB authentication.
+
+`SKUResponse.current_stock` is required and is never accepted in a creation
+request or stored in the ORM. Route logic must calculate entries minus exits
+filtered by SKU and warehouse, then pass that value with the SKU fields to
+`SKUResponse.model_validate`. Movement responses support ORM objects through
+`from_attributes=True`. The schemas validate categories, warehouses, positive
+integer quantities and the dispatch/loss tracking rules before persistence.

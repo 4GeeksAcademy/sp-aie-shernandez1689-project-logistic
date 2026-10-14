@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
@@ -11,6 +12,14 @@ from sqlmodel import SQLModel, Session, create_engine
 from app import db
 from app.main import app
 from app.models import SKU, StockEntry, StockExit
+from app.schemas import (
+    SKUCreateRequest,
+    SKUResponse,
+    StockEntryCreateRequest,
+    StockEntryResponse,
+    StockExitCreateRequest,
+    StockExitResponse,
+)
 
 
 def test_postgres_engine_uses_psycopg_and_ssl():
@@ -194,3 +203,106 @@ def test_startup_propagates_schema_initialization_failure():
             with pytest.raises(RuntimeError, match="schema unavailable"):
                 with TestClient(app):
                     pass
+
+
+@pytest.mark.parametrize("schema", [
+    SKUCreateRequest, SKUResponse, StockEntryCreateRequest,
+    StockEntryResponse, StockExitCreateRequest, StockExitResponse,
+])
+def test_inventory_schemas_are_independent_pydantic_models(schema):
+    assert issubclass(schema, BaseModel)
+    assert not issubclass(schema, SQLModel)
+    assert schema.__module__ == "app.schemas"
+    assert set(SQLModel.metadata.tables) == {"sku", "stockentry", "stockexit"}
+
+
+def test_sku_response_requires_calculated_stock(inventory_engine):
+    product = SKU(
+        id=1, name="Serum", sku="CSM-001", client_name="GlowLab",
+        category="cosmetics", warehouse="ZGZ",
+    )
+    with pytest.raises(ValidationError):
+        SKUResponse.model_validate(product)
+    response = SKUResponse.model_validate({**product.model_dump(), "current_stock": 7})
+    assert response.model_dump()["current_stock"] == 7
+    assert "current_stock" not in SKU.__table__.columns
+    with pytest.raises(ValidationError):
+        SKUCreateRequest.model_validate(response.model_dump())
+
+
+@pytest.mark.parametrize("model, schema, fields", [
+    (StockEntry, StockEntryResponse, {"reference": "PO-2024-0098"}),
+    (StockExit, StockExitResponse, {"exit_type": "dispatch", "tracking_number": "TRACK-001"}),
+    (StockExit, StockExitResponse, {"exit_type": "loss"}),
+])
+def test_movement_schemas_serialize_orm_attributes(model, schema, fields):
+    movement = model(id=1, sku_id=1, quantity=2, warehouse="LA", user_uuid="tinydb-user", **fields)
+    response = schema.model_validate(movement)
+    payload = response.model_dump(mode="json")
+    assert payload["sku_id"] == 1
+    assert payload["quantity"] == 2
+    assert payload["warehouse"] == "LA"
+    assert payload["user_uuid"] == "tinydb-user"
+    assert isinstance(payload["created_at"], str)
+
+
+@pytest.mark.parametrize("schema, fields", [
+    (StockEntryCreateRequest, {"reference": "PO-2024-0098"}),
+    (StockExitCreateRequest, {"exit_type": "loss"}),
+])
+@pytest.mark.parametrize("quantity", [0, -1, 1.5, True, "2"])
+def test_movement_requests_require_positive_integer_quantities(schema, fields, quantity):
+    with pytest.raises(ValidationError):
+        schema(sku_id=1, quantity=quantity, warehouse="LA", **fields)
+
+
+@pytest.mark.parametrize("field, value", [
+    ("id", 10), ("user_uuid", "forged-user"), ("created_at", "2026-10-14T00:00:00Z"),
+])
+@pytest.mark.parametrize("schema, fields", [
+    (StockEntryCreateRequest, {"reference": "PO-2024-0098"}),
+    (StockExitCreateRequest, {"exit_type": "loss"}),
+])
+def test_movement_requests_reject_server_owned_fields(schema, fields, field, value):
+    with pytest.raises(ValidationError):
+        schema(sku_id=1, quantity=1, warehouse="LA", **fields, **{field: value})
+
+
+@pytest.mark.parametrize("exit_type, tracking_number", [
+    ("dispatch", None), ("dispatch", " "), ("loss", "TRACK-001"), ("invalid", None),
+])
+def test_exit_request_validates_tracking_before_persistence(exit_type, tracking_number):
+    with pytest.raises(ValidationError):
+        StockExitCreateRequest(
+            sku_id=1, quantity=1, warehouse="ZGZ",
+            exit_type=exit_type, tracking_number=tracking_number,
+        )
+
+
+@pytest.mark.parametrize("field, value", [
+    ("name", " "), ("sku", ""), ("client_name", " "),
+    ("category", "other"), ("warehouse", "NYC"), ("current_stock", 5),
+])
+def test_sku_request_validates_context_fields(field, value):
+    payload = {
+        "name": "Serum", "sku": "CSM-001", "client_name": "GlowLab",
+        "category": "cosmetics", "warehouse": "ZGZ",
+    }
+    with pytest.raises(ValidationError):
+        SKUCreateRequest.model_validate({**payload, field: value})
+
+
+def test_inventory_requests_accept_valid_context_payloads():
+    product = SKUCreateRequest(
+        name=" Serum ", sku="CSM-001", client_name="GlowLab",
+        category="cosmetics", warehouse="ZGZ",
+    )
+    assert product.name == "Serum"
+    entry = StockEntryCreateRequest(sku_id=1, quantity=10, reference="PO-2024-0098", warehouse="ZGZ")
+    assert entry.quantity == 10
+    dispatch = StockExitCreateRequest(
+        sku_id=1, quantity=2, exit_type="dispatch", tracking_number=" TRACK-001 ", warehouse="LA",
+    )
+    assert dispatch.tracking_number == "TRACK-001"
+    loss = StockExitCreateRequest(sku_id=1, quantity=1, exit_type="loss", warehouse="LA")
+    assert loss.tracking_number is None
