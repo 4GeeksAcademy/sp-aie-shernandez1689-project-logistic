@@ -29,7 +29,7 @@ const dom = {
 };
 
 function setFeedback(message, type = "") {
-  dom.formFeedback.textContent = message;
+  dom.formFeedback.setMessage(message);
   dom.formFeedback.className = `feedback${type ? ` ${type}` : ""}`;
 }
 

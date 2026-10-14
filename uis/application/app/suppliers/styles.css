@@ -289,6 +289,10 @@ th {
   background: rgba(17, 56, 76, 0.9);
 }
 
+trackflow-feedback {
+  display: block;
+}
+
 .feedback {
   min-height: 1.35rem;
   margin-top: 0.6rem;

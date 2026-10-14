@@ -40,6 +40,10 @@
   color: #bbf7d0;
 }
 
+trackflow-feedback {
+  display: block;
+}
+
 .error-message:empty,
 .warning-message:empty,
 .success-message:empty {
