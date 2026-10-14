@@ -1,6 +1,45 @@
 # Auditoria de serializacion de FastAPI
 
-Fecha: 2026-10-14. Fases 1 y 2: auditoria e implementacion.
+Fecha: 2026-10-14. Fases 1, 2 y 3: auditoria, implementacion y verificacion.
+
+## Fase 3: verificacion completada
+
+Se repitieron todas las suites existentes tras los cambios de esquema: **156 pruebas pasan**, sin fallos. Los 37 contratos actuales estan marcados individualmente como ✅ en la tabla de Fase 2. Esto confirma ausencia de regresiones en las pruebas disponibles; no implica que cada rama de cada endpoint tenga cobertura exhaustiva.
+
+### Tests existentes
+
+| Suite | Resultado | Observaciones |
+| --- | --- | --- |
+| User API, suite raiz `tests/` | 123 pasan | Cobertura de `app.api.auth`: 100 %, minimo requerido: 70 %. |
+| User API, contrasenas y correo `services/user-api/tests/` | 19 pasan | Recuperacion, reset, cambio, tokens y proveedor de correo. |
+| Operations API, `services/api/tests/test_serialization.py` | 14 pasan | Contratos, campos de entrada/salida, resumen, escrituras y DELETE. |
+
+Comandos ejecutados desde la raiz, con Python 3.12 y dependencias separadas por servicio:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 COVERAGE_FILE=/tmp/trackflow-phase3.coverage /tmp/trackflow-serialization-venv/bin/python -m pytest -q
+PYTHONDONTWRITEBYTECODE=1 /tmp/trackflow-serialization-venv/bin/python -m unittest discover -s services/user-api/tests -q
+PYTHONDONTWRITEBYTECODE=1 /tmp/trackflow-operations-venv/bin/python -m pytest -o addopts='' -p no:cacheprovider services/api/tests/test_serialization.py -q
+```
+
+Solo se observaron avisos de deprecacion de dependencias; no hay fallos. Bytecode desactivado y cobertura fuera del repositorio para evitar cambios en artefactos versionados.
+
+### Comprobacion interactiva en Swagger
+
+Se abrio `http://127.0.0.1:18765/docs` en Chromium y se accionaron los controles reales **Try it out**, **Execute** y **Authorize** de Swagger UI, asistidos por Playwright. No se sustituyo este recorrido por peticiones curl ni por TestClient. La instancia de User API uso TinyDB en memoria, una clave JWT de prueba y cuentas sinteticas; no se escribieron datos reales ni se conecto a PostgreSQL.
+
+| Metodo | Ruta | Estado HTTP | Shape observado y esquema contrastado | Resultado |
+| --- | --- | --- | --- | --- |
+| POST | `/users` | 201 | `MessageResponse`: solo `message`, con confirmacion de creacion; sin email, password, hash ni perfil. | ✅ |
+| POST | `/auth/login` | 200 | `TokenResponse`: solo `access_token: string` y `token_type: "bearer"`; el JWT contiene solo `sub`, `role`, `exp`, sin email. | ✅ |
+| GET | `/auth/me` | 200 | `AuthMeResponse`: `email` del llamante, `role: "user"`, `profile: {name: "Phase Three", phone: null, address: null}`; sin IDs de perfil ni credenciales. | ✅ |
+| GET | `/health` | 200 | `HealthResponse`: exactamente `{"status": "ok"}`. | ✅ |
+
+Para cada operacion se comprobaron el codigo y el JSON visibles en **Server response**, su igualdad con la respuesta HTTP capturada y su validez contra el JSON Schema de `/openapi.json`, resolviendo las referencias a `components/schemas`. Tambien se comprobaron las claves exactas de salida para detectar campos inesperados. `/auth/me` se ejecuto despues de aplicar el token de login en el dialogo Bearer de Swagger, sin sustituir la dependencia de autenticacion.
+
+Se inspecciono una captura del bloque `/health`, que muestra 200 y el mismo shape en respuesta y ejemplo de esquema. La captura y las bibliotecas temporales del navegador quedaron fuera del repositorio; no se guardaron tokens de acceso en el documento. La instancia temporal se cerro al finalizar y sus registros en memoria no persistieron.
+
+**Limites:** se verificaron cuatro endpoints desde `/docs`, no los 37 de forma interactiva. Operations se verifico con su suite existente, no mediante Swagger en esta fase. No se verificaron un despliegue real, PostgreSQL ni consumidores externos. Las clasificaciones ⚠️ conservadas mas abajo pertenecen exclusivamente al historial de Fase 1.
 
 ## Fase 2: estado implementado
 
@@ -12,45 +51,45 @@ Las rutas automaticas de OpenAPI, Swagger y ReDoc son infraestructura del framew
 
 Todos los contratos de esta tabla estan ✅. `No aplica` significa que no hay cuerpo de entrada; `None` significa respuesta vacia, no JSON `null`. Las listas usan proyecciones dedicadas cuando el consumidor no necesita el detalle completo.
 
-| Metodo | Ruta | Esquema de entrada | `response_model` explicito |
-| --- | --- | --- | --- |
-| POST | `/users` | `UserCreateRequest` | `MessageResponse` |
-| POST | `/auth/login` | `LoginRequest` | `TokenResponse` |
-| POST | `/auth/forgot-password` | `ForgotPasswordRequest` | `MessageResponse` |
-| POST | `/auth/reset-password` | `ResetPasswordRequest` | `MessageResponse` |
-| POST | `/auth/change-password` | `ChangePasswordRequest` | `MessageResponse` |
-| GET | `/auth/me` | No aplica | `AuthMeResponse` |
-| GET | `/users` | No aplica | `list[UserListResponse]` |
-| GET | `/users/{user_id}` | No aplica | `UserResponse` |
-| PUT | `/users/{user_id}` | `UserUpdateRequest` | `UserResponse` |
-| DELETE | `/users/{user_id}` | No aplica | `None` |
-| GET | `/profiles` | No aplica | `list[ProfileListResponse]` |
-| GET | `/profiles/me` | No aplica | `ProfileResponse` |
-| PUT | `/profiles/me` | `ProfileUpdateRequest` | `ProfileResponse` |
-| GET | `/profiles/user/{user_id}` | No aplica | `ProfileResponse` |
-| GET | `/profiles/{profile_id}` | No aplica | `ProfileResponse` |
-| PUT | `/profiles/user/{user_id}` | `ProfileUpdateRequest` | `ProfileResponse` |
-| DELETE | `/profiles/user/{user_id}` | No aplica | `None` |
-| POST | `/applications` | `ApplicationSubmissionRequest` | `ApplicationSubmissionResponse` |
-| GET | `/inventory/products` | No aplica | `list[SKUResponse]` |
-| POST | `/inventory/products` | `SKUCreateRequest` | `SKUResponse` |
-| GET | `/inventory/products/{id}` | No aplica | `SKUResponse` |
-| POST | `/inventory/orders/inbound` | `StockEntryCreateRequest` | `StockEntryResponse` |
-| POST | `/inventory/orders/outbound` | `StockExitCreateRequest` | `StockExitResponse` |
-| GET | `/inventory/orders` | No aplica | `list[StockEntryOrderResponse \| StockExitOrderResponse]` |
-| GET | `/` | No aplica | `RootResponse` |
-| GET | `/health` | No aplica | `HealthResponse` |
-| POST | `/api/incidents` | `IncidentCreate` | `Incident` |
-| GET | `/api/incidents` | No aplica | `list[IncidentListResponse]` |
-| GET | `/api/incidents/summary` | No aplica | `IncidentSummaryResponse` |
-| GET | `/api/incidents/{incident_id}` | No aplica | `Incident` |
-| PATCH | `/api/incidents/{incident_id}/status` | `IncidentStatusUpdate` | `Incident` |
-| POST | `/suppliers` | `SupplierCreate` | `SupplierCreatedResponse` |
-| GET | `/suppliers` | No aplica | `list[SupplierListResponse]` |
-| GET | `/suppliers/{supplier_id}` | No aplica | `SupplierCreatedResponse` |
-| PATCH | `/suppliers/{supplier_id}/rate` | `SupplierRateUpdate` | `SupplierCreatedResponse` |
-| PATCH | `/suppliers/{supplier_id}/status` | `SupplierStatusUpdate` | `SupplierCreatedResponse` |
-| DELETE | `/suppliers/{supplier_id}` | No aplica | `None` |
+| Metodo | Ruta | Esquema de entrada | `response_model` explicito | Estado |
+| --- | --- | --- | --- | --- |
+| POST | `/users` | `UserCreateRequest` | `MessageResponse` | ✅ |
+| POST | `/auth/login` | `LoginRequest` | `TokenResponse` | ✅ |
+| POST | `/auth/forgot-password` | `ForgotPasswordRequest` | `MessageResponse` | ✅ |
+| POST | `/auth/reset-password` | `ResetPasswordRequest` | `MessageResponse` | ✅ |
+| POST | `/auth/change-password` | `ChangePasswordRequest` | `MessageResponse` | ✅ |
+| GET | `/auth/me` | No aplica | `AuthMeResponse` | ✅ |
+| GET | `/users` | No aplica | `list[UserListResponse]` | ✅ |
+| GET | `/users/{user_id}` | No aplica | `UserResponse` | ✅ |
+| PUT | `/users/{user_id}` | `UserUpdateRequest` | `UserResponse` | ✅ |
+| DELETE | `/users/{user_id}` | No aplica | `None` | ✅ |
+| GET | `/profiles` | No aplica | `list[ProfileListResponse]` | ✅ |
+| GET | `/profiles/me` | No aplica | `ProfileResponse` | ✅ |
+| PUT | `/profiles/me` | `ProfileUpdateRequest` | `ProfileResponse` | ✅ |
+| GET | `/profiles/user/{user_id}` | No aplica | `ProfileResponse` | ✅ |
+| GET | `/profiles/{profile_id}` | No aplica | `ProfileResponse` | ✅ |
+| PUT | `/profiles/user/{user_id}` | `ProfileUpdateRequest` | `ProfileResponse` | ✅ |
+| DELETE | `/profiles/user/{user_id}` | No aplica | `None` | ✅ |
+| POST | `/applications` | `ApplicationSubmissionRequest` | `ApplicationSubmissionResponse` | ✅ |
+| GET | `/inventory/products` | No aplica | `list[SKUResponse]` | ✅ |
+| POST | `/inventory/products` | `SKUCreateRequest` | `SKUResponse` | ✅ |
+| GET | `/inventory/products/{id}` | No aplica | `SKUResponse` | ✅ |
+| POST | `/inventory/orders/inbound` | `StockEntryCreateRequest` | `StockEntryResponse` | ✅ |
+| POST | `/inventory/orders/outbound` | `StockExitCreateRequest` | `StockExitResponse` | ✅ |
+| GET | `/inventory/orders` | No aplica | `list[StockEntryOrderResponse \| StockExitOrderResponse]` | ✅ |
+| GET | `/` | No aplica | `RootResponse` | ✅ |
+| GET | `/health` | No aplica | `HealthResponse` | ✅ |
+| POST | `/api/incidents` | `IncidentCreate` | `Incident` | ✅ |
+| GET | `/api/incidents` | No aplica | `list[IncidentListResponse]` | ✅ |
+| GET | `/api/incidents/summary` | No aplica | `IncidentSummaryResponse` | ✅ |
+| GET | `/api/incidents/{incident_id}` | No aplica | `Incident` | ✅ |
+| PATCH | `/api/incidents/{incident_id}/status` | `IncidentStatusUpdate` | `Incident` | ✅ |
+| POST | `/suppliers` | `SupplierCreate` | `SupplierCreatedResponse` | ✅ |
+| GET | `/suppliers` | No aplica | `list[SupplierListResponse]` | ✅ |
+| GET | `/suppliers/{supplier_id}` | No aplica | `SupplierCreatedResponse` | ✅ |
+| PATCH | `/suppliers/{supplier_id}/rate` | `SupplierRateUpdate` | `SupplierCreatedResponse` | ✅ |
+| PATCH | `/suppliers/{supplier_id}/status` | `SupplierStatusUpdate` | `SupplierCreatedResponse` | ✅ |
+| DELETE | `/suppliers/{supplier_id}` | No aplica | `None` | ✅ |
 
 ### Autenticacion y campos sensibles
 
