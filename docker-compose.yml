@@ -1,0 +1,56 @@
+services:
+  interfaces:
+    build:
+      context: ./uis
+    init: true
+    command: ["/bin/bash", "/app/start.sh", "dev"]
+    environment:
+      NODE_ENV: ${NODE_ENV:?Define NODE_ENV in .env}
+      NEXT_TELEMETRY_DISABLED: ${NEXT_TELEMETRY_DISABLED:?Define NEXT_TELEMETRY_DISABLED in .env}
+      INTERNAL_API_URL: ${INTERNAL_API_URL:?Define INTERNAL_API_URL in .env}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?Define NEXT_PUBLIC_API_URL in .env}
+    ports:
+      - "${WEBSITE_PORT:?Define WEBSITE_PORT in .env}:3000"
+      - "${BACKOFFICE_PORT:?Define BACKOFFICE_PORT in .env}:3001"
+    volumes:
+      - ./uis:/app
+      - website_node_modules:/app/website/node_modules
+      - backoffice_node_modules:/app/backoffice/node_modules
+      - website_next:/app/website/.next
+      - backoffice_next:/app/backoffice/.next
+    depends_on:
+      - backend
+    networks:
+      - development
+
+  backend:
+    build:
+      context: ./services
+    init: true
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:?Define ACCESS_TOKEN_EXPIRE_MINUTES in .env}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:?Define CORS_ALLOW_ORIGINS in .env}
+      DATABASE_URL: ${DATABASE_URL}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      EMAIL_FROM: ${EMAIL_FROM}
+      RESET_PASSWORD_URL: ${RESET_PASSWORD_URL:?Define RESET_PASSWORD_URL in .env}
+    ports:
+      - "${BACKEND_PORT:?Define BACKEND_PORT in .env}:8000"
+    volumes:
+      - ./services/user-api:/app
+      - backend_data:/app/data
+    networks:
+      - development
+
+networks:
+  development:
+    name: ${DOCKER_NETWORK_NAME:?Define DOCKER_NETWORK_NAME in .env}
+
+volumes:
+  website_node_modules:
+  backoffice_node_modules:
+  website_next:
+  backoffice_next:
+  backend_data:
