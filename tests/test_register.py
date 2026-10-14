@@ -11,10 +11,10 @@ def test_register_creates_user_and_profile_without_exposing_password(client):
     )
 
     assert response.status_code == 201
-    assert response.json()["email"] == "new@example.com"
-    assert response.json()["role"] == "user"
-    assert response.json()["profile"]["name"] == "New User"
-    assert "hashed_password" not in response.json()
+    assert response.json() == {"message": "Account created successfully."}
+    stored = users.get_user_by_email("new@example.com")
+    assert stored["role"] == "user"
+    assert stored["profile"]["name"] == "New User"
 
 
 def test_register_rejects_duplicate_email(client, make_user):
@@ -33,6 +33,7 @@ def test_register_rejects_invalid_email_short_password_and_privileged_role(clien
         {"email": "not-an-email", "password": "valid-password"},
         {"email": "new@example.com", "password": "short"},
         {"email": "new@example.com", "password": "valid-password", "role": "admin"},
+        {"email": "new@example.com", "password": "valid-password", "hashed_password": "internal"},
     ]
 
     for payload in invalid_payloads:

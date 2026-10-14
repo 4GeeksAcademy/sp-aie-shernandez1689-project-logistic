@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl, field_validator
@@ -107,36 +107,54 @@ class ApplicationSubmissionRecord(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
-class UserCreateRequest(BaseModel):
+class WriteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class MessageResponse(BaseModel):
+    message: str
+
+
+class RootResponse(MessageResponse):
+    docs: str
+    health: str
+
+
+class HealthResponse(BaseModel):
+    status: Literal["ok"]
+
+
+class UserCreateRequest(WriteRequest):
     email: EmailStr
     password: str = Field(min_length=8)
-    role: RoleEnum = RoleEnum.user
     name: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
 
-    @field_validator("role")
-    @classmethod
-    def enforce_default_role_for_signup(cls, value: RoleEnum) -> RoleEnum:
-        if value != RoleEnum.user:
-            raise ValueError("New users created via POST /users must use role 'user'")
-        return value
 
-
-class UserUpdateRequest(BaseModel):
+class UserUpdateRequest(WriteRequest):
     email: Optional[EmailStr] = None
     password: Optional[str] = Field(default=None, min_length=8)
     role: Optional[RoleEnum] = None
     is_active: Optional[bool] = None
 
 
-class UserResponse(BaseModel):
+class ProfileSummaryResponse(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+
+
+class UserListResponse(BaseModel):
     id: str
     email: EmailStr
     is_active: bool
     role: RoleEnum
+
+
+class UserResponse(UserListResponse):
     created_at: str
-    profile: Optional[ProfileRecord] = None
+    profile: Optional[ProfileSummaryResponse] = None
 
 
 class AuthUser(BaseModel):
@@ -146,21 +164,24 @@ class AuthUser(BaseModel):
     is_active: bool
 
 
-class ProfileUpdateRequest(BaseModel):
+class ProfileUpdateRequest(WriteRequest):
     name: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
 
 
-class ProfileResponse(BaseModel):
+class ProfileListResponse(BaseModel):
     id: str
     user_id: str
     name: Optional[str] = None
+
+
+class ProfileResponse(ProfileListResponse):
     phone: Optional[str] = None
     address: Optional[str] = None
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(WriteRequest):
     email: EmailStr
     password: str = Field(min_length=8)
 
@@ -170,11 +191,11 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
-class ForgotPasswordRequest(BaseModel):
+class ForgotPasswordRequest(WriteRequest):
     email: EmailStr
 
 
-class ResetPasswordRequest(BaseModel):
+class ResetPasswordRequest(WriteRequest):
     token: str
     new_password: str = Field(min_length=8, max_length=72)
 
@@ -186,7 +207,7 @@ class ResetPasswordRequest(BaseModel):
         return value
 
 
-class ChangePasswordRequest(BaseModel):
+class ChangePasswordRequest(WriteRequest):
     current_password: str
     new_password: str = Field(min_length=8, max_length=72)
 
@@ -199,10 +220,10 @@ class ChangePasswordRequest(BaseModel):
 class AuthMeResponse(BaseModel):
     email: EmailStr
     role: RoleEnum
-    profile: Optional[ProfileResponse] = None
+    profile: Optional[ProfileSummaryResponse] = None
 
 
-class ApplicationSubmissionRequest(BaseModel):
+class ApplicationSubmissionRequest(WriteRequest):
     company_name: str = Field(min_length=2, max_length=120)
     contact_person: str = Field(min_length=3, max_length=120)
     corporate_email: EmailStr

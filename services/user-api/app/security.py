@@ -46,7 +46,6 @@ def create_access_token(subject: str, email: str, role: str, expires_minutes: in
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes)
     payload = {
         "sub": subject,
-        "email": email,
         "role": role,
         "exp": expires_at,
     }

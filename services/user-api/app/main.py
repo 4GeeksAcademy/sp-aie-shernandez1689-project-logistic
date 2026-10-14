@@ -13,6 +13,7 @@ from app.api.applications import router as applications_router
 from app.api.auth import router as auth_router
 from app.api.profiles import router as profiles_router
 from app.api.users import router as users_router
+from app.models import HealthResponse, RootResponse
 from app.routers.inventory import router as inventory_router
 
 
@@ -105,15 +106,15 @@ app.include_router(applications_router)
 app.include_router(inventory_router)
 
 
-@app.get("/")
-def root() -> dict[str, str]:
-    return {
-        "message": "TrackFlow User API running",
-        "docs": "/docs",
-        "health": "/health",
-    }
+@app.get("/", response_model=RootResponse)
+def root() -> RootResponse:
+    return RootResponse(
+        message="TrackFlow User API running",
+        docs="/docs",
+        health="/health",
+    )
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+@app.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
+    return HealthResponse(status="ok")

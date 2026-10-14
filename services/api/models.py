@@ -5,7 +5,7 @@ from enum import Enum
 from typing import ClassVar, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, PositiveFloat, field_validator, model_validator
 
 
 VALID_CATEGORIES: list[str] = [
@@ -62,8 +62,6 @@ class IncidentFields(BaseModel):
     status: IncidentStatus = IncidentStatus.OPEN
     origin: IncidentOrigin
     branch: IncidentBranch
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @field_validator("title")
     @classmethod
@@ -89,6 +87,19 @@ class Incident(IncidentFields):
 
 class IncidentCreate(IncidentFields):
     model_config = ConfigDict(extra="forbid")
+
+
+class IncidentListResponse(IncidentFields):
+    id: str
+    created_at: datetime
+
+
+class IncidentSummaryResponse(BaseModel):
+    total: NonNegativeInt
+    status: dict[IncidentStatus, NonNegativeInt]
+    category: dict[IncidentCategory, NonNegativeInt]
+    origin: dict[IncidentOrigin, NonNegativeInt]
+    branch: dict[IncidentBranch, NonNegativeInt]
 
 
 class IncidentStatusUpdate(BaseModel):
@@ -160,7 +171,7 @@ class SupplierBase(BaseModel):
 
 
 class SupplierCreate(SupplierBase):
-    pass
+    model_config = ConfigDict(extra="forbid")
 
 
 class SupplierResponse(SupplierBase):
@@ -171,11 +182,25 @@ class SupplierCreatedResponse(SupplierResponse):
     id: int
 
 
+class SupplierListResponse(BaseModel):
+    id: int
+    name: str
+    country: Literal["USA", "Spain"]
+    categories: list[str]
+    rate_per_shipment: PositiveFloat
+    currency: Literal["USD", "EUR"]
+    status: SupplierStatus
+
+
 class SupplierRateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     rate_per_shipment: PositiveFloat
 
 
 class SupplierStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     status: SupplierStatus
 
 

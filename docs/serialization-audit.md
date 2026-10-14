@@ -1,6 +1,112 @@
 # Auditoria de serializacion de FastAPI
 
-Fecha: 2026-10-14. Fase 1: diagnostico, sin cambios en la API.
+Fecha: 2026-10-14. Fases 1 y 2: auditoria e implementacion.
+
+## Fase 2: estado implementado
+
+Los 37 endpoints declarados tienen ahora `response_model` explicito. Los 34 que devuelven JSON utilizan esquemas Pydantic; los tres DELETE declaran `response_model=None` y mantienen 204 sin cuerpo. Estado actual: **37 ✅, 0 ⚠️, 0 ❌** para los endpoints de negocio, raiz y salud. El contrato vacio de DELETE se considera completo, no un defecto pendiente.
+
+Las rutas automaticas de OpenAPI, Swagger y ReDoc son infraestructura del framework, no handlers con decoradores propios. Se conservan sus `JSONResponse`/`HTMLResponse` nativas; no se agregan esquemas de negocio a HTML ni se reemplaza el generador OpenAPI. Su marca parcial en Fase 1 describia una limitacion de la rubrica, no un cambio de seguridad requerido.
+
+### Contratos actuales
+
+Todos los contratos de esta tabla estan ✅. `No aplica` significa que no hay cuerpo de entrada; `None` significa respuesta vacia, no JSON `null`. Las listas usan proyecciones dedicadas cuando el consumidor no necesita el detalle completo.
+
+| Metodo | Ruta | Esquema de entrada | `response_model` explicito |
+| --- | --- | --- | --- |
+| POST | `/users` | `UserCreateRequest` | `MessageResponse` |
+| POST | `/auth/login` | `LoginRequest` | `TokenResponse` |
+| POST | `/auth/forgot-password` | `ForgotPasswordRequest` | `MessageResponse` |
+| POST | `/auth/reset-password` | `ResetPasswordRequest` | `MessageResponse` |
+| POST | `/auth/change-password` | `ChangePasswordRequest` | `MessageResponse` |
+| GET | `/auth/me` | No aplica | `AuthMeResponse` |
+| GET | `/users` | No aplica | `list[UserListResponse]` |
+| GET | `/users/{user_id}` | No aplica | `UserResponse` |
+| PUT | `/users/{user_id}` | `UserUpdateRequest` | `UserResponse` |
+| DELETE | `/users/{user_id}` | No aplica | `None` |
+| GET | `/profiles` | No aplica | `list[ProfileListResponse]` |
+| GET | `/profiles/me` | No aplica | `ProfileResponse` |
+| PUT | `/profiles/me` | `ProfileUpdateRequest` | `ProfileResponse` |
+| GET | `/profiles/user/{user_id}` | No aplica | `ProfileResponse` |
+| GET | `/profiles/{profile_id}` | No aplica | `ProfileResponse` |
+| PUT | `/profiles/user/{user_id}` | `ProfileUpdateRequest` | `ProfileResponse` |
+| DELETE | `/profiles/user/{user_id}` | No aplica | `None` |
+| POST | `/applications` | `ApplicationSubmissionRequest` | `ApplicationSubmissionResponse` |
+| GET | `/inventory/products` | No aplica | `list[SKUResponse]` |
+| POST | `/inventory/products` | `SKUCreateRequest` | `SKUResponse` |
+| GET | `/inventory/products/{id}` | No aplica | `SKUResponse` |
+| POST | `/inventory/orders/inbound` | `StockEntryCreateRequest` | `StockEntryResponse` |
+| POST | `/inventory/orders/outbound` | `StockExitCreateRequest` | `StockExitResponse` |
+| GET | `/inventory/orders` | No aplica | `list[StockEntryOrderResponse \| StockExitOrderResponse]` |
+| GET | `/` | No aplica | `RootResponse` |
+| GET | `/health` | No aplica | `HealthResponse` |
+| POST | `/api/incidents` | `IncidentCreate` | `Incident` |
+| GET | `/api/incidents` | No aplica | `list[IncidentListResponse]` |
+| GET | `/api/incidents/summary` | No aplica | `IncidentSummaryResponse` |
+| GET | `/api/incidents/{incident_id}` | No aplica | `Incident` |
+| PATCH | `/api/incidents/{incident_id}/status` | `IncidentStatusUpdate` | `Incident` |
+| POST | `/suppliers` | `SupplierCreate` | `SupplierCreatedResponse` |
+| GET | `/suppliers` | No aplica | `list[SupplierListResponse]` |
+| GET | `/suppliers/{supplier_id}` | No aplica | `SupplierCreatedResponse` |
+| PATCH | `/suppliers/{supplier_id}/rate` | `SupplierRateUpdate` | `SupplierCreatedResponse` |
+| PATCH | `/suppliers/{supplier_id}/status` | `SupplierStatusUpdate` | `SupplierCreatedResponse` |
+| DELETE | `/suppliers/{supplier_id}` | No aplica | `None` |
+
+### Autenticacion y campos sensibles
+
+- Registro devuelve 201 con solo `{"message": "Account created successfully."}`. No devuelve email, contrasena, hash, perfil ni metadatos de cuenta. La creacion de usuario/perfil y su rollback no cambian.
+- Login devuelve solo `access_token` y `token_type`. Los nuevos JWT contienen `sub`, `role`, `exp`, sin email. Se mantiene la firma de la funcion `create_access_token` para compatibilidad con sus llamantes internos, pero su argumento email ya no se serializa. No se cambia la validacion de tokens existentes ni se revocan JWT anteriores: los ya emitidos pueden seguir conteniendo email hasta expirar.
+- Forgot/reset/change password devuelven solo `MessageResponse.message`; no devuelven token de recuperacion ni credenciales. Forgot mantiene la confirmacion generica.
+- `/auth/me` mantiene el email del llamante porque [la vista de perfil](../uis/auth.js#L302) lo utiliza. El perfil anidado es ahora `ProfileSummaryResponse`, no un registro persistido completo.
+- Las respuestas de usuario excluyen `password`, `hashed_password`, `password_reset_token_hash` y campos internos inesperados, tambien dentro del perfil. El token de acceso de login es un dato de salida intencional, no un token interno de recuperacion.
+- Los handlers de errores existentes siguen evitando reflejar valores de entrada o credenciales. Las pruebas incluyen errores de auth con email, contrasena y token extra y verifican que sus valores no aparecen en la respuesta. Tipar/documentar todos los formatos de error sigue siendo un trabajo distinto de los contratos de exito.
+
+### Listados y decisiones sobre relaciones
+
+| Recurso / relacion | Decision explicita | Campos y motivo |
+| --- | --- | --- |
+| Listado de usuarios | Proyeccion plana, sin perfil anidado | `id`, `email`, `role`, `is_active`: identificacion y gestion de cuentas para admin. No hay consumidor de listado de usuarios en la UI actual; se conserva solo esta proyeccion administrativa, sin fecha ni datos de contacto de perfil. |
+| Perfil en detalle de usuario y `/auth/me` | Proyeccion anidada de contacto, no objeto completo | `name`, `phone`, `address`: usados por cuenta/perfil. Se omiten `profile.id` y `profile.user_id` redundantes con el contexto de usuario o sesion. |
+| Listado de perfiles | Proyeccion plana y relacion por ID | `id`, `user_id`, `name`: permiten seleccionar perfil y cuenta en gestion administrativa. No hay consumidor de listado en la UI actual; telefono y direccion quedan en detalle. No se anida un usuario completo, por lo que `user_id` es la representacion elegida, no una clave duplicada junto a un objeto. |
+| Perfil independiente | Relacion por ID, sin usuario anidado | `id`, `user_id`, `name`, `phone`, `address`: detalle de perfil. `user_id` permite identificar el propietario en las rutas administrativas; no se serializa `UserRecord`. |
+| Listado de productos | Proyeccion plana de SKU | `id`, `name`, `sku`, `client_name`, `category`, `warehouse`, `current_stock`: usados por tabla de SKU y selector de movimientos. No se devuelven colecciones de movimientos anidadas. |
+| Producto en listado de movimientos | Proyeccion anidada breve | `product: {name, sku}`: la [tabla de movimientos](../uis/talent-pipeline-tracker/app/backoffice/inventory/orders/page.tsx#L60) utiliza esas dos propiedades. Se retira `sku_id` porque ya existe la relacion representada; no se devuelve el SKU completo ni stock calculado. La forma anidada breve preserva el consumidor sin duplicar identificadores. |
+| Creacion de entrada/salida | Relacion de producto solo por ID | `sku_id`: confirma el producto de la operacion recien creada; no hay producto anidado en estas respuestas. No se incluyen ambos modos a la vez. |
+| Actor de un movimiento | Solo identificador de trazabilidad | `user_uuid`: requerido por la columna de operario/coordinador de la tabla. No se anida un usuario ni se exponen email o credenciales del actor. |
+| Listado de movimientos | Proyeccion especifica de tabla | `id`, `quantity`, `warehouse`, `created_at`, `user_uuid`, `order_type`, `product`; las salidas anaden `exit_type`. Referencia y tracking quedan en la respuesta de creacion, no en el listado que no los utiliza. |
+| Listado de proveedores | Proyeccion plana sin datos de contacto | `id`, `name`, `country`, `categories`, `rate_per_shipment`, `currency`, `status`: usados por [la tabla](../uis/application/app/suppliers/suppliers.js#L58). Se omiten notas, email de contacto, zona y fecha; siguen disponibles en el detalle de negocio autorizado. |
+| Listado de incidencias | Proyeccion plana de tabla | `id`, `title`, `description`, `category`, `status`, `origin`, `branch`, `created_at`: usados por [el panel](../uis/application/app/incidents/panel.js#L304). Se omite `updated_at`, disponible en detalle y escritura. |
+
+Los IDs elegidos como unica representacion de una relacion no se consideran secretos por si mismos; se conservan cuando identifican un recurso o un actor requerido por el consumidor. No se devuelve una clave foranea junto con el objeto relacionado. Las notas y descripciones de negocio son texto libre autorizado, no una garantia contra informacion sensible escrita voluntariamente por un usuario.
+
+### Entradas de escritura y compatibilidad
+
+Todas las escrituras usan clases de entrada distintas de la clase de salida y `extra="forbid"`. Se comparten campos de dominio por herencia donde ya existia ese patron, pero ningun handler acepta su modelo de respuesta como entrada.
+
+- Registro acepta email, password, name, phone y address; role pasa a ser exclusivamente asignado por el servidor. Enviar `role`, incluso `user`, devuelve 422.
+- Actualizacion de usuario acepta email/password y, solo con autorizacion admin, role/is_active. Los campos internos, IDs, fecha y perfil no son escribibles por esta ruta.
+- Perfiles aceptan name/phone/address; el propietario se resuelve por ruta o sesion. Enviar `user_id` ya no se ignora: devuelve 422.
+- Solicitudes comerciales aceptan solo sus campos de formulario; ID y fecha son generados por el servidor.
+- SKU y movimientos conservan sus entradas dedicadas y restricciones existentes; IDs de movimiento, stock calculado, fechas y actor no son escribibles.
+- Incidencias aceptan title/description/category/status/origin/branch; ID y timestamps se generan en el servidor. PATCH de estado acepta solo status. Los handlers ahora reciben esquemas tipados directamente y OpenAPI documenta la estructura: cuerpos ausentes o no objeto devuelven 422 en lugar del antiguo 400 manual.
+- Proveedores aceptan solo campos comerciales; las entradas de tarifa y estado admiten un unico campo. ID y updated_at no son escribibles.
+
+Las reducciones de registro, listados y perfiles anidados cambian contratos para consumidores externos que dependan de los campos retirados. Los consumidores existentes revisados mantienen sus campos necesarios; [los tipos de movimientos](../uis/talent-pipeline-tracker/types/inventory.ts) se alinearon con la nueva salida. No se implementa versionado ni migracion de consumidores externos en esta fase.
+
+### Verificacion de Fase 2
+
+- Python 3.12 en dos entornos temporales separados, respetando las dependencias distintas de cada servicio. No se cambiaron manifests ni locks.
+- Suite raiz de User API: **123 pruebas OK**, cobertura de `app.api.auth`: **100 %**, superior al minimo requerido de 70 %.
+- Suite adicional de contrasenas/correo de User API: **19 pruebas OK**.
+- Suite de Operations API: **14 pruebas OK** con TestClient y TinyDB temporal; creacion, listado, detalle, PATCH, resumen y DELETE, rechazo de campos internos y filtrado de hashes/tokens inyectados.
+- Una prueba AST verifica que los **37 decoradores** declaran `response_model`. OpenAPI de ambas APIs se verifica con TestClient; los modelos de request y response son referencias tipadas, no cuerpos `Any` en incidencias.
+- Pruebas de auth verifican cuerpos minimos, claims de JWT sin email, filtrado de campos sensibles, `/auth/me` con email propio y 204 vacios. Las pruebas de inventario verifican la proyeccion breve y la ausencia de `sku_id` redundante en movimientos.
+- Comprobacion TypeScript focalizada de las declaraciones de inventario: OK con `--strict --skipLibCheck --moduleResolution bundler`. No se ejecuto el typecheck completo de Next porque no estan instaladas sus dependencias locales; la primera comprobacion aislada sin `skipLibCheck` encontro errores en declaraciones externas de Babel/Jest/Node.
+- No se uso la base de datos real ni se modificaron datos de produccion. No se hizo una prueba end-to-end en navegador ni se probo un despliegue PostgreSQL real.
+
+## Referencia historica de Fase 1
+
+Las tablas y hallazgos siguientes describen el estado **anterior** a la implementacion, conservado para comparar el antes/despues. No representan contratos actuales ni tareas pendientes ya resueltas.
 
 ## Autenticacion: revision prioritaria
 

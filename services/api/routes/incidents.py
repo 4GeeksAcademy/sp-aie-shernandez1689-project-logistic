@@ -3,9 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from fastapi.exceptions import RequestValidationError
-from pydantic import ValidationError
+from fastapi import APIRouter, Depends, HTTPException, Query
 from tinydb import Query as TinyQuery
 
 from auth import get_current_user, require_roles
@@ -15,9 +13,11 @@ from models import (
     IncidentBranch,
     IncidentCategory,
     IncidentCreate,
+    IncidentListResponse,
     IncidentOrigin,
     IncidentStatus,
     IncidentStatusUpdate,
+    IncidentSummaryResponse,
 )
 
 
@@ -37,18 +37,8 @@ VALID_TRANSITIONS = {
 
 
 @router.post("", response_model=Incident, status_code=201, dependencies=[require_editor])
-def create_incident(payload: Any = Body(default=None)) -> Incident:
-    if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=400,
-            detail={"field": "body", "message": "Se esperaba un objeto JSON."},
-        )
-
-    try:
-        incident_data = IncidentCreate.model_validate(payload)
-        incident = Incident(**incident_data.model_dump())
-    except ValidationError as error:
-        raise RequestValidationError(error.errors()) from error
+def create_incident(payload: IncidentCreate) -> Incident:
+    incident = Incident(**payload.model_dump())
 
     db, incidents_table = get_incidents_table()
     try:
@@ -58,13 +48,13 @@ def create_incident(payload: Any = Body(default=None)) -> Incident:
         db.close()
 
 
-@router.get("", response_model=list[Incident])
+@router.get("", response_model=list[IncidentListResponse])
 def list_incidents(
     status: IncidentStatus | None = Query(default=None),
     origin: IncidentOrigin | None = Query(default=None),
     branch: IncidentBranch | None = Query(default=None),
     category: IncidentCategory | None = Query(default=None),
-) -> list[Incident]:
+) -> list[IncidentListResponse]:
     filters = {
         "status": status.value if status else None,
         "origin": origin.value if origin else None,
@@ -76,7 +66,7 @@ def list_incidents(
     try:
         documents = incidents_table.all()
         return [
-            Incident.model_validate(dict(document))
+            IncidentListResponse.model_validate(dict(document))
             for document in documents
             if all(
                 expected is None or document.get(field) == expected
@@ -87,8 +77,8 @@ def list_incidents(
         db.close()
 
 
-@router.get("/summary")
-def summarize_incidents() -> dict[str, Any]:
+@router.get("/summary", response_model=IncidentSummaryResponse)
+def summarize_incidents() -> IncidentSummaryResponse:
     dimensions = {
         "status": IncidentStatus,
         "category": IncidentCategory,
@@ -107,7 +97,7 @@ def summarize_incidents() -> dict[str, Any]:
                 if value in totals:
                     totals[value] += 1
             summary[field] = totals
-        return summary
+        return IncidentSummaryResponse.model_validate(summary)
     finally:
         db.close()
 
@@ -131,19 +121,8 @@ def get_incident(incident_id: str) -> Incident:
 )
 def update_incident_status(
     incident_id: str,
-    payload: Any = Body(default=None),
+    payload: IncidentStatusUpdate,
 ) -> Incident:
-    if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=400,
-            detail={"field": "body", "message": "Se esperaba un objeto JSON."},
-        )
-
-    try:
-        status_update = IncidentStatusUpdate.model_validate(payload)
-    except ValidationError as error:
-        raise RequestValidationError(error.errors()) from error
-
     db, incidents_table = get_incidents_table()
     try:
         document = incidents_table.get(TinyQuery().id == incident_id)
@@ -151,7 +130,7 @@ def update_incident_status(
             raise HTTPException(status_code=404, detail="Incident not found")
 
         current_status = IncidentStatus(document["status"])
-        next_status = status_update.status
+        next_status = payload.status
         if next_status not in VALID_TRANSITIONS[current_status]:
             raise HTTPException(
                 status_code=400,

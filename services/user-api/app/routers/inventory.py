@@ -7,6 +7,7 @@ from app.db import DBSession
 from app.models import AuthUser, SKU, StockEntry, StockExit
 from app.schemas import (
     SKUCreateRequest,
+    SKUOrderResponse,
     SKUResponse,
     StockEntryCreateRequest,
     StockEntryOrderResponse,
@@ -113,7 +114,7 @@ def create_outbound_order(
 @router.get("/orders", response_model=list[StockEntryOrderResponse | StockExitOrderResponse])
 def list_orders(session: DBSession) -> list[StockEntryOrderResponse | StockExitOrderResponse]:
     products = {
-        product.id: _product_response(session, product)
+        product.id: SKUOrderResponse.model_validate(product)
         for product in session.exec(select(SKU)).all()
     }
     orders = []
