@@ -32,11 +32,11 @@ def main() -> int:
 
     try:
         result = analyze_incidents_file(args.csv_path)
-    except FileNotFoundError as error:
-        print(f"Error: {error}")
+    except FileNotFoundError:
+        print("Error: no se encontró el archivo CSV indicado.", file=sys.stderr)
         return 1
-    except ValueError as error:
-        print(f"Error: {error}")
+    except ValueError:
+        print("Error: el CSV está vacío o tiene un formato no válido.", file=sys.stderr)
         return 1
 
     print(build_console_report(result))

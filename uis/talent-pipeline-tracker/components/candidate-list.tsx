@@ -31,8 +31,8 @@ export default function CandidateList({ candidates }: { candidates: Candidate[] 
     (!status || candidate.status === status) &&
     (!stage || candidate.stage === stage) &&
     (!term ||
-      candidate.full_name.toLowerCase().includes(term) ||
-      candidate.email.toLowerCase().includes(term)),
+      (candidate.full_name ?? "").toLowerCase().includes(term) ||
+      (candidate.email ?? "").toLowerCase().includes(term)),
   );
 
   return (
@@ -90,12 +90,12 @@ export default function CandidateList({ candidates }: { candidates: Candidate[] 
               {filtered.map((candidate) => (
                 <tr key={candidate.id}>
                   <td>
-                    <Link className="candidate-name" href={`/candidates/${candidate.id}`}>
-                      {candidate.full_name}
+                    <Link className="candidate-name" href={`/candidates/${encodeURIComponent(candidate.id ?? "")}`}>
+                      {candidate.full_name || "Nombre no disponible"}
                     </Link>
-                    <span className="secondary-text">{candidate.email}</span>
+                    <span className="secondary-text">{candidate.email || "Email no disponible"}</span>
                   </td>
-                  <td>{candidate.position}</td>
+                  <td>{candidate.position || "Puesto no especificado"}</td>
                   <td><span className={`status status-${candidate.status}`}>{statusLabels[candidate.status] ?? "Sin estado"}</span></td>
                   <td>{stageLabels[candidate.stage] ?? "Sin etapa"}</td>
                   <td>

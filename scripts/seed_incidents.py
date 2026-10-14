@@ -117,8 +117,10 @@ def seed_incidents(
             except (KeyError, ValidationError, ValueError) as error:
                 if isinstance(error, ValidationError):
                     message = _invalid_message(error)
+                elif isinstance(error, KeyError):
+                    message = "Valor no reconocido en categoría, estado o país."
                 else:
-                    message = str(error)
+                    message = "La fila contiene datos no válidos."
                 invalid_rows.append(f"Fila {row_number}: {message}")
                 continue
 
@@ -156,8 +158,8 @@ def main() -> int:
     args = parse_args()
     try:
         inserted, skipped, invalid_rows = seed_incidents(args.csv_path, args.database)
-    except (OSError, ValueError) as error:
-        print(f"Error al cargar incidencias: {error}")
+    except (OSError, ValueError):
+        print("Error al cargar incidencias. Comprueba el CSV y el acceso a la base de datos.", file=sys.stderr)
         return 1
 
     print(

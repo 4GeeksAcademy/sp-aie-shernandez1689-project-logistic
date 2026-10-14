@@ -32,14 +32,15 @@ export default function CandidateForm({ candidate }: CandidateFormProps) {
     if (!form.reportValidity()) return;
 
     const formData = new FormData(form);
+    const getValue = (name: string) => String(formData.get(name) ?? "");
     const input: CandidateInput = {
-      full_name: String(formData.get("full_name")).trim(),
-      email: String(formData.get("email")).trim(),
-      phone: String(formData.get("phone")).trim(),
-      position: String(formData.get("position")).trim(),
-      experience_years: Number(formData.get("experience_years")),
-      linkedin_url: String(formData.get("linkedin_url")).trim() || null,
-      cv_url: String(formData.get("cv_url")).trim() || null,
+      full_name: getValue("full_name").trim(),
+      email: getValue("email").trim(),
+      phone: getValue("phone").trim(),
+      position: getValue("position").trim(),
+      experience_years: Number(getValue("experience_years")),
+      linkedin_url: getValue("linkedin_url").trim() || null,
+      cv_url: getValue("cv_url").trim() || null,
     };
 
     setError("");
@@ -55,8 +56,8 @@ export default function CandidateForm({ candidate }: CandidateFormProps) {
         setMessage("Candidatura registrada correctamente.");
       }
       router.refresh();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No se pudo guardar la candidatura.");
+    } catch {
+      setError("No se pudo guardar la candidatura. Vuelve a intentarlo o contacta con soporte.");
     } finally {
       setIsPending(false);
     }
