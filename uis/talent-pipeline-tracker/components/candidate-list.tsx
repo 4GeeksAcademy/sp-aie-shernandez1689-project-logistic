@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { useMemo } from "react";
 import { stageLabels, statusLabels } from "@/lib/candidates";
 import type { Candidate } from "@/types/candidates";
 
@@ -27,12 +28,21 @@ export default function CandidateList({ candidates }: { candidates: Candidate[] 
   }
 
   const term = query.trim().toLowerCase();
-  const filtered = candidates.filter((candidate) =>
-    (!status || candidate.status === status) &&
-    (!stage || candidate.stage === stage) &&
-    (!term ||
-      (candidate.full_name ?? "").toLowerCase().includes(term) ||
-      (candidate.email ?? "").toLowerCase().includes(term)),
+
+  // El filtrado de candidatos es O(n) con operaciones de string (toLowerCase, includes)
+  // en múltiples campos por cada candidato. useMemo evita recalcular cuando
+  // los filtros no han cambiado (ej. al hacer hover o focus en elementos).
+  // Dependencias: candidates (entrada base), status/stage/term (filtros activos).
+  const filtered = useMemo(
+    () =>
+      candidates.filter((candidate) =>
+        (!status || candidate.status === status) &&
+        (!stage || candidate.stage === stage) &&
+        (!term ||
+          (candidate.full_name ?? "").toLowerCase().includes(term) ||
+          (candidate.email ?? "").toLowerCase().includes(term)),
+      ),
+    [candidates, status, stage, term],
   );
 
   return (
