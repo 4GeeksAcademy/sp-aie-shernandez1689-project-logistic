@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { clearAccessToken } from "@/lib/auth";
 import { getProducts, InventoryApiError, type SKU } from "@/lib/inventory";
 
@@ -62,7 +62,16 @@ export default function ProductsPage() {
               <table>
                 <caption className="sr-only">SKUs y stock actual de su almacén</caption>
                 <thead><tr>{["ID / Código SKU", "Nombre del SKU", "Marca cliente", "Categoría", "Almacén", "Stock actual", "Movimientos de stock"].map((label) => <th key={label} scope="col">{label}</th>)}</tr></thead>
-                <tbody>{products.map((product) => {
+                {/*
+                  Los datos enriquecidos se calculan con useMemo porque:
+                  - stockLevel() es O(1) pero se combina con búsquedas en
+                    categoryLabels y warehouseLabels por cada producto.
+                  - Al ser datos inmutables que solo cambian cuando cambia
+                    la lista products, useMemo evita el cómputo redundante
+                    entre renders (ej. repintados por CSS, hovers).
+                  Dependencias: products (única entrada mutable).
+                */}
+                <tbody>{useMemo(() => products.map((product) => {
                   const level = stockLevel(product.current_stock);
                   return (
                     <tr key={product.id}>
@@ -80,7 +89,7 @@ export default function ProductsPage() {
                       </td>
                     </tr>
                   );
-                })}</tbody>
+                }), [products])}</tbody>
               </table>
             </div>
           )}

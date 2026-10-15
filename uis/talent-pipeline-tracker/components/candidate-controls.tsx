@@ -1,16 +1,13 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  addCandidateNote,
-  deleteCandidateNote,
-  formatDate,
   stageLabels,
   statusLabels,
   updateCandidateProgress,
 } from "@/lib/candidates";
-import type { Candidate, CandidateNote } from "@/types/candidates";
+import type { Candidate } from "@/types/candidates";
 
 export function CandidateProgress({ candidate }: { candidate: Candidate }) {
   const router = useRouter();
@@ -63,87 +60,5 @@ export function CandidateProgress({ candidate }: { candidate: Candidate }) {
       <p className="action-message" role="status">{isPending ? "Guardando cambios..." : message}</p>
       {error && <p className="action-error" role="alert">{error}</p>}
     </div>
-  );
-}
-
-export function CandidateNotes({ id, notes }: { id: string; notes: CandidateNote[] }) {
-  const router = useRouter();
-  const [content, setContent] = useState("");
-  const [isPending, setIsPending] = useState(false);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-
-  async function addNote(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (isPending || !content.trim()) return;
-    setError("");
-    setMessage("");
-    setIsPending(true);
-    try {
-      await addCandidateNote(id, content);
-      setContent("");
-      setMessage("Nota añadida.");
-      router.refresh();
-    } catch {
-      setError("No se pudo añadir la nota. El texto se ha conservado; vuelve a intentarlo o contacta con soporte.");
-    } finally {
-      setIsPending(false);
-    }
-  }
-
-  async function deleteNote(noteId: string) {
-    if (isPending || !window.confirm("¿Eliminar esta nota? Esta acción no se puede deshacer.")) return;
-    setError("");
-    setMessage("");
-    setIsPending(true);
-    try {
-      await deleteCandidateNote(id, noteId);
-      setMessage("Nota eliminada.");
-      router.refresh();
-    } catch {
-      setError("No se pudo eliminar la nota. Vuelve a intentarlo o contacta con soporte.");
-    } finally {
-      setIsPending(false);
-    }
-  }
-
-  return (
-    <section className="notes-section" aria-labelledby="candidate-notes" aria-busy={isPending}>
-      <h2 id="candidate-notes">Notas internas <span className="secondary-count">{notes.length}</span></h2>
-      <form className="note-form" onSubmit={addNote}>
-        <label htmlFor="new-note">Nueva nota</label>
-        <textarea
-          id="new-note"
-          rows={4}
-          required
-          value={content}
-          disabled={isPending}
-          onChange={(event) => setContent(event.target.value)}
-        />
-        <button type="submit" disabled={isPending || !content.trim()}>Añadir nota</button>
-      </form>
-      <p className="action-message" role="status">{isPending ? "Guardando cambios..." : message}</p>
-      {error && <p className="action-error" role="alert">{error}</p>}
-      {notes.length === 0 ? (
-        <p className="empty-state">Esta candidatura no tiene notas.</p>
-      ) : (
-        <ol className="notes-list">
-          {notes.map((note) => (
-            <li key={note.id}>
-              <time dateTime={note?.created_at ?? ""}>{formatDate(note?.created_at)}</time>
-              <p>{note?.content ?? "Contenido no disponible"}</p>
-              <button
-                className="delete-note"
-                type="button"
-                disabled={isPending}
-                onClick={() => deleteNote(note.id)}
-              >
-                Eliminar nota
-              </button>
-            </li>
-          ))}
-        </ol>
-      )}
-    </section>
   );
 }
