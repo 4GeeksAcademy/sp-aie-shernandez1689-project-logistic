@@ -7,6 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from tinydb import Query as TinyQuery
 
 from auth import get_current_user, require_roles
+from cache import (
+    CACHE_KEY_INCIDENTS_LIST,
+    CACHE_KEY_INCIDENTS_SUMMARY,
+    incident_cache,
+)
 from database import get_incidents_table
 from models import (
     Incident,
@@ -36,6 +41,29 @@ VALID_TRANSITIONS = {
 }
 
 
+def _invalidate_incident_caches() -> None:
+    """Invalida todas las claves de incidencias al escribir."""
+    incident_cache.invalidate_prefix(CACHE_KEY_INCIDENTS_LIST)
+    incident_cache.invalidate(CACHE_KEY_INCIDENTS_SUMMARY)
+
+
+def _build_list_cache_key(
+    status: IncidentStatus | None,
+    origin: IncidentOrigin | None,
+    branch: IncidentBranch | None,
+    category: IncidentCategory | None,
+) -> str:
+    parts = [CACHE_KEY_INCIDENTS_LIST]
+    for name, value in [
+        ("status", status),
+        ("origin", origin),
+        ("branch", branch),
+        ("category", category),
+    ]:
+        parts.append(f"{name}={value.value if value else ''}")
+    return "|".join(parts)
+
+
 @router.post("", response_model=Incident, status_code=201, dependencies=[require_editor])
 def create_incident(payload: IncidentCreate) -> Incident:
     incident = Incident(**payload.model_dump())
@@ -43,6 +71,7 @@ def create_incident(payload: IncidentCreate) -> Incident:
     db, incidents_table = get_incidents_table()
     try:
         incidents_table.insert(incident.model_dump(mode="json"))
+        _invalidate_incident_caches()
         return incident
     finally:
         db.close()
@@ -55,6 +84,19 @@ def list_incidents(
     branch: IncidentBranch | None = Query(default=None),
     category: IncidentCategory | None = Query(default=None),
 ) -> list[IncidentListResponse]:
+    """
+    Cachea listados hasta 60 s porque:
+    - Coste: O(n) con filtrado O(n) en memoria y re-hidratación Pydantic.
+    - Frecuencia: alta (dashboard, recargas de página).
+    - Estabilidad: los datos cambian solo con escrituras (crear o
+      cambiar estado), que son poco frecuentes.
+    - Los datos son globales/compartidos, no personalizados por usuario.
+    """
+    cache_key = _build_list_cache_key(status, origin, branch, category)
+    hit, cached_result = incident_cache.get(cache_key)
+    if hit:
+        return cached_result
+
     filters = {
         "status": status.value if status else None,
         "origin": origin.value if origin else None,
@@ -65,7 +107,7 @@ def list_incidents(
     db, incidents_table = get_incidents_table()
     try:
         documents = incidents_table.all()
-        return [
+        result = [
             IncidentListResponse.model_validate(dict(document))
             for document in documents
             if all(
@@ -73,12 +115,26 @@ def list_incidents(
                 for field, expected in filters.items()
             )
         ]
+        incident_cache.set(cache_key, result)
+        return result
     finally:
         db.close()
 
 
 @router.get("/summary", response_model=IncidentSummaryResponse)
 def summarize_incidents() -> IncidentSummaryResponse:
+    """
+    Cachea el sumario hasta 60 s porque:
+    - Coste: O(n · m) (n=documentos, m=dimensiones) con bucles anidados
+      y contadores. Es el endpoint más costoso de incidencias.
+    - Frecuencia: alta (dashboard principal se refresca a menudo).
+    - Estabilidad: igual que list_incidents.
+    - Los datos son agregados compartidos, no hay riesgo de fuga.
+    """
+    hit, cached_result = incident_cache.get(CACHE_KEY_INCIDENTS_SUMMARY)
+    if hit:
+        return cached_result
+
     dimensions = {
         "status": IncidentStatus,
         "category": IncidentCategory,
@@ -97,7 +153,9 @@ def summarize_incidents() -> IncidentSummaryResponse:
                 if value in totals:
                     totals[value] += 1
             summary[field] = totals
-        return IncidentSummaryResponse.model_validate(summary)
+        result = IncidentSummaryResponse.model_validate(summary)
+        incident_cache.set(CACHE_KEY_INCIDENTS_SUMMARY, result)
+        return result
     finally:
         db.close()
 
@@ -152,6 +210,7 @@ def update_incident_status(
             },
             doc_ids=[document.doc_id],
         )
+        _invalidate_incident_caches()
         updated_document = incidents_table.get(doc_id=document.doc_id)
         return Incident.model_validate(dict(updated_document))
     finally:
