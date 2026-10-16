@@ -6,6 +6,8 @@
 > **Unidad:** TrackFlow Tech
 > **Fecha:** 2026-10-16
 
+> ℹ️ **Nota sobre normalización de nombres:** Los eventos listados en este documento son la versión autoritativa. Algunos nombres fueron refinados respecto al catálogo de oportunidad (FASE1) para cumplir la taxonomía de verbos en pasado (p.ej., `login_success` → `login_succeeded`, `api_response_error` → `api_response_error_recorded`). Consultar FASE1 para el contexto de descubrimiento original; usar FASE2 y event-schemas.json para instrumentación.
+
 ---
 
 ## Índice

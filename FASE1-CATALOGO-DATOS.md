@@ -67,6 +67,8 @@
 | **Properties**| `warehouse` (`los_angeles` / `zaragoza`), `client_id`, `product_id` (SKU), `product_category`, `user_role`, `attempt_type` |
 | **Clasificación** | ✅ **Obligatorio** (CONTEXT-TELE.md)                                                                                 |
 
+> ℹ️ **Nota:** `direct_stock_edit_rejected` **no incluye `quantity`** a pesar de ser un campo común de inventario. Esto es intencional: el evento describe un *intento rechazado* de modificación, no una transacción de cantidad real. Incluir `quantity` sería confuso porque no representa una operación de stock ejecutada. Si en el futuro se necesita auditar intentos con cantidad, se añadirá como campo opcional.
+
 ### 1.5 `inventory_discrepancy_detected`
 
 | Elemento      | Contenido                                                                                                              |
@@ -164,9 +166,9 @@
 | **Properties** | `email` (hash), `success` (bool), `failure_reason`, `ip_country` |
 | **Clasificación** | 💡 **Oportunidad identificada** |
 
-### 3.2 `login_success`
+### 3.2 `login_succeeded`
 
-**Capturamos** `login_success` **porque necesitamos saber** qué usuarios acceden al sistema y desde qué zona horaria, **lo que nos permite tomar la decisión** de identificar patrones de acceso anómalos (ej. un operario de Zaragoza conectándose desde huso horario de EE. UU.).
+**Capturamos** `login_succeeded` **porque necesitamos saber** qué usuarios acceden al sistema y desde qué zona horaria, **lo que nos permite tomar la decisión** de identificar patrones de acceso anómalos (ej. un operario de Zaragoza conectándose desde huso horario de EE. UU.).
 
 | Elemento | Valor |
 |---|---|
@@ -174,9 +176,9 @@
 | **Properties** | `user_id`, `user_role`, `warehouse_country` (asociado al perfil), `ip_country` |
 | **Clasificación** | 💡 **Oportunidad identificada** |
 
-### 3.3 `login_failure`
+### 3.3 `login_failed`
 
-**Capturamos** `login_failure` **porque necesitamos saber** con qué frecuencia fallan las credenciales y si hay patrones de fuerza bruta, **lo que nos permite tomar la decisión** de implementar rate-limiting por IP y notificar a Andrés (CTO) ante picos anómalos.
+**Capturamos** `login_failed` **porque necesitamos saber** con qué frecuencia fallan las credenciales y si hay patrones de fuerza bruta, **lo que nos permite tomar la decisión** de implementar rate-limiting por IP y notificar a Andrés (CTO) ante picos anómalos.
 
 | Elemento | Valor |
 |---|---|
@@ -430,9 +432,9 @@
 | **Properties** | `endpoint`, `method`, `response_time_ms`, `status_code`, `user_country` |
 | **Clasificación** | 💡 **Oportunidad identificada** |
 
-### 7.2 `api_response_error`
+### 7.2 `api_response_error_recorded`
 
-**Capturamos** `api_response_error` **porque necesitamos saber** con qué frecuencia la API devuelve errores (4xx, 5xx) por endpoint, **lo que nos permite tomar la decisión** de priorizar la corrección de los endpoints con mayor tasa de error.
+**Capturamos** `api_response_error_recorded` **porque necesitamos saber** con qué frecuencia la API devuelve errores (4xx, 5xx) por endpoint, **lo que nos permite tomar la decisión** de priorizar la corrección de los endpoints con mayor tasa de error.
 
 | Elemento | Valor |
 |---|---|
@@ -460,9 +462,9 @@
 | **Properties** | `page_url`, `load_time_ms`, `dom_content_loaded_ms`, `js_heap_size`, `device_category` (mobile/desktop) |
 | **Clasificación** | 💡 **Oportunidad identificada** |
 
-### 7.5 `cache_effectiveness`
+### 7.5 `cache_effectiveness_recorded`
 
-**Capturamos** `cache_effectiveness` **porque necesitamos saber** la tasa de acierto de la caché en los endpoints de incidencias y proveedores, **lo que nos permite tomar la decisión** de ajustar los TTL (hoy: 60s para incidentes, 120s para proveedores) o las estrategias de invalidación.
+**Capturamos** `cache_effectiveness_recorded` **porque necesitamos saber** la tasa de acierto de la caché en los endpoints de incidencias y proveedores, **lo que nos permite tomar la decisión** de ajustar los TTL (hoy: 60s para incidentes, 120s para proveedores) o las estrategias de invalidación.
 
 | Elemento | Valor |
 |---|---|
@@ -580,8 +582,8 @@
 | 7 | `inventory_order_list_viewed` | 💡 Oportunidad | Inventario |
 | 8 | `outbound_order_insufficient_stock` | 💡 Oportunidad | Inventario |
 | 9 | `login_attempt` | 💡 Oportunidad | Autenticación |
-| 10 | `login_success` | 💡 Oportunidad | Autenticación |
-| 11 | `login_failure` | 💡 Oportunidad | Autenticación |
+| 10 | `login_succeeded` | 💡 Oportunidad | Autenticación |
+| 11 | `login_failed` | 💡 Oportunidad | Autenticación |
 | 12 | `session_token_expired` | 💡 Oportunidad | Autenticación |
 | 13 | `session_invalid_token` | 💡 Oportunidad | Autenticación |
 | 14 | `password_reset_requested` | 💡 Oportunidad | Autenticación |
@@ -605,10 +607,10 @@
 | 32 | `lead_form_abandoned` | 💡 Oportunidad | Leads (web) |
 | 33 | `lead_volume_warning_shown` | 💡 Oportunidad | Leads (web) |
 | 34 | `api_response_time_high` | 💡 Oportunidad | Rendimiento |
-| 35 | `api_response_error` | 💡 Oportunidad | Rendimiento |
+| 35 | `api_response_error_recorded` | 💡 Oportunidad | Rendimiento |
 | 36 | `frontend_uncaught_error` | 💡 Oportunidad | Frontend |
 | 37 | `page_load_time` | 💡 Oportunidad | Rendimiento |
-| 38 | `cache_effectiveness` | 💡 Oportunidad | Rendimiento |
+| 38 | `cache_effectiveness_recorded` | 💡 Oportunidad | Rendimiento |
 | 39 | `page_navigated` | 💡 Oportunidad | Navegación |
 | 40 | `flow_abandoned_supplier_creation` | 💡 Oportunidad | Navegación |
 | 41 | `flow_abandoned_incident_creation` | 💡 Oportunidad | Navegación |

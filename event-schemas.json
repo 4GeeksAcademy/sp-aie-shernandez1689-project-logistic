@@ -800,7 +800,7 @@
         }
       },
       "sensitive": {
-        "contains_pii": true,
+        "contains_pii": false,
         "pii_fields": ["none_included"],
         "sanitization": "No PII is included: company_name, contact_person, email, phone, website, and comments are all intentionally excluded. Only business profile data is captured.",
         "retention_policy": "These events are aggregatable and can be retained indefinitely."
