@@ -117,7 +117,7 @@ MÉTRICA = AGREGACIÓN(columna) agrupada por DIMENSIÓN
 
 ### Fase 2 — Endpoint de reporte
 
-- [ ] Crea el endpoint `GET /telemetry/report` en FastAPI. Debe:
+- [x] Crea el endpoint `GET /telemetry/report` en FastAPI. Debe:
   - Aceptar parámetros de query opcionales `start_date` y `end_date` en formato ISO 8601; si no se proveen, usar por defecto los últimos 7 días (`start_date = now − 7d`, `end_date = now`, ambos UTC)
   - Resolver el período una sola vez y pasar `start_date` / `end_date` a cada función de métrica — las funciones no aplican su propia ventana por defecto
   - Llamar a las funciones de métrica del pipeline de análisis con esos parámetros
@@ -131,33 +131,33 @@ MÉTRICA = AGREGACIÓN(columna) agrupada por DIMENSIÓN
       }
     }
     ```
-- [ ] El endpoint **no debe correr el pipeline en cada request** — implementa un cache simple en memoria con TTL de 60 segundos. Si se pide la misma combinación de `start_date`/`end_date` dentro del TTL, devuelve el resultado en cache sin recalcular.
+- [x] El endpoint **no debe correr el pipeline en cada request** — implementa un cache simple en memoria con TTL de 60 segundos. Si se pide la misma combinación de `start_date`/`end_date` dentro del TTL, devuelve el resultado en cache sin recalcular.
 
 ### 🔵 Actividad adicional — Métrica de autenticación
 
-- [ ] Si instrumentaste el flujo de autenticación en el proyecto anterior, agrega una tercera función de métrica que calcule la **tasa diaria de fallos de login**: `user_login_failed` dividido entre el total de intentos (`user_login_failed` + `user_login_succeeded`) por día. Carga ambos tipos de evento con `event_type IN (...)` en SQL, y calcula la razón en Pandas. Inclúyela en el endpoint bajo la clave `auth_failure_rate`.
+- [x] Si instrumentaste el flujo de autenticación en el proyecto anterior, agrega una tercera función de métrica que calcule la **tasa diaria de fallos de login**: `user_login_failed` dividido entre el total de intentos (`user_login_failed` + `user_login_succeeded`) por día. Carga ambos tipos de evento con `event_type IN (...)` en SQL, y calcula la razón en Pandas. Inclúyela en el endpoint bajo la clave `auth_failure_rate`.
 
 ### 🔵 Actividad adicional — Dashboard visual simple
 
-- [ ] Construye una página mínima en `uis/backoffice/` (ej. `/telemetry`) que consuma `GET /telemetry/report` y lo muestre de forma visual — un gráfico o una tabla por métrica es suficiente (gráfico de barras o líneas para `events_per_day`, `error_rate_by_type`, etc.). Usa cualquier librería de gráficos que ya esté disponible en el frontend, o una tabla HTML simple si prefieres mantenerlo minimalista.
-- [ ] La página debe mostrar el `period` (`from`/`to`) que se está visualizando, para que quede claro qué ventana de tiempo cubren los números.
-- [ ] Este dashboard es una vista **técnica** para el equipo de ingeniería, no un dashboard de negocio — limítate a visualizar las mismas métricas operacionales de tu reporte, nada más.
-- [ ] No necesitas pulirlo: el objetivo es una visualización funcional y legible de datos reales, no un ejercicio de diseño.
+- [x] Construye una página mínima en `uis/backoffice/` (ej. `/telemetry`) que consuma `GET /telemetry/report` y lo muestre de forma visual — un gráfico o una tabla por métrica es suficiente (gráfico de barras o líneas para `events_per_day`, `error_rate_by_type`, etc.). Usa cualquier librería de gráficos que ya esté disponible en el frontend, o una tabla HTML simple si prefieres mantenerlo minimalista.
+- [x] La página debe mostrar el `period` (`from`/`to`) que se está visualizando, para que quede claro qué ventana de tiempo cubren los números.
+- [x] Este dashboard es una vista **técnica** para el equipo de ingeniería, no un dashboard de negocio — limítate a visualizar las mismas métricas operacionales de tu reporte, nada más.
+- [x] No necesitas pulirlo: el objetivo es una visualización funcional y legible de datos reales, no un ejercicio de diseño.
 
 ---
 
 ## ✅ Qué Vamos a Evaluar
 
-- [ ] El archivo `services/telemetry/analysis.py` existe y contiene al menos tres funciones de métrica independientes
-- [ ] Cada función sigue la fórmula `cargar (SQL) → refinar (Pandas) → convertir tipos → agrupar → agregar` en ese orden
-- [ ] Los timestamps se convierten a `datetime` con `utc=True` antes de cualquier `groupby()` temporal
-- [ ] No se usan loops para calcular métricas — solo operaciones de Pandas
-- [ ] Cada función devuelve una lista de dicts serializable a JSON
-- [ ] El endpoint `GET /telemetry/report` acepta `start_date` y `end_date` opcionales y usa 7 días por defecto
-- [ ] El endpoint devuelve JSON con la estructura `{ "period": {...}, "metrics": {...} }`
-- [ ] El endpoint tiene cache en memoria con TTL de 60 segundos — no recalcula en cada request
-- [ ] Cada métrica responde una pregunta **técnica/operacional** sobre el comportamiento del sistema — no una pregunta de negocio
-- [ ] Las métricas devueltas tienen una dimensión de agrupamiento — no son números globales sin contexto
+- [x] El archivo `services/telemetry/analysis.py` existe y contiene al menos tres funciones de métrica independientes
+- [x] Cada función sigue la fórmula `cargar (SQL) → refinar (Pandas) → convertir tipos → agrupar → agregar` en ese orden
+- [x] Los timestamps se convierten a `datetime` con `utc=True` antes de cualquier `groupby()` temporal
+- [x] No se usan loops para calcular métricas — solo operaciones de Pandas
+- [x] Cada función devuelve una lista de dicts serializable a JSON
+- [x] El endpoint `GET /telemetry/report` acepta `start_date` y `end_date` opcionales y usa 7 días por defecto
+- [x] El endpoint devuelve JSON con la estructura `{ "period": {...}, "metrics": {...} }`
+- [x] El endpoint tiene cache en memoria con TTL de 60 segundos — no recalcula en cada request
+- [x] Cada métrica responde una pregunta **técnica/operacional** sobre el comportamiento del sistema — no una pregunta de negocio
+- [x] Las métricas devueltas tienen una dimensión de agrupamiento — no son números globales sin contexto
 
 ---
 

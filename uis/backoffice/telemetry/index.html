@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4efe7" />
+    <title>TrackFlow | Telemetría técnica</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../../application/app/suppliers/styles.css" />
+    <link rel="stylesheet" href="./telemetry.css" />
+  </head>
+  <body>
+    <div class="backdrop" aria-hidden="true"></div>
+    <main class="page">
+      <header class="topbar" role="banner">
+        <div>
+          <p class="eyebrow">TrackFlow Backoffice · Vista técnica</p>
+          <h1>Telemetría — Reporte operacional</h1>
+        </div>
+        <nav class="menu-links" aria-label="Navegación principal">
+          <a href="../application/app/incidents/panel.html">Panel incidencias</a>
+          <a href="../application/app/suppliers/index.html">Proveedores</a>
+          <a href="../../index.html">Inicio</a>
+        </nav>
+      </header>
+
+      <section class="panel" aria-labelledby="controls-title">
+        <div class="panel-head">
+          <h2 id="controls-title">Ventana de tiempo</h2>
+          <p>
+            Consume <code>GET /telemetry/report</code> con la ventana resuelta
+            por el endpoint (por defecto últimos 7 días UTC).
+          </p>
+        </div>
+        <div class="filters-grid telemetry-controls">
+          <label>
+            Inicio (ISO 8601)
+            <input id="startDate" type="datetime-local" />
+          </label>
+          <label>
+            Fin (exclusivo, ISO 8601)
+            <input id="endDate" type="datetime-local" />
+          </label>
+          <label>
+            API base
+            <input id="apiBase" type="text" placeholder="http://127.0.0.1:8000" />
+          </label>
+          <button id="reloadBtn" class="ghost" type="button">Consultar reporte</button>
+        </div>
+        <p class="feedback" id="controlsFeedback"></p>
+      </section>
+
+      <section id="periodSection" class="panel" aria-labelledby="period-title" hidden>
+        <div class="panel-head">
+          <h2 id="period-title">Período analizado</h2>
+        </div>
+        <p class="period-line">
+          Desde <code id="periodFrom">—</code> hasta <code id="periodTo">—</code>
+        </p>
+      </section>
+
+      <section class="panel" aria-labelledby="metrics-title">
+        <div class="panel-head">
+          <h2 id="metrics-title">Métricas operacionales</h2>
+          <p id="tableSummary">Cargando…</p>
+        </div>
+
+        <div id="loadingState" class="summary-state" role="status" aria-live="polite">
+          <span class="loading-spinner" aria-hidden="true"></span>
+          <p>Cargando reporte de telemetría…</p>
+        </div>
+        <div id="errorState" class="summary-state summary-error" role="alert" hidden>
+          <p id="errorMessage">No se pudo cargar el reporte.</p>
+          <button id="retryButton" type="button">Reintentar</button>
+        </div>
+
+        <div id="metricsContent" hidden>
+          <section class="metric-group" aria-labelledby="epd-title">
+            <h3 id="epd-title">Eventos por día <code>events_per_day</code></h3>
+            <div class="table-wrap" role="region" aria-live="polite">
+              <table>
+                <thead>
+                  <tr><th>Fecha</th><th>Eventos</th></tr>
+                </thead>
+                <tbody id="eventsPerDayBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="metric-group" aria-labelledby="eptd-title">
+            <h3 id="eptd-title">Eventos por tipo y día <code>events_per_type_per_day</code></h3>
+            <div class="table-wrap" role="region" aria-live="polite">
+              <table>
+                <thead>
+                  <tr><th>Fecha</th><th>Tipo de evento</th><th>Eventos</th></tr>
+                </thead>
+                <tbody id="eventsPerTypeBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="metric-group" aria-labelledby="erd-title">
+            <h3 id="erd-title">Tasa de error diaria <code>error_rate_daily</code></h3>
+            <div class="table-wrap" role="region" aria-live="polite">
+              <table>
+                <thead>
+                  <tr><th>Fecha</th><th>Total</th><th>Con error</th><th>Tasa</th></tr>
+                </thead>
+                <tbody id="errorRateDailyBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="metric-group" aria-labelledby="erbt-title">
+            <h3 id="erbt-title">Tasa de error por tipo <code>error_rate_by_type</code></h3>
+            <div class="table-wrap" role="region" aria-live="polite">
+              <table>
+                <thead>
+                  <tr><th>Tipo de evento</th><th>Total</th><th>Con error</th><th>Tasa</th></tr>
+                </thead>
+                <tbody id="errorRateByTypeBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="metric-group" aria-labelledby="ae-title">
+            <h3 id="ae-title">Errores de API por endpoint <code>api_errors_by_endpoint</code></h3>
+            <div class="table-wrap" role="region" aria-live="polite">
+              <table>
+                <thead>
+                  <tr><th>Endpoint</th><th>Errores</th><th>Errores de servidor (5xx)</th></tr>
+                </thead>
+                <tbody id="apiErrorsBody"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="metric-group" aria-labelledby="afr-title">
+            <h3 id="afr-title">Tasa de fallos de login <code>auth_failure_rate</code></h3>
+            <div class="table-wrap" role="region" aria-live="polite">
+              <table>
+                <thead>
+                  <tr><th>Fecha</th><th>Intentos</th><th>Fallos</th><th>Tasa</th></tr>
+                </thead>
+                <tbody id="authFailureBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="./telemetry.js"></script>
+  </body>
+</html>

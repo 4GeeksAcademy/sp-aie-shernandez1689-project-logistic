@@ -132,8 +132,14 @@ incident_cache = TTLCache(default_ttl=60.0, name="incidents")
 # frecuencia (solo ediciones manuales de tarifa/estado).
 supplier_cache = TTLCache(default_ttl=120.0, name="suppliers")
 
+# Reporte de telemetría: TTL 60 s. El pipeline de análisis es costoso
+# (6 consultas SQL + agregación en Pandas) y los datos de telemetría son
+# estables a corto plazo; recargar cada minuto es más que suficiente.
+telemetry_report_cache = TTLCache(default_ttl=60.0, name="telemetry_report")
+
 # Claves prefijadas para invalidación selectiva
 CACHE_KEY_INCIDENTS_LIST = "incidents:list:"
 CACHE_KEY_INCIDENTS_SUMMARY = "incidents:summary"
 CACHE_KEY_SUPPLIERS_LIST = "suppliers:list:"
 CACHE_KEY_SUPPLIERS_DETAIL = "suppliers:detail:"
+CACHE_KEY_TELEMETRY_REPORT = "telemetry:report:"

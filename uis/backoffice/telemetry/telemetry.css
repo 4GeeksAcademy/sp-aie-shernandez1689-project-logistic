@@ -1,0 +1,80 @@
+/* Dashboard técnico de telemetría — estilos adicionales sobre suppliers/styles.css */
+
+.telemetry-controls {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: end;
+}
+
+.telemetry-controls input[type="datetime-local"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #d8d0c4);
+  border-radius: 8px;
+  background: var(--surface, #fffdf8);
+  color: var(--text, #2b241c);
+  font: inherit;
+}
+
+.period-line {
+  font-size: 0.95rem;
+  color: var(--text-muted, #6b6257);
+}
+
+.period-line code {
+  background: var(--code-bg, #f1ece2);
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.metric-group {
+  margin: 1.5rem 0 0;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border, #e6dfd3);
+}
+
+.metric-group h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text, #2b241c);
+  margin: 0 0 0.75rem;
+}
+
+.metric-group h3 code {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-muted, #6b6257);
+  background: var(--code-bg, #f1ece2);
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+
+.table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.table-wrap th,
+.table-wrap td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border, #efe9de);
+}
+
+.table-wrap th {
+  font-weight: 600;
+  color: var(--text-muted, #6b6257);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.empty-cell {
+  color: var(--text-muted, #6b6257);
+  font-style: italic;
+  text-align: center;
+  padding: 1.25rem 0;
+}
