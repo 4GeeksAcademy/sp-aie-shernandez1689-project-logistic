@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, PositiveFloat, field_validator, model_validator
-
 
 VALID_CATEGORIES: list[str] = [
     "carrier_last_mile",
@@ -205,3 +204,34 @@ class SupplierStatusUpdate(BaseModel):
 
 
 Supplier = SupplierResponse
+
+
+# --- Telemetry -----------------------------------------------------------------
+
+
+class TelemetryEvent(BaseModel):
+    """Envelope estándar de un evento de telemetría (docs/telemetry/telemetry-plan.md §4).
+
+    Este modelo se reutilizará sin cambios en la Fase 3 (validación completa y
+    persistencia en Supabase). Definir aquí los campos permite que todo el
+    pipeline (captura -> almacenamiento -> reporte) dependa de un único contrato.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    eventId: str = Field(..., min_length=1)
+    timestamp: str = Field(..., min_length=1)
+    sessionId: str = Field(..., min_length=1)
+    userId: str = Field(..., min_length=1)
+    event_type: str = Field(..., pattern=r"^[a-z0-9]+(?:_[a-z0-9]+)+$")
+    schemaVersion: str = Field(..., pattern=r"^\d+\.\d+\.\d+$")
+    requestId: str = Field(..., min_length=1)
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class TelemetryBatch(BaseModel):
+    """Body del endpoint POST /telemetry/events: un lote de N eventos."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    events: list[TelemetryEvent] = Field(..., min_length=1)

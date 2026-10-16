@@ -2,10 +2,17 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { startTransition } from "react";
+import { startTransition, useEffect } from "react";
+import { trackFrontendError } from "@/lib/instrumentation";
 
 export default function ErrorPage({ reset }: { reset: () => void }) {
   const router = useRouter();
+
+  // Error boundary de Next.js: un render fallido en el árbol de páginas
+  // dispara el piso técnico transversal (decisión A — canal aprobado).
+  useEffect(() => {
+    trackFrontendError("error_boundary");
+  }, []);
 
   return (
     <main className="workspace">

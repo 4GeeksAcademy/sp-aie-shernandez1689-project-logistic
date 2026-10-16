@@ -27,6 +27,19 @@ the `admin` or `manager` role.
 - `GET /api/incidents/results/latest`
   - Response: last JSON analysis payload.
 
+## Telemetry ingestion (Fase 1 — stub)
+
+- `POST /telemetry/events`
+  - Body: `{"events": [...]}` — each event follows the standard envelope
+    defined in `docs/telemetry/telemetry-plan.md` (eventId, timestamp,
+    sessionId, userId, event_type, schemaVersion, requestId, properties).
+  - Behavior: **temporary stub** for envelope verification only. Logs the
+    number of events received and each `event_type`, then responds
+    `200 OK` with `{"received": N}`.
+  - The `TELEMETRY_ENDPOINT` env var reserves the destination URL for
+    Fase 3 (persistence in Supabase); it is read at startup but not used
+    to redirect traffic yet. See `.env.example`.
+
 ## Run locally
 
 ```bash

@@ -1,3 +1,5 @@
+import { trackApiResponseError, trackLoginFailed, trackLoginSucceeded, trackSessionTokenExpired, trackSlowApiResponse, recordLoginTime } from "./instrumentation.ts";
+
 const TOKEN_KEY = "trackflow_access_token";
 const AUTH_API_URL = (process.env.NEXT_PUBLIC_AUTH_API_URL ?? process.env.NEXT_PUBLIC_INVENTORY_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
 
@@ -22,6 +24,7 @@ export async function requireAuthenticatedUser(): Promise<void> {
   if (!token) throw new AuthApiError("La sesión no está iniciada.", 401);
 
   let response: Response;
+  const startedAt = performance.now();
   try {
     response = await fetch(`${AUTH_API_URL}/auth/me`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
@@ -31,7 +34,11 @@ export async function requireAuthenticatedUser(): Promise<void> {
   } catch {
     throw new AuthApiError("No se pudo validar la sesión. Vuelve a intentarlo.", null);
   }
+  const elapsedMs = performance.now() - startedAt;
+  if (elapsedMs >= 1500) trackSlowApiResponse("/auth/me");
   if (!response.ok) {
+    trackApiResponseError("/auth/me", "GET", response.status);
+    if (response.status === 401) trackSessionTokenExpired("/auth/me");
     let message = `No se pudo validar la sesión (${response.status}).`;
     try {
       const body = await response.text();
@@ -53,6 +60,7 @@ export async function requireAuthenticatedUser(): Promise<void> {
 
 export async function login(email: string, password: string): Promise<void> {
   let response: Response;
+  const startedAt = performance.now();
   try {
     response = await fetch(`${AUTH_API_URL}/auth/login`, {
       method: "POST",
@@ -63,6 +71,8 @@ export async function login(email: string, password: string): Promise<void> {
   } catch {
     throw new Error("No se pudo conectar con el servicio de autenticación. Vuelve a intentarlo.");
   }
+  const elapsedMs = performance.now() - startedAt;
+  if (elapsedMs >= 1500) trackSlowApiResponse("/auth/login");
 
   const body = await response.text();
   let payload;
@@ -73,6 +83,12 @@ export async function login(email: string, password: string): Promise<void> {
     throw new Error("El servicio de autenticación devolvió una respuesta inesperada.");
   }
   if (!response.ok) {
+    trackApiResponseError("/auth/login", "POST", response.status);
+    // login_failed: 401 = credenciales inválidas, 403 = usuario inactivo.
+    void trackLoginFailed(
+      email,
+      response.status === 403 ? "inactive_user" : "invalid_credentials",
+    );
     const message = payload?.detail ?? payload?.message ?? payload?.error;
     throw new Error(typeof message === "string" ? message : `No se pudo iniciar sesión (${response.status}).`);
   }
@@ -80,4 +96,7 @@ export async function login(email: string, password: string): Promise<void> {
     throw new Error("El servicio de autenticación no devolvió un token válido.");
   }
   window.localStorage.setItem(TOKEN_KEY, payload.access_token);
+  // login_succeeded (auth_method=password) + registro del instante de login.
+  recordLoginTime();
+  trackLoginSucceeded();
 }

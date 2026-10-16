@@ -5,6 +5,12 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { clearAccessToken } from "@/lib/auth";
 import { createInboundOrder, createOutboundOrder, getProduct, getProducts, InventoryApiError, type SKU, type ExitType } from "@/lib/inventory";
+import {
+  trackInboundOrderCreated,
+  trackOutboundOrderCreated,
+  trackOutboundInsufficientStock,
+  trackStockThresholdTriggered,
+} from "@/lib/instrumentation";
 
 export default function OrderPage() {
   const { direction } = useParams<{ direction: string }>();
@@ -95,10 +101,17 @@ export default function OrderPage() {
         const reference = String(data.get("reference") ?? "").trim();
         if (!reference) throw new Error("La referencia de recepción es obligatoria.");
         await createInboundOrder({ ...input, reference });
+        // Evento de negocio (Fase 3): recepción de mercancía registrada.
+        trackInboundOrderCreated(stockProduct, quantity, reference);
       } else {
         const tracking = String(data.get("tracking_number") ?? "").trim();
         if (exitType === "dispatch" && !tracking) throw new Error("El número de seguimiento es obligatorio para un despacho.");
         await createOutboundOrder({ ...input, exit_type: exitType, tracking_number: exitType === "loss" ? null : tracking });
+        // Evento de negocio (Fase 3): despacho o pérdida registrada.
+        trackOutboundOrderCreated(stockProduct, quantity, exitType);
+        // stock_threshold_triggered: se evalúa sobre el stock restante tras
+        // la salida (nunca negativo). Umbral = frontera "stock bajo" del UI.
+        trackStockThresholdTriggered(stockProduct, stockProduct.current_stock - quantity);
       }
       if (inbound) {
         form.reset();
@@ -113,6 +126,9 @@ export default function OrderPage() {
         return;
       }
       if (!inbound && reason instanceof InventoryApiError && reason.status === 400) {
+        // outbound_order_insufficient_stock: la API rechazó por stock
+        // insuficiente (HTTP 400 "Insufficient stock...").
+        trackOutboundInsufficientStock(stockProduct, quantity);
         setQuantityError(reason.message);
       } else {
         setError(reason instanceof Error ? reason.message : "No se pudo registrar el movimiento de stock.");
