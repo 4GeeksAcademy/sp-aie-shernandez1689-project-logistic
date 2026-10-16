@@ -1,37 +1,19 @@
 # Progress
 
 ## Estado actual del desarrollo
-- Se creo y estructuro el banco de memoria del proyecto en memory-bank/.
-- Se alineo projectbrief.md con el negocio TrackFlow y el alcance del hito 1 (website corporativo + captacion de leads).
-- Se alineo techContext.md con stack y restricciones obligatorias: Tailwind, validaciones completas, accesibilidad, SEO y Schema.org.
-- Se definio una skill operativa para sincronizar progreso de trabajo de forma recurrente.
-- services/user-api: modelo User (TinyDB) con RoleEnum (admin/manager/user), capa de servicios y CRUD /users.
-  - POST /users crea siempre el Profile vinculado (con rollback del User si falla) y fuerza role=user.
-  - PUT /users/{id}: solo el propio usuario o admin; role e is_active solo modificables por admin.
-  - DELETE /users/{id} elimina tambien el perfil vinculado.
-  - Smoke test con TestClient sobre DB temporal: OK (201/409/422/401/403/204/404 segun caso).
-- services/user-api: Profile (id, user_id, name, phone, address) 1:1 con User; GET/PUT /profiles/me verificados (401 sin token, el dueño solo edita su perfil, user_id del body ignorado).
-- services/user-api: POST /auth/login (JWT HS256) y GET /auth/me (email, role, profile) verificados; login valida password antes de revelar estado inactivo.
-- services/user-api: get_current_user devuelve 401 + WWW-Authenticate ante cualquier fallo (cabecera, firma, expiracion, usuario inexistente o inactivo); JWT exige claims exp y sub. JWT_SECRET_KEY y ACCESS_TOKEN_EXPIRE_MINUTES se leen de .env (ignorado por git; plantilla en .env.example).
-- Proteccion de rutas: en user-api solo son publicas POST /auth/login, POST /users, POST /applications, / y /health; el resto devuelve 401 sin token y 403 sobre recursos ajenos.
-- services/api (/suppliers, 6 rutas): nueva dependencia auth.get_current_user que valida el JWT de user-api (mismo JWT_SECRET_KEY) y busca el usuario en la DB de user-api (USER_DB_PATH). Lectura: cualquier usuario autenticado; escritura (POST/PATCH/DELETE): solo admin o manager (403 para user). suppliers.js envia el token guardado en localStorage.
-- get_current_user (ambos servicios) usa HTTPBearer(auto_error=False): Swagger /docs muestra boton Authorize (un parametro Header "Authorization" es ignorado por OpenAPI). Verificado con servidores reales (copia en /tmp): registro 201 -> login -> /auth/me y /suppliers 200; sin token, mal formado, manipulado o expirado -> 401.
-- Verificacion final de criterios de aceptacion (13 puntos) contra servidores reales: 44/44 checks OK. Supabase/PostgreSQL no presente en el repo; User/Profile solo en TinyDB.
+- Telemetría — Fase 1 (endpoint stub, rama feat-telemetry-event-capture):
+  - `services/api/models.py`: nuevos `TelemetryEvent` (envelope estándar del plan §4: eventId, timestamp, sessionId, userId, event_type, schemaVersion, requestId, properties) y `TelemetryBatch` (`{"events": [...]}`, min 1). `extra="forbid"` en ambos para que el contrato sea estricto y se reutilice sin cambios en Fase 3.
+  - `services/api/routes/telemetry.py`: `POST /telemetry/events` temporal. Loggea cantidad de eventos y cada `event_type`, responde `200 {"received": N}`. No autenticado (endpoint de ingesta pública). Lee `TELEMETRY_ENDPOINT` desde entorno al arranque (patrón para Fase 3; aún no redirige tráfico).
+  - `services/api/main.py`: montado `telemetry_router` en la app FastAPI.
+  - `services/api/tests/test_telemetry.py`: 10 tests OK (lote válido, log con caplog, lote vacío/ausente → 422, campos envelope faltantes, schemaVersion/event_type inválidos, extra_forbidden, roundtrip Pydantic, forgery). Suite api completa: 24 passed.
+  - `services/api/.env.example`: documenta `JWT_SECRET_KEY` y `TELEMETRY_ENDPOINT`.
+  - `services/api/README.md`: sección "Telemetry ingestion (Fase 1 — stub)".
+- Proyecto anterior ya completado: services/user-api auth JWT + CRUD users/profiles + 13 criterios de aceptación verificados contra servidores reales (44/44 checks OK). Landing corporativa/backoffice con Lighthouse 96-100 tras refactors, audit before/after en audit/.
+- Nota: servicios/api rastrea .pyc en git (mala práctica heredada); los .pyc untracked generados al correr tests se borran para no ensuciar el working tree.
 
 ## Proximos pasos previstos
-1. Definir el idioma base del sitio y confirmar si la version bilingue entra en este hito.
-2. Implementar la landing en el orden de secciones requerido por CONTEXT.md.
-3. Implementar formulario con todos los campos obligatorios y sus validaciones especificas.
-4. Integrar mensajes de error exactos, warning de bajo volumen y mensaje de exito de envio simulado.
+1. Fase 3 telemetría: reemplazar el stub por implementación real — validación completa por event_type según event-schemas.json y persistencia en Supabase, usando TELEMETRY_ENDPOINT (todavía sin uso).
+2. Definir el idioma base del sitio y confirmar si la version bilingue entra en este hito.
+3. Implementar la landing en el orden de secciones requerido por CONTEXT.md.
+4. Implementar formulario con todos los campos obligatorios y sus validaciones especificas.
 5. Aplicar criterios de calidad transversal: responsive, accesibilidad y SEO on-page.
-6. Agregar y validar markup Schema.org Organization con datos de TrackFlow.
-
-## Medicion inicial de Lighthouse
-- Auditorias iniciales completadas para la home (`uis/index.html`) y el formulario (`uis/application.html`) en escritorio y movil, y el directorio de proveedores del backoffice en escritorio.
-- El logo de la home canonica carga correctamente (HTTP 200); se regeneraron los informes y capturas con estas rutas.
-- Informes HTML/JSON, capturas y resumen guardados en audit/before/.
-- Correccion 1: se sustituyo el CDN Tailwind bloqueante por CSS local compilado (Tailwind 4.3.0). En tres corridas moviles, Performance subio 96 a 100 en home y 95 a 100 en formulario; LCP mediano bajo 2,239 a 904 ms y 2,343 a 1,253 ms. `npm audit --prefix uis` reporta cero vulnerabilidades.
-- Correccion 2: se extrajo `<trackflow-feedback>` y se reutilizo en formulario corporativo, proveedores e incidencias; validado en Chromium (texto, rol status, aria-live polite y display block). Commit `9d1d059`.
-- Medicion final: Lighthouse repetido tras ambas correcciones en las mismas cinco URL/modo; informes, muestras moviles adicionales y capturas guardados en `audit/after/`.
-- Entregables: AUDIT.md incluye puntuaciones iniciales, causas raiz y analisis de refactor; REPORT.md resume correcciones e impacto before/after. Las muestras baseline moviles repetidas se preservan en audit/before/.
-- Siguiente paso: aplicar las mejoras secundarias pendientes (contraste y metadescripciones) y repetir el backoffice con el API activo; verificar impacto de usuarios con CrUX/RUM tras despliegue.
