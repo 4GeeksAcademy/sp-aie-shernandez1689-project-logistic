@@ -54,20 +54,33 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Obtiene el userId del claim `sub` del JWT (emisor: services/user-api). */
 function readUserId(): string {
-  if (typeof window === "undefined") return "anonymous";
+  return readUserClaims().userId;
+}
+
+/**
+ * Decodifica los claims `sub` y `role` del JWT almacenado en localStorage.
+ * El emisor es services/user-api (security.py): `sub` (id UUID) y `role`
+ * (admin | manager | user). Exposed para que la capa de instrumentación
+ * (`lib/instrumentation.ts`) complete el `user_role` de `page_navigated`
+ * y `login_succeeded` sin duplicar la lógica de decode.
+ */
+export function readUserClaims(): { userId: string; userRole: "admin" | "manager" | "user" } {
+  if (typeof window === "undefined") return { userId: "anonymous", userRole: "user" };
   const token = window.localStorage.getItem(TOKEN_KEY);
-  if (!token) return "anonymous";
+  if (!token) return { userId: "anonymous", userRole: "user" };
   try {
     const payload = token.split(".")[1];
-    if (!payload) return "anonymous";
+    if (!payload) return { userId: "anonymous", userRole: "user" };
     const decoded = JSON.parse(
       typeof atob === "function"
         ? atob(payload.replace(/-/g, "+").replace(/_/g, "/"))
         : Buffer.from(payload, "base64").toString("utf-8"),
     );
-    return typeof decoded?.sub === "string" && decoded.sub ? decoded.sub : "anonymous";
+    const userId = typeof decoded?.sub === "string" && decoded.sub ? decoded.sub : "anonymous";
+    const role = decoded?.role === "admin" || decoded?.role === "manager" ? decoded.role : "user";
+    return { userId, userRole: role };
   } catch {
-    return "anonymous";
+    return { userId: "anonymous", userRole: "user" };
   }
 }
 

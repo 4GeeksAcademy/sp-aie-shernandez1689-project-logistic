@@ -8,6 +8,7 @@ import type {
   ProductInput,
 } from "@/types/inventory";
 import { getAccessToken } from "./auth";
+import { normalizeEndpoint, trackApiResponseError, trackSessionTokenExpired, trackSlowApiResponse } from "./instrumentation.ts";
 
 export type * from "@/types/inventory";
 
@@ -66,6 +67,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   headers.set("Accept", "application/json");
   if (options.body) headers.set("Content-Type", "application/json");
 
+  // Endpoint normalizado (sin parámetros de ruta) para telemetría.
+  const endpoint = normalizeEndpoint(`/inventory${path}`);
+  const method = (options.method ?? "GET").toUpperCase() as "GET" | "POST" | "PATCH" | "DELETE";
+  const startedAt = performance.now();
+
   let response: Response;
   try {
     response = await fetch(`${baseUrl}/inventory${path}`, {
@@ -76,10 +82,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
+      trackSlowApiResponse(endpoint);
       throw new InventoryApiError("La solicitud tardó demasiado. Vuelve a intentarlo.", null);
     }
     throw new InventoryApiError("No se pudo conectar con el servicio de inventario.", null);
   }
+
+  // Latencia destacada de una llamada a API relevante (piso técnico).
+  const elapsedMs = performance.now() - startedAt;
+  if (elapsedMs >= 1500) trackSlowApiResponse(endpoint);
 
   let payload: unknown = null;
   try {
@@ -95,7 +106,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     payload = null;
   }
 
-  if (!response.ok) throw extractError(payload, response.status);
+  if (!response.ok) {
+    // Canal aprobado `api_response_error_recorded`: 4xx/5xx reales de la API.
+    trackApiResponseError(endpoint, method, response.status);
+    // `session_token_expired`: 401 en un endpoint de inventario también
+    // fuerza el cierre de sesión en los componentes (clearAccessToken + /login).
+    if (response.status === 401) trackSessionTokenExpired(endpoint);
+    throw extractError(payload, response.status);
+  }
   if (payload === null) {
     throw new InventoryApiError("El servicio devolvió una respuesta inesperada.", response.status);
   }
