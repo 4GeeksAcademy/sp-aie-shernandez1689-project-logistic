@@ -1,0 +1,895 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TrackFlow Telemetry Events",
+  "description": "JSON Schema definitions for all TrackFlow telemetry events. Each event_type has its own schema under 'definitions'. The EventEnvelope defines the common wrapper fields. Additional properties are forbidden at every level to prevent accidental data leaks.",
+  "definitions": {
+
+    "EventEnvelope": {
+      "type": "object",
+      "description": "Standard wrapper for every telemetry event emitted by TrackFlow systems.",
+      "required": [
+        "eventId",
+        "timestamp",
+        "sessionId",
+        "userId",
+        "event_type",
+        "schemaVersion",
+        "requestId",
+        "properties"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Globally unique identifier for this event, generated at the emission point."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 UTC timestamp (e.g. 2026-10-16T14:30:00.000Z).",
+          "examples": ["2026-10-16T14:30:00.000Z"]
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Identifies the user session. Correlates events within a single login session."
+        },
+        "userId": {
+          "type": "string",
+          "description": "UUID of the authenticated user. Use 'anonymous' for events triggered before authentication (e.g. login_attempt)."
+        },
+        "event_type": {
+          "type": "string",
+          "description": "Event name following the entity_action taxonomy (e.g. inbound_order_created). Must match exactly one definition key.",
+          "examples": ["inbound_order_created", "login_succeeded"]
+        },
+        "schemaVersion": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$",
+          "description": "Semver version of the properties schema. Allows schema evolution without breaking consumers.",
+          "examples": ["1.0.0"]
+        },
+        "requestId": {
+          "type": "string",
+          "description": "HTTP request correlation ID (trace ID). Enables end-to-end tracing across API gateway, service, and database."
+        },
+        "properties": {
+          "type": "object",
+          "description": "Event-specific payload. The allowlist of allowed keys is defined per event_type. No extra keys are permitted."
+        }
+      }
+    },
+
+    "inbound_order_created": {
+      "type": "object",
+      "description": "A warehouse registers receipt of merchandise from a client. Triggered after POST /inventory/orders/inbound. Hypothesis: we need to know inbound volume by client and warehouse. Decision: plan warehouse capacity and staffing (Ana).",
+      "required": [
+        "warehouse",
+        "client_id",
+        "product_id",
+        "product_category",
+        "quantity",
+        "reference"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "warehouse": {
+          "type": "string",
+          "enum": ["los_angeles", "zaragoza"],
+          "description": "Warehouse receiving the inbound order."
+        },
+        "client_id": {
+          "type": "string",
+          "description": "B2B client identifier (the brand that owns the SKU)."
+        },
+        "product_id": {
+          "type": "string",
+          "description": "SKU code of the received product (e.g. CLT-SNK-W-42)."
+        },
+        "product_category": {
+          "type": "string",
+          "enum": ["fashion", "electronics", "cosmetics"],
+          "description": "Product category as defined in TrackFlow's SKU model."
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of units received."
+        },
+        "reference": {
+          "type": "string",
+          "description": "Inbound order reference (PO number or GR number)."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "No PII. Warehouse inventory data only."
+      }
+    },
+
+    "outbound_order_created": {
+      "type": "object",
+      "description": "A warehouse completes picking and dispatch of an order. Triggered after POST /inventory/orders/outbound. Hypothesis: we need to know how many orders are processed per client and warehouse. Decision: detect operational bottlenecks before they affect delivery SLA (Ana).",
+      "required": [
+        "warehouse",
+        "client_id",
+        "product_id",
+        "product_category",
+        "quantity",
+        "exit_type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "warehouse": {
+          "type": "string",
+          "enum": ["los_angeles", "zaragoza"],
+          "description": "Warehouse processing the outbound order."
+        },
+        "client_id": {
+          "type": "string",
+          "description": "B2B client identifier."
+        },
+        "product_id": {
+          "type": "string",
+          "description": "SKU code of the dispatched product."
+        },
+        "product_category": {
+          "type": "string",
+          "enum": ["fashion", "electronics", "cosmetics"],
+          "description": "Product category."
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of units dispatched."
+        },
+        "exit_type": {
+          "type": "string",
+          "enum": ["dispatch", "loss"],
+          "description": "Type of exit: dispatch (normal shipment) or loss (shrinkage/write-off)."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "No PII. Does not include carrier or end-recipient data."
+      }
+    },
+
+    "stock_threshold_triggered": {
+      "type": "object",
+      "description": "SKU stock falls below the minimum threshold configured for that client. Evaluated after every outbound_order_created. Hypothesis: we need to know how often a client runs out of stock for a SKU. Decision: alert the client and commercial team before stockout (Miguel).",
+      "required": [
+        "warehouse",
+        "client_id",
+        "product_id",
+        "product_category",
+        "quantity",
+        "threshold_value",
+        "current_stock"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "warehouse": {
+          "type": "string",
+          "enum": ["los_angeles", "zaragoza"],
+          "description": "Warehouse where the threshold was triggered."
+        },
+        "client_id": {
+          "type": "string",
+          "description": "Client identifier for the SKU."
+        },
+        "product_id": {
+          "type": "string",
+          "description": "SKU that fell below threshold."
+        },
+        "product_category": {
+          "type": "string",
+          "enum": ["fashion", "electronics", "cosmetics"],
+          "description": "Product category."
+        },
+        "quantity": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Remaining stock units when the alert fired."
+        },
+        "threshold_value": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum threshold configured for this client/SKU."
+        },
+        "current_stock": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Current stock level after the triggering operation."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "No PII. Inventory threshold data only."
+      }
+    },
+
+    "direct_stock_edit_rejected": {
+      "type": "object",
+      "description": "A user attempted to modify stock directly (outside an inbound/outbound order) and the system rejected it. Hypothesis: we need to know if warehouse staff tries to bypass traceability controls. Decision: reinforce training or permissions at the warehouse where this occurs most frequently.",
+      "required": [
+        "warehouse",
+        "client_id",
+        "product_id",
+        "product_category",
+        "user_role",
+        "attempt_type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "warehouse": {
+          "type": "string",
+          "enum": ["los_angeles", "zaragoza"],
+          "description": "Warehouse targeted by the direct edit attempt."
+        },
+        "client_id": {
+          "type": "string",
+          "description": "Client associated with the target SKU."
+        },
+        "product_id": {
+          "type": "string",
+          "description": "SKU that was targeted."
+        },
+        "product_category": {
+          "type": "string",
+          "enum": ["fashion", "electronics", "cosmetics"],
+          "description": "Product category."
+        },
+        "user_role": {
+          "type": "string",
+          "description": "Role of the user who made the attempt (admin, manager, user)."
+        },
+        "attempt_type": {
+          "type": "string",
+          "enum": ["direct_api_call", "invalid_endpoint", "unauthorized_method"],
+          "description": "How the direct edit was attempted."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "No PII. Only user role is recorded, not email or name."
+      }
+    },
+
+    "inventory_discrepancy_detected": {
+      "type": "object",
+      "description": "A physical count or audit detected a difference between system stock and actual stock. Hypothesis: we need to know which SKUs and warehouses have the most discrepancies. Decision: prioritize inventory audits on SKUs with the highest discrepancy rate (Ana).",
+      "required": [
+        "warehouse",
+        "client_id",
+        "product_id",
+        "product_category",
+        "expected_quantity",
+        "actual_quantity",
+        "variance"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "warehouse": {
+          "type": "string",
+          "enum": ["los_angeles", "zaragoza"],
+          "description": "Warehouse where the discrepancy was found."
+        },
+        "client_id": {
+          "type": "string",
+          "description": "Client associated with the discrepant SKU."
+        },
+        "product_id": {
+          "type": "string",
+          "description": "SKU with the discrepancy."
+        },
+        "product_category": {
+          "type": "string",
+          "enum": ["fashion", "electronics", "cosmetics"],
+          "description": "Product category."
+        },
+        "expected_quantity": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Stock quantity recorded in the system."
+        },
+        "actual_quantity": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Actual stock quantity from physical count."
+        },
+        "variance": {
+          "type": "integer",
+          "description": "Difference: actual - expected. Negative if stock is missing, positive if surplus."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "No PII."
+      }
+    },
+
+    "login_succeeded": {
+      "type": "object",
+      "description": "A user successfully logs in. Triggered after POST /auth/login returns 200. Hypothesis: we need to know which users access the system and from which timezone. Decision: detect anomalous access patterns (e.g. Zaragoza operator logging in from a US timezone).",
+      "required": [
+        "user_id",
+        "user_role",
+        "ip_country",
+        "auth_method"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "user_id": {
+          "type": "string",
+          "description": "UUID of the authenticated user. Not PII by itself."
+        },
+        "user_role": {
+          "type": "string",
+          "enum": ["admin", "manager", "user"],
+          "description": "Role of the authenticated user."
+        },
+        "ip_country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 2,
+          "description": "ISO 3166-1 alpha-2 country code derived from the request IP (e.g. US, ES). Not the raw IP."
+        },
+        "auth_method": {
+          "type": "string",
+          "enum": ["password", "token"],
+          "description": "Authentication method used."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "IP is reduced to country only. No email, no full IP."
+      }
+    },
+
+    "login_failed": {
+      "type": "object",
+      "description": "A login attempt failed due to invalid credentials or inactive user. Hypothesis: we need to detect brute-force patterns. Decision: implement rate-limiting and notify Andres (CTO) on anomalous spikes.",
+      "required": [
+        "email_hash",
+        "failure_reason",
+        "ip_country",
+        "attempt_count_last_5min"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "email_hash": {
+          "type": "string",
+          "description": "SHA-256 hash of the attempted email. Never the email in plain text.",
+          "examples": ["e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]
+        },
+        "failure_reason": {
+          "type": "string",
+          "enum": ["invalid_credentials", "inactive_user"],
+          "description": "Reason for the login failure."
+        },
+        "ip_country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 2,
+          "description": "ISO 3166-1 alpha-2 country code derived from the request IP."
+        },
+        "attempt_count_last_5min": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of failed attempts from the same IP in the last 5 minutes."
+        }
+      },
+      "sensitive": {
+        "contains_pii": true,
+        "pii_fields": ["email_hash"],
+        "sanitization": "Email is SHA-256 hashed before emission. The original email is never included. The full IP is never included, only the country code.",
+        "retention_policy": "email_hash may be retained for 90 days for anomaly detection, then aggregated."
+      }
+    },
+
+    "session_token_expired": {
+      "type": "object",
+      "description": "Access to a protected endpoint was rejected because the JWT token has expired. Hypothesis: we need to know how often users encounter expired sessions. Decision: adjust JWT TTL or implement silent refresh tokens.",
+      "required": [
+        "user_id",
+        "endpoint",
+        "time_since_login_minutes",
+        "ip_country"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "user_id": {
+          "type": "string",
+          "description": "UUID extracted from the expired token if decodable."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "The API route that was being accessed (e.g. /suppliers)."
+        },
+        "time_since_login_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minutes elapsed between token issuance and this request."
+        },
+        "ip_country": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 2,
+          "description": "ISO 3166-1 alpha-2 country code from the request IP."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "user_id is a non-reversible UUID. No raw IP."
+      }
+    },
+
+    "supplier_created": {
+      "type": "object",
+      "description": "A new supplier was registered in the directory. Triggered after POST /suppliers returns 201. Hypothesis: we need to know how often new suppliers are onboarded and in which market. Decision: anticipate operations workload (Carlos).",
+      "required": [
+        "supplier_id",
+        "country",
+        "categories",
+        "rate_per_shipment",
+        "currency"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "supplier_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Internal supplier ID (TinyDB doc_id)."
+        },
+        "country": {
+          "type": "string",
+          "enum": ["USA", "Spain"],
+          "description": "Contract country of the supplier."
+        },
+        "categories": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "Supplier service categories (e.g. carrier_last_mile, packaging_materials)."
+        },
+        "rate_per_shipment": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Rate per shipment in the contract currency."
+        },
+        "currency": {
+          "type": "string",
+          "enum": ["USD", "EUR"],
+          "description": "Contract currency."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "contact_email (PII) is intentionally excluded."
+      }
+    },
+
+    "supplier_rate_updated": {
+      "type": "object",
+      "description": "A supplier's shipment rate was updated. Triggered after PATCH /suppliers/{id}/rate returns 200. Hypothesis: we need to track rate evolution per carrier and market. Decision: renegotiate contracts when a carrier's cumulative increases exceed market average.",
+      "required": [
+        "supplier_id",
+        "country",
+        "old_rate",
+        "new_rate",
+        "currency",
+        "updated_by_role"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "supplier_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Internal supplier ID."
+        },
+        "country": {
+          "type": "string",
+          "enum": ["USA", "Spain"],
+          "description": "Contract country."
+        },
+        "old_rate": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Previous rate value."
+        },
+        "new_rate": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "New rate value."
+        },
+        "currency": {
+          "type": "string",
+          "enum": ["USD", "EUR"],
+          "description": "Contract currency."
+        },
+        "updated_by_role": {
+          "type": "string",
+          "description": "Role of the user who performed the update (admin, manager)."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "No PII."
+      }
+    },
+
+    "supplier_status_toggled": {
+      "type": "object",
+      "description": "A supplier was suspended or reactivated. Triggered after PATCH /suppliers/{id}/status returns 200. Hypothesis: we need to know how often suppliers are suspended/reactivated. Decision: identify carriers with recurring issues before they affect SLA.",
+      "required": [
+        "supplier_id",
+        "country",
+        "old_status",
+        "new_status",
+        "categories"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "supplier_id": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Internal supplier ID."
+        },
+        "country": {
+          "type": "string",
+          "enum": ["USA", "Spain"],
+          "description": "Contract country."
+        },
+        "old_status": {
+          "type": "string",
+          "enum": ["active", "suspended"],
+          "description": "Previous status."
+        },
+        "new_status": {
+          "type": "string",
+          "enum": ["active", "suspended"],
+          "description": "New status."
+        },
+        "categories": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "Supplier categories."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "No PII."
+      }
+    },
+
+    "incident_created": {
+      "type": "object",
+      "description": "A new operational incident was registered. Triggered after POST /api/incidents returns 201. Hypothesis: we need to know the distribution of incident types by warehouse and country. Decision: allocate preventive resources (e.g. many delivery_failure in LA -> review address quality).",
+      "required": [
+        "incident_id",
+        "category",
+        "origin",
+        "branch",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {
+          "type": "string",
+          "description": "UUID of the incident."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "lost_parcel",
+            "delivery_failure",
+            "inventory_discrepancy",
+            "carrier_issue",
+            "returns_issue",
+            "warehouse_incident",
+            "system_failure",
+            "client_complaint",
+            "other"
+          ],
+          "description": "Incident category."
+        },
+        "origin": {
+          "type": "string",
+          "enum": ["customer", "branch", "internal"],
+          "description": "Origin of the incident report."
+        },
+        "branch": {
+          "type": "string",
+          "enum": ["central", "la_warehouse", "la_office", "zaragoza_warehouse", "zaragoza_office"],
+          "description": "Branch where the incident occurred."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["open"],
+          "description": "Initial status (always open)."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "description (may contain PII) and title are intentionally excluded from telemetry."
+      }
+    },
+
+    "incident_status_changed": {
+      "type": "object",
+      "description": "An incident changed status. Triggered after PATCH /api/incidents/{id}/status returns 200. Hypothesis: we need to measure time between status transitions. Decision: auto-escalate incidents stuck in in_progress for over 24h.",
+      "required": [
+        "incident_id",
+        "category",
+        "from_status",
+        "to_status",
+        "time_in_previous_status_ms",
+        "updated_by_role"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {
+          "type": "string",
+          "description": "UUID of the incident."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "lost_parcel",
+            "delivery_failure",
+            "inventory_discrepancy",
+            "carrier_issue",
+            "returns_issue",
+            "warehouse_incident",
+            "system_failure",
+            "client_complaint",
+            "other"
+          ],
+          "description": "Incident category."
+        },
+        "from_status": {
+          "type": "string",
+          "enum": ["open", "in_progress", "resolved", "discarded"],
+          "description": "Previous status."
+        },
+        "to_status": {
+          "type": "string",
+          "enum": ["open", "in_progress", "resolved", "discarded"],
+          "description": "New status."
+        },
+        "time_in_previous_status_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Milliseconds the incident remained in the previous status."
+        },
+        "updated_by_role": {
+          "type": "string",
+          "description": "Role of the user who changed the status."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "No PII."
+      }
+    },
+
+    "api_response_error_recorded": {
+      "type": "object",
+      "description": "The API returned a 4xx or 5xx HTTP error. Emitted from a response middleware. Hypothesis: we need to know the error rate per endpoint. Decision: prioritize fixing the endpoints with the highest error rate.",
+      "required": [
+        "endpoint",
+        "method",
+        "status_code",
+        "error_category",
+        "error_detail"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "description": "API route (without path parameters). E.g. /api/incidents, not /api/incidents/{id}."
+        },
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PATCH", "DELETE"],
+          "description": "HTTP method."
+        },
+        "status_code": {
+          "type": "integer",
+          "description": "HTTP status code returned (400, 401, 403, 404, 422, 500, etc.)."
+        },
+        "error_category": {
+          "type": "string",
+          "enum": ["client_error", "server_error"],
+          "description": "High-level category: 4xx = client_error, 5xx = server_error."
+        },
+        "error_detail": {
+          "type": "string",
+          "description": "Generic, predefined error description. Never includes user input values, field values, or full stack traces. Examples: 'Validation error', 'Insufficient permissions', 'Resource not found'."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "error_detail uses only predefined messages. No user input is echoed."
+      }
+    },
+
+    "page_navigated": {
+      "type": "object",
+      "description": "A backoffice operator navigated between sections. Emitted from the frontend on route change. Hypothesis: we need to know which sections are most visited and in which order. Decision: reorganize the main navigation to reflect Ana, Carlos, and Valentina's actual workflows.",
+      "required": [
+        "from_page",
+        "to_page",
+        "user_role",
+        "navigation_method"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "from_page": {
+          "type": "string",
+          "description": "Source section identifier (e.g. suppliers, incidents_panel, incidents_form)."
+        },
+        "to_page": {
+          "type": "string",
+          "description": "Destination section identifier."
+        },
+        "user_role": {
+          "type": "string",
+          "enum": ["admin", "manager", "user"],
+          "description": "Role of the navigating user."
+        },
+        "navigation_method": {
+          "type": "string",
+          "enum": ["nav_link", "breadcrumb", "direct_link", "browser_back"],
+          "description": "How the navigation was triggered."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "No full URLs with query params. Only logical page names."
+      }
+    },
+
+    "lead_form_submitted": {
+      "type": "object",
+      "description": "A website visitor submitted the information request form. Hypothesis: we need to know how many qualified leads the website generates. Decision: evaluate marketing campaign ROI and adjust Miguel's commercial capacity.",
+      "required": [
+        "product_type",
+        "monthly_volume",
+        "operating_country",
+        "has_3pl",
+        "services_interest"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "product_type": {
+          "type": "string",
+          "enum": ["fashion", "electronics", "cosmetics", "food", "other"],
+          "description": "Type of product the lead company handles."
+        },
+        "monthly_volume": {
+          "type": "string",
+          "enum": ["0-100", "101-500", "501-2000", "2000+", "not-sure"],
+          "description": "Estimated monthly shipping volume."
+        },
+        "operating_country": {
+          "type": "string",
+          "enum": ["us", "es", "both", "other"],
+          "description": "Main operating country of the lead."
+        },
+        "has_3pl": {
+          "type": "string",
+          "enum": ["yes", "no", "evaluating"],
+          "description": "Whether the lead currently works with another 3PL."
+        },
+        "services_interest": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["warehousing", "last-mile", "reverse-logistics"]
+          },
+          "description": "TrackFlow services the lead is interested in."
+        }
+      },
+      "sensitive": {
+        "contains_pii": true,
+        "pii_fields": ["none_included"],
+        "sanitization": "No PII is included: company_name, contact_person, email, phone, website, and comments are all intentionally excluded. Only business profile data is captured.",
+        "retention_policy": "These events are aggregatable and can be retained indefinitely."
+      }
+    },
+
+    "cache_effectiveness_recorded": {
+      "type": "object",
+      "description": "Periodic measurement of cache hit/miss for incidents and suppliers endpoints. Hypothesis: we need to know the cache hit rate. Decision: adjust TTLs (currently 60s for incidents, 120s for suppliers) and invalidation strategies.",
+      "required": [
+        "cache_name",
+        "cache_key_prefix",
+        "hit",
+        "ttl_seconds"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cache_name": {
+          "type": "string",
+          "enum": ["incident", "supplier"],
+          "description": "Cache instance identifier."
+        },
+        "cache_key_prefix": {
+          "type": "string",
+          "description": "Key prefix (e.g. list:, detail:, summary)."
+        },
+        "hit": {
+          "type": "boolean",
+          "description": "true if served from cache, false if computed."
+        },
+        "ttl_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Configured TTL for this cache entry."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "No PII. Pure infrastructure metric."
+      }
+    },
+
+    "outbound_order_insufficient_stock": {
+      "type": "object",
+      "description": "An outbound order was rejected because requested quantity exceeds available stock. Hypothesis: we need to know how often operators try to dispatch more stock than available. Decision: adjust minimum thresholds per SKU or review inventory accuracy.",
+      "required": [
+        "warehouse",
+        "product_id",
+        "product_category",
+        "client_id",
+        "requested_quantity",
+        "available_stock"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "warehouse": {
+          "type": "string",
+          "enum": ["los_angeles", "zaragoza"],
+          "description": "Warehouse where the insufficient stock was detected."
+        },
+        "product_id": {
+          "type": "string",
+          "description": "SKU that could not be dispatched."
+        },
+        "product_category": {
+          "type": "string",
+          "enum": ["fashion", "electronics", "cosmetics"],
+          "description": "Product category."
+        },
+        "client_id": {
+          "type": "string",
+          "description": "Client identifier."
+        },
+        "requested_quantity": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Quantity the operator tried to dispatch."
+        },
+        "available_stock": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Actual available stock at the time of the request."
+        }
+      },
+      "sensitive": {
+        "contains_pii": false,
+        "notes": "No PII."
+      }
+    }
+
+  }
+}
