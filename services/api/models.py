@@ -6,6 +6,9 @@ from typing import Any, ClassVar, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, PositiveFloat, field_validator, model_validator
+from sqlalchemy import Column, DateTime, Index, Numeric, Text, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlmodel import Field as SQLField, SQLModel
 
 VALID_CATEGORIES: list[str] = [
     "carrier_last_mile",
@@ -235,3 +238,76 @@ class TelemetryBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     events: list[TelemetryEvent] = Field(..., min_length=1)
+
+
+# --- Telemetry Storage (SQLModel for Supabase/PostgreSQL) ------------------
+
+
+class TelemetryEventRecord(SQLModel, table=True):
+    """Tabla de almacenamiento de eventos de telemetría en Supabase (Fase 1).
+
+    Ocho columnas fijas que reflejan el envelope estándar del evento más el
+    payload semiestructurado en ``tags`` (JSONB). Las columnas ``event_type``,
+    ``timestamp`` y ``service`` sostienen las consultas analíticas del proyecto
+    de reporte; ``tags`` guarda ``event.properties`` (solo claves del allowlist).
+
+    Invariantes:
+    - Solo escritura (INSERT). Nunca UPDATE ni DELETE.
+    - Los eventos son hechos inmutables una vez registrados.
+    - El ``id`` se genera en la base de datos con ``gen_random_uuid()``.
+    """
+
+    __tablename__ = "telemetry_events"  # type: ignore
+
+    __table_args__ = (
+        Index("idx_telemetry_events_timestamp", "timestamp", postgresql_using="btree"),
+        Index("idx_telemetry_events_event_type", "event_type", postgresql_using="btree"),
+        Index("idx_telemetry_events_tags", "tags", postgresql_using="gin"),
+    )
+
+    id: str | None = SQLField(
+        default=None,
+        sa_column=Column(
+            UUID(as_uuid=False),
+            primary_key=True,
+            server_default=text("gen_random_uuid()"),
+            comment="Identificador único del registro",
+        ),
+    )
+    timestamp: datetime = SQLField(
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=False,
+            comment="Timestamp del evento en ISO 8601",
+        ),
+    )
+    service: str = SQLField(
+        sa_column=Column(Text, nullable=False, comment="Origen del evento (backoffice, api)"),
+    )
+    event_type: str = SQLField(
+        sa_column=Column(Text, nullable=False, comment="Tipo de evento en formato entidad_acción"),
+    )
+    level: str = SQLField(
+        sa_column=Column(
+            Text,
+            nullable=False,
+            server_default=text("'info'"),
+            comment="Severidad: info, warn, error",
+        ),
+    )
+    value: float | None = SQLField(
+        default=None,
+        sa_column=Column(Numeric, nullable=True, comment="Valor numérico asociado al evento, si aplica"),
+    )
+    message: str | None = SQLField(
+        default=None,
+        sa_column=Column(Text, nullable=True, comment="Descripción legible del evento"),
+    )
+    tags: dict[str, Any] | None = SQLField(
+        sa_column=Column(
+            JSONB,
+            nullable=False,
+            server_default=text("'{}'::jsonb"),
+            comment="properties del envelope (solo claves del allowlist)",
+        ),
+    )

@@ -1,15 +1,33 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlmodel import SQLModel
 
+from db_telemetry import engine as telemetry_engine
+from models import TelemetryEventRecord
 from routes.incidents import router as incidents_router
 from routes.suppliers import router as suppliers_router
 from routes.telemetry import router as telemetry_router
 
 
-app = FastAPI(title="TrackFlow Operations API")
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Inicializa la tabla telemetry_events en Supabase al arrancar."""
+    if telemetry_engine is not None:
+        SQLModel.metadata.create_all(telemetry_engine)
+        logger = logging.getLogger(__name__)
+        logger.info("telemetry_events table initialized (if not exists)")
+    else:
+        logging.getLogger(__name__).warning(
+            "DATABASE_URL is not configured; telemetry table creation skipped"
+        )
+    yield
+
+
+app = FastAPI(title="TrackFlow Operations API", lifespan=lifespan)
 app.include_router(incidents_router)
 app.include_router(suppliers_router)
 app.include_router(telemetry_router)

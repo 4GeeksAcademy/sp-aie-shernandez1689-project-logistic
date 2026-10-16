@@ -802,4 +802,83 @@ validate(event["properties"], event_schema)  # valida payload
 
 ---
 
+## 11. Almacenamiento en Supabase (Fase 1)
+
+### 11.1 Tabla `telemetry_events`
+
+| Columna      | Tipo PostgreSQL                         | Origen en el envelope                               | Descripción                                           |
+| ------------ | --------------------------------------- | --------------------------------------------------- | ----------------------------------------------------- |
+| `id`         | `uuid` PK, default `gen_random_uuid()`  | Auto-generado                                       | Identificador único del registro                      |
+| `timestamp`  | `timestamptz` NOT NULL                  | `event.timestamp` (ISO 8601 → timestamptz)          | Timestamp del evento en ISO 8601                      |
+| `service`    | `text` NOT NULL                         | Constante `backoffice` (derivado del origen)        | Origen del evento (`backoffice`, `api`)               |
+| `event_type` | `text` NOT NULL                         | `event.event_type`                                  | Tipo de evento en formato `entidad_acción`            |
+| `level`      | `text` default `'info'`                 | Derive del tipo de evento o default `info`          | Severidad: `info`, `warn`, `error`                    |
+| `value`      | `numeric` nullable                      | Desde `event.properties` (numérico opcional)        | Valor numérico asociado al evento, si aplica          |
+| `message`    | `text` nullable                         | Resumen legible opcional                            | Descripción legible del evento                        |
+| `tags`       | `jsonb` default `'{}'`                  | `event.properties` (solo claves del allowlist)      | `properties` del envelope (solo claves del allowlist) |
+
+### 11.2 Mapeo detallado del envelope a columnas
+
+| Columna DB   | Origen en el envelope                                                                                 | Notas                                                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `timestamp`  | `event.timestamp` (string ISO 8601 → `timestamptz` UTC)                                              | Se parsea con `datetime.fromisoformat()` antes de insertar           |
+| `service`    | Constante `backoffice` (o derivado del `requestId`/origen)                                            | El frontend es siempre `backoffice` por ahora                         |
+| `event_type` | `event.event_type`                                                                                    | Índice B-tree para filtros analíticos                                 |
+| `level`      | Derivado del tipo de evento: eventos de error → `error`/`warn`; resto → `info`                       | Convención: errores 5xx → `error`, 4xx → `warn`, negocio → `info`    |
+| `value`      | Desde `event.properties` si existe un campo numérico que aplique (p.ej. `quantity`, `variance`)      | `null` si el evento no tiene valor cuantificable                      |
+| `message`    | Concatenación opcional de campos relevantes: `"Inbound order: {reference}, {quantity} units"`         | Generado en el backend; no proviene del frontend                      |
+| `tags`       | `event.properties` completo (ya filtrado por allowlist en el frontend) + campos extra del envelope:  | Se almacenan dentro de `tags` para trazabilidad                       |
+|              | - `eventId`, `sessionId`, `userId`, `schemaVersion`, `requestId`                                     |                                                                       |
+
+### 11.3 Campos del envelope guardados dentro de `tags`
+
+Los campos `eventId`, `sessionId`, `userId`, `schemaVersion` y `requestId` del envelope se guardan dentro de la columna `tags` como claves de primer nivel para permitir consultas JSONB sin perder la trazabilidad:
+
+```json
+{
+  "eventId": "a1b2c3d4-...",
+  "sessionId": "sess_abc123",
+  "userId": "usr_456",
+  "schemaVersion": "1.0.0",
+  "requestId": "req_789",
+  ...resto de propiedades del allowlist
+}
+```
+
+Esto permite buscar por `eventId` o `sessionId` directamente sobre el índice GIN sin necesitar columnas adicionales.
+
+### 11.4 Nivel por defecto según `event_type`
+
+| Condición                                                              | `level`   |
+| ---------------------------------------------------------------------- | --------- |
+| Eventos de negocio (`inbound_order_created`, `outbound_order_created`, etc.) | `info`  |
+| Eventos de umbral/alerta (`stock_threshold_triggered`)                 | `warn`    |
+| Eventos de error técnico (`api_response_error_recorded` con 5xx)       | `error`   |
+| Eventos de advertencia técnica (`api_response_error_recorded` con 4xx)  | `warn`    |
+| Eventos de autenticación fallida (`login_failed`)                      | `warn`    |
+| Eventos de seguridad (`direct_stock_edit_rejected`)                    | `warn`    |
+| Eventos de navegación (`page_navigated`)                               | `info`    |
+| Eventos de rendimiento (`cache_effectiveness_recorded`)                | `info`    |
+| Eventos de proveedores (`supplier_*`)                                  | `info`    |
+| Eventos de incidencias (`incident_*`)                                  | `info`    |
+| Valor por defecto                                                      | `info`    |
+
+### 11.5 Índices
+
+| Índice                                | Tipo     | Propósito                                                    |
+| ------------------------------------- | -------- | ------------------------------------------------------------ |
+| `idx_telemetry_events_timestamp`      | `btree`  | Consultas por rango de tiempo (analítica diaria/semanal)     |
+| `idx_telemetry_events_event_type`     | `btree`  | Filtrado por tipo de evento (agregación por evento)          |
+| `idx_telemetry_events_tags`          | `gin`    | Búsquedas dentro de JSONB (por `eventId`, `sessionId`, etc.) |
+
+### 11.6 Invariantes
+
+- La tabla **no tiene lógica de UPDATE o DELETE** — los eventos de telemetría son inmutables una vez registrados.
+- El `id` se genera automáticamente en la base de datos con `gen_random_uuid()`.
+- `timestamp` refleja el momento del evento (reloj del emisor), no el momento de inserción.
+- La columna `tags` solo contiene claves aprobadas en el allowlist de cada `event_type` (validado en el frontend antes de emitir).
+```
+
+---
+
 *Documento consolidado del Plan de Telemetría de TrackFlow. Para la versión detallada de cada fase, consultar los archivos FASE1-CATALOGO-DATOS.md, FASE2-DISENO-EVENT-ENVELOPE.md, y FASE3-ESTRATEGIA-ENTREGA.md en la raíz del proyecto.*
