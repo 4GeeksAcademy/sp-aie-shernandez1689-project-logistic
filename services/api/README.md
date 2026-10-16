@@ -27,18 +27,41 @@ the `admin` or `manager` role.
 - `GET /api/incidents/results/latest`
   - Response: last JSON analysis payload.
 
-## Telemetry ingestion (Fase 1 — stub)
+## Telemetry
 
-- `POST /telemetry/events`
-  - Body: `{"events": [...]}` — each event follows the standard envelope
-    defined in `docs/telemetry/telemetry-plan.md` (eventId, timestamp,
-    sessionId, userId, event_type, schemaVersion, requestId, properties).
-  - Behavior: **temporary stub** for envelope verification only. Logs the
-    number of events received and each `event_type`, then responds
-    `200 OK` with `{"received": N}`.
-  - The `TELEMETRY_ENDPOINT` env var reserves the destination URL for
-    Fase 3 (persistence in Supabase); it is read at startup but not used
-    to redirect traffic yet. See `.env.example`.
+### `POST /telemetry/events` — Ingesta (endpoint real)
+
+- Body: `{"events": [...]}` — each event follows the standard envelope
+  defined in `docs/telemetry/telemetry-plan.md` (eventId, timestamp,
+  sessionId, userId, event_type, schemaVersion, requestId, properties).
+- Behavior: validates each event individually with `TelemetryEvent`,
+  **rejects invalid events without cancelling the batch**, and persists the
+  valid ones in Supabase (`telemetry_events`) in a single bulk insert.
+  Responds `200 OK` with `{"received", "stored", "rejected"}`.
+- The `TELEMETRY_ENDPOINT` env var reserves the destination URL for
+  redirecting traffic; it is read at startup. See `.env.example`.
+
+### `GET /telemetry/report` — Reporte técnico (Fase 2)
+
+- Query params (optional, ISO 8601): `start_date` and `end_date`. If
+  omitted, defaults to the last 7 days UTC (start inclusive, end exclusive).
+- Calls the analysis pipeline in `services/telemetry` (6 operational
+  metrics: `events_per_day`, `events_per_type_per_day`, `error_rate_daily`,
+  `error_rate_by_type`, `api_errors_by_endpoint`, `auth_failure_rate`).
+- Response: `{"period": {"from", "to"}, "metrics": {...}}` where the period
+  is the resolved UTC window.
+- Caching: in-memory **TTL 60 s** (`cache.telemetry_report_cache`). The
+  default window is rounded to the minute so repeated requests within the
+  TTL hit the cache and do not recompute the pipeline.
+- Auth required: valid Bearer token (same as incidents/suppliers).
+- Returns `422` on invalid window (`start_date >= end_date`) and `503` if
+  `DATABASE_URL` is not configured.
+
+### Dashboard técnico (opcional, `uis/backoffice/telemetry/`)
+
+A minimal technical view that consumes `GET /telemetry/report` and renders
+each metric as an HTML table, showing the resolved `period`. It is an
+engineering view only (no business metrics).
 
 ## Run locally
 

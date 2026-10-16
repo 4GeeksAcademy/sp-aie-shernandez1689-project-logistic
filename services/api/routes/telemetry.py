@@ -1,28 +1,45 @@
-"""Telemetry ingestion router (Fase 2 — endpoint real con validación parcial).
+"""Router de telemetría (Fase 2 y Fase 3).
 
-Acepta un lote de eventos con el formato ``{"events": [...]}``, valida cada
-evento individualmente con ``TelemetryEvent.model_validate()``, rechaza los
-inválidos **sin cancelar el lote**, y persiste los válidos en Supabase en
-una única operación de bulk insert.
+* ``POST /telemetry/events`` — ingesta real con validación parcial.
+  Acepta un lote de eventos con el formato ``{"events": [...]}``, valida cada
+  evento individualmente con ``TelemetryEvent.model_validate()``, rechaza los
+  inválidos **sin cancelar el lote**, y persiste los válidos en Supabase en
+  una única operación de bulk insert.
 
-Compatibilidad con el frontend: el ``TelemetryService`` solo comprueba el
-código de estado HTTP (200) — el body de la respuesta es transparente.
+* ``GET /telemetry/report`` — endpoint de reporte técnico. Resuelve la ventana
+  (por defecto últimos 7 días UTC, inicio inclusivo / fin exclusivo) **una
+  sola vez**, llama al pipeline de ``services/telemetry`` y cachea el
+  resultado 60 s (TTL) para no recalcular en cada request.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticValidationError
 from sqlmodel import Session
 
-from db_telemetry import engine as telemetry_engine
-from models import TelemetryEvent, TelemetryEventRecord
+# La raíz del monorepo es <repo>/services/api/routes/telemetry.py -> parents[3].
+# Añadirla a sys.path permite importar el paquete services.telemetry
+# (namespace package del monorepo).
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from auth import get_current_user  # noqa: E402
+from cache import (  # noqa: E402
+    CACHE_KEY_TELEMETRY_REPORT,
+    telemetry_report_cache,
+)
+from db_telemetry import engine as telemetry_engine  # noqa: E402
+from models import TelemetryEvent, TelemetryEventRecord  # noqa: E402
+from services.telemetry import build_telemetry_report  # noqa: E402
 
 
 API_DIR = Path(__file__).resolve().parents[1]
@@ -252,3 +269,121 @@ def ingest_telemetry_events(body: TelemetryIngestRequest) -> TelemetryIngestResp
         )
 
     return TelemetryIngestResponse(received=total, stored=stored, rejected=rejected)
+
+
+# ---------------------------------------------------------------------------
+# Reporte técnico de telemetría (Fase 2)
+# ---------------------------------------------------------------------------
+
+
+class TelemetryPeriod(BaseModel):
+    """Ventana temporal resuelta del reporte (UTC, ISO 8601)."""
+
+    from_: str = Field(..., alias="from")
+    to: str
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class TelemetryReportResponse(BaseModel):
+    """Cuerpo de ``GET /telemetry/report``.
+
+    Estructura fija del tele-report.md:
+    ``{ "period": {"from", "to"}, "metrics": { <métrica>: [...] } }``.
+    ``metrics`` es un dict abierto porque el catálogo de métricas del
+    pipeline puede crecer sin romper el contrato del endpoint.
+    """
+
+    period: TelemetryPeriod
+    metrics: dict[str, list[dict[str, Any]]]
+
+
+def _round_to_minute(dt: datetime) -> datetime:
+    """Trunca un datetime a la resolución del minuto completo.
+
+    La ventana por defecto calcula ``now`` en cada request; sin truncar, cada
+    request genera una clave de cache distinta (microsegundos) y el TTL de 60 s
+    sería inútil. Truncando al minuto, la ventana por defecto es estable
+    durante todo un minuto, alineada con el TTL del cache.
+    """
+    return dt.replace(second=0, microsecond=0)
+
+
+def _resolve_period(
+    start_date: datetime | None,
+    end_date: datetime | None,
+    now: datetime | None = None,
+) -> tuple[datetime, datetime]:
+    """Resuelve la ventana del reporte.
+
+    Reglas:
+    * Si no se pasan fechas → últimos 7 días UTC: ``start = now - 7d``
+      (inicio inclusivo), ``end = now`` (fin exclusivo).
+    * ``now`` se trunca al minuto para que la ventana por defecto sea estable
+      dentro del TTL del cache (60 s).
+    * El usuario puede pasar solo una de las dos fechas; la otra se infiere.
+    * Ambas se convierten a UTC; ``end`` nunca queda antes que ``start``.
+    """
+    now = now or _round_to_minute(datetime.now(timezone.utc))
+    default_start = now - timedelta(days=7)
+
+    a = start_date or default_start
+    b = end_date or now
+
+    if b <= a:
+        raise ValueError("start_date debe ser anterior a end_date.")
+
+    return a.astimezone(timezone.utc), b.astimezone(timezone.utc)
+
+
+def _build_cache_key(start_date: datetime, end_date: datetime) -> str:
+    return (
+        f"{CACHE_KEY_TELEMETRY_REPORT}"
+        f"{start_date.isoformat()}|{end_date.isoformat()}"
+    )
+
+
+@router.get(
+    "/report",
+    response_model=TelemetryReportResponse,
+    dependencies=[Depends(get_current_user)],
+)
+def get_telemetry_report(
+    start_date: datetime | None = Query(
+        default=None,
+        description="Inicio de la ventana (ISO 8601). Por defecto now - 7d.",
+    ),
+    end_date: datetime | None = Query(
+        default=None,
+        description="Fin exclusivo de la ventana (ISO 8601). Por defecto now.",
+    ),
+) -> TelemetryReportResponse:
+    """Reporte técnico de telemetría.
+
+    El pipeline de análisis vive en ``services/telemetry``; este endpoint se
+    limita a: resolver la ventana **una vez**, llamar al pipeline con ella y
+    cachear el resultado 60 s para no recalcular en cada request.
+    """
+    if telemetry_engine is None:
+        raise HTTPException(
+            status_code=503,
+            detail="DATABASE_URL no está configurada; no se puede generar el reporte.",
+        )
+
+    try:
+        start, end = _resolve_period(start_date, end_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    cache_key = _build_cache_key(start, end)
+    hit, cached = telemetry_report_cache.get(cache_key)
+    if hit:
+        return cached
+
+    with Session(telemetry_engine) as session:
+        metrics = build_telemetry_report(session, start, end)
+
+    period = TelemetryPeriod(from_=start.isoformat(), to=end.isoformat())
+    response = TelemetryReportResponse(period=period, metrics=metrics)
+    telemetry_report_cache.set(cache_key, response)
+    return response
