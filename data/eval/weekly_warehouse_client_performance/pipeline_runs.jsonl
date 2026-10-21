@@ -31,3 +31,9 @@
 {"id": "c26973c4-d501-4ebd-825f-34647e83fe82", "status": "success", "finished_at": "2026-10-21T16:11:21.002880+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
 {"id": "2786741f-5135-4dd6-8c61-5ab8357a376b", "pipeline": "weekly_warehouse_client_performance", "status": "running", "started_at": "2026-10-21T16:17:54.510571+00:00", "start_window": "2026-10-12T00:00:00+00:00", "end_window": "2026-10-19T00:00:00+00:00"}
 {"id": "2786741f-5135-4dd6-8c61-5ab8357a376b", "status": "success", "finished_at": "2026-10-21T16:17:54.914329+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
+{"id": "9b012709-1fd5-4cd2-99bd-dc075dc64d2f", "pipeline": "weekly_warehouse_client_performance", "status": "running", "started_at": "2026-10-21T17:45:48.639950+00:00", "start_window": "2026-10-12T00:00:00+00:00", "end_window": "2026-10-19T00:00:00+00:00"}
+{"id": "9b012709-1fd5-4cd2-99bd-dc075dc64d2f", "status": "success", "finished_at": "2026-10-21T17:45:53.248115+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
+{"id": "b914c935-07de-46f1-a89a-5f30e2bc6348", "pipeline": "weekly_warehouse_client_performance", "status": "running", "started_at": "2026-10-21T17:46:53.643715+00:00", "start_window": "2026-10-12T00:00:00+00:00", "end_window": "2026-10-19T00:00:00+00:00"}
+{"id": "b914c935-07de-46f1-a89a-5f30e2bc6348", "status": "success", "finished_at": "2026-10-21T17:46:58.254701+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
+{"id": "ac88f758-5777-4ad8-842e-d8d877d1dcb6", "pipeline": "weekly_warehouse_client_performance", "status": "running", "started_at": "2026-10-21T17:47:25.220026+00:00", "start_window": "2026-10-12T00:00:00+00:00", "end_window": "2026-10-19T00:00:00+00:00"}
+{"id": "ac88f758-5777-4ad8-842e-d8d877d1dcb6", "status": "success", "finished_at": "2026-10-21T17:47:29.792585+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
