@@ -1,0 +1,111 @@
+{
+  "meta": {
+    "run_id": "c26973c4-d501-4ebd-825f-34647e83fe82",
+    "iso_week": "2026-W42",
+    "week_start": "2026-10-12",
+    "exported_at": "2026-10-21T16:11:20.997190+00:00",
+    "pipeline": "weekly_warehouse_client_performance"
+  },
+  "kpis": [
+    {
+      "warehouse": "los_angeles",
+      "client_id": "fashion-co",
+      "week_start": "2026-10-12",
+      "inbound_units_count": 2093,
+      "outbound_orders_count": 14,
+      "stockout_events_count": 1,
+      "discrepancy_events_count": 3,
+      "discrepancy_rate": 0.21428571428571427
+    },
+    {
+      "warehouse": "los_angeles",
+      "client_id": "glowlab-cosmetics",
+      "week_start": "2026-10-12",
+      "inbound_units_count": 3326,
+      "outbound_orders_count": 14,
+      "stockout_events_count": 0,
+      "discrepancy_events_count": 3,
+      "discrepancy_rate": 0.21428571428571427
+    },
+    {
+      "warehouse": "los_angeles",
+      "client_id": "purestep-footwear",
+      "week_start": "2026-10-12",
+      "inbound_units_count": 2705,
+      "outbound_orders_count": 17,
+      "stockout_events_count": 0,
+      "discrepancy_events_count": 5,
+      "discrepancy_rate": 0.29411764705882354
+    },
+    {
+      "warehouse": "los_angeles",
+      "client_id": "soundwave-electronics",
+      "week_start": "2026-10-12",
+      "inbound_units_count": 1682,
+      "outbound_orders_count": 5,
+      "stockout_events_count": 3,
+      "discrepancy_events_count": 4,
+      "discrepancy_rate": 0.8
+    },
+    {
+      "warehouse": "los_angeles",
+      "client_id": "urban-thread",
+      "week_start": "2026-10-12",
+      "inbound_units_count": 1416,
+      "outbound_orders_count": 16,
+      "stockout_events_count": 1,
+      "discrepancy_events_count": 2,
+      "discrepancy_rate": 0.125
+    },
+    {
+      "warehouse": "zaragoza",
+      "client_id": "fashion-co",
+      "week_start": "2026-10-12",
+      "inbound_units_count": 1489,
+      "outbound_orders_count": 16,
+      "stockout_events_count": 2,
+      "discrepancy_events_count": 5,
+      "discrepancy_rate": 0.3125
+    },
+    {
+      "warehouse": "zaragoza",
+      "client_id": "glowlab-cosmetics",
+      "week_start": "2026-10-12",
+      "inbound_units_count": 3510,
+      "outbound_orders_count": 11,
+      "stockout_events_count": 3,
+      "discrepancy_events_count": 8,
+      "discrepancy_rate": 0.7272727272727273
+    },
+    {
+      "warehouse": "zaragoza",
+      "client_id": "purestep-footwear",
+      "week_start": "2026-10-12",
+      "inbound_units_count": 1012,
+      "outbound_orders_count": 13,
+      "stockout_events_count": 1,
+      "discrepancy_events_count": 8,
+      "discrepancy_rate": 0.6153846153846154
+    },
+    {
+      "warehouse": "zaragoza",
+      "client_id": "soundwave-electronics",
+      "week_start": "2026-10-12",
+      "inbound_units_count": 3223,
+      "outbound_orders_count": 11,
+      "stockout_events_count": 2,
+      "discrepancy_events_count": 5,
+      "discrepancy_rate": 0.45454545454545453
+    },
+    {
+      "warehouse": "zaragoza",
+      "client_id": "urban-thread",
+      "week_start": "2026-10-12",
+      "inbound_units_count": 1974,
+      "outbound_orders_count": 13,
+      "stockout_events_count": 4,
+      "discrepancy_events_count": 5,
+      "discrepancy_rate": 0.38461538461538464
+    }
+  ]
+}
