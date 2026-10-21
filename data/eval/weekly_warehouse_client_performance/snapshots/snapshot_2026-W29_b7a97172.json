@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "run_id": "b7a97172-0e68-4efb-9705-47eac08a46ca",
+    "iso_week": "2026-W29",
+    "week_start": "2026-07-13",
+    "exported_at": "2026-10-21T16:01:43.146632+00:00",
+    "pipeline": "weekly_warehouse_client_performance"
+  },
+  "kpis": []
+}

@@ -85,8 +85,8 @@ async def get_weekly_performance(
     from services.api.cache import telemetry_report_cache
 
     cache_key = f"reporting:kpis:{ws.isoformat()}"
-    cached = telemetry_report_cache.get(cache_key)
-    if cached is not None:
+    hit, cached = telemetry_report_cache.get(cache_key)
+    if hit:
         return cached
 
     entries = [

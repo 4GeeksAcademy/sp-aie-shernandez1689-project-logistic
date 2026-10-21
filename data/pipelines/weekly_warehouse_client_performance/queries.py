@@ -189,12 +189,18 @@ def get_latest_pipeline_run() -> dict[str, Any] | None:
 
 
 def _get_latest_local_run() -> dict[str, Any] | None:
-    """Modo local: lee la última corrida desde JSONL."""
+    """Modo local: lee la última corrida desde JSONL.
+
+    Cada corrida genera dos líneas (start + finish). Esta función
+    las fusiona por run_id y devuelve la corrida más reciente.
+    """
     runs_file = pipeline_db.eval_runs_file()
     if not runs_file.exists():
         return None
 
-    latest: dict[str, Any] | None = None
+    # Leer todas las líneas y agrupar por id
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
     with runs_file.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -204,6 +210,17 @@ def _get_latest_local_run() -> dict[str, Any] | None:
                 record = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            latest = record  # última línea = más reciente (por appends secuenciales)
+            rid = record.get("id")
+            if not rid:
+                continue
+            if rid not in merged:
+                merged[rid] = {}
+                order.append(rid)
+            merged[rid].update(record)
 
-    return latest
+    if not merged:
+        return None
+
+    # Última corrida (la de orden más tardío)
+    latest_id = order[-1]
+    return merged.get(latest_id)
