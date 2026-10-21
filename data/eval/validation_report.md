@@ -1,6 +1,6 @@
 # Reporte de Validación — Pipeline de Desempeño Semanal
 
-Generado: 2026-10-21T15:03:28.995365+00:00
+Generado: 2026-10-21T15:19:58.571939+00:00
 
 ## 0. Ejecución del pipeline
 
@@ -12,7 +12,7 @@ Generado: 2026-10-21T15:03:28.995365+00:00
 ## 1. Archivos de salida
 
 - `data/eval/weekly_warehouse_client_performance/weekly_kpis.jsonl`: ✅ 2413 bytes
-- `data/eval/weekly_warehouse_client_performance/pipeline_runs.jsonl`: ✅ 2314 bytes
+- `data/eval/weekly_warehouse_client_performance/pipeline_runs.jsonl`: ✅ 4094 bytes
 
 ## 2. KPIs generados
 
@@ -82,7 +82,7 @@ Generado: 2026-10-21T15:03:28.995365+00:00
 
 ## 3. Log de corridas
 
-- Total de registros de corrida: **10**
+- Total de registros de corrida: **18**
 
 - Corrida: `37fe38af...` → **running**
 - Corrida: `37fe38af...` → **success** (277 eventos → 10 filas)
@@ -94,6 +94,14 @@ Generado: 2026-10-21T15:03:28.995365+00:00
 - Corrida: `22848fb9...` → **success** (277 eventos → 10 filas)
 - Corrida: `a103c342...` → **running**
 - Corrida: `a103c342...` → **success** (277 eventos → 10 filas)
+- Corrida: `01de7996...` → **running**
+- Corrida: `01de7996...` → **success** (277 eventos → 10 filas)
+- Corrida: `1b64ea8a...` → **running**
+- Corrida: `1b64ea8a...` → **success** (277 eventos → 10 filas)
+- Corrida: `c0c91b25...` → **running**
+- Corrida: `c0c91b25...` → **success** (277 eventos → 10 filas)
+- Corrida: `2229bf44...` → **running**
+- Corrida: `2229bf44...` → **success** (277 eventos → 10 filas)
 
 ## 4. Idempotencia
 

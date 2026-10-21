@@ -60,6 +60,12 @@ def _write_local_kpis(rows: list[dict[str, Any]]) -> int:
         "Upsert KPIs en reporting.weekly_warehouse_client_performance "
         "o escritura local JSONL. Idempotente."
     ),
+    # 2 reintentos c/30s: la escritura upsert depende de PostgreSQL y puede
+    # fallar por deadlock leve, conflictos de serialización o pérdida de
+    # conexión. Dos reintentos con separación de 30s permiten resolver
+    # contention transitoria. La operación es idempotente (ON CONFLICT DO
+    # UPDATE), por lo que repetirla es seguro. En modo local (JSONL) los
+    # reintentos no aplican porque no hay base de datos.
     retries=2,
     retry_delay_seconds=30,
 )

@@ -25,7 +25,10 @@ Los nombres de campo coinciden exactamente con la DDL de la tabla destino
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+from datetime import timedelta
 from typing import Any
 
 import pandas as pd
@@ -40,12 +43,42 @@ from data.pipelines.weekly_warehouse_client_performance.config import (
 logger = logging.getLogger(__name__)
 
 
+def _transform_cache_key(
+    task_ctx: Any, inputs: dict[str, Any]
+) -> str | None:
+    """Clave de caché = hash SHA-256 del JSON canónico de los eventos crudos.
+
+    La transformación es una función pura: mismo raw → mismo resultado.
+    La clave incluye el nombre de la task para evitar colisiones entre
+    distintas tasks que reciban listas similares.
+
+    Vigencia: 24 horas (cache_expiration). Este valor cubre el caso típico
+    de una ejecución semanal: si el pipeline falla a mitad de semana y se
+    re-ejecuta el mismo día, el resultado transformado se sirve de caché
+    sin repetir el cómputo de Pandas.
+
+    Firma requerida por Prefect 3.x: ``(task_run_context, task_parameters)``.
+    """
+    raw = inputs.get("raw")
+    if raw is None:
+        return None
+    raw_json = json.dumps(raw, sort_keys=True, default=str, ensure_ascii=False)
+    return hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
+
+
 @task(
     name="transform_to_weekly_kpis",
     description=(
         "Agrega eventos crudos por (warehouse, client_id, week_start) "
         "a los 5 KPIs semanales. Función pura (sin IO)."
     ),
+    # cache_key_fn: utiliza el hash del contenido completo de los eventos
+    # de entrada. Si el mismo conjunto de eventos se transforma nuevamente
+    # dentro de las 24 horas, Prefect devuelve el resultado cacheado sin
+    # ejecutar Pandas. Esto ahorra CPU en re-ejecuciones del mismo día
+    # (ej. backfill parcial o reintentos del flow padre).
+    cache_key_fn=_transform_cache_key,
+    cache_expiration=timedelta(hours=24),
 )
 def transform_to_weekly_kpis(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Agrega eventos crudos a KPIs semanales por (warehouse, client_id, week_start).

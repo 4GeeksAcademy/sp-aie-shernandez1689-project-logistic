@@ -127,8 +127,17 @@ def weekly_flow(week_start: date | None = None) -> dict[str, Any]:
         rows: list[dict] = transform_to_weekly_kpis(raw)
         upserted: int = load_weekly_performance(rows)
 
-        # 4. Paso opcional: snapshot de evaluación con return_state=True
-        #    Un fallo aquí captura el estado "Failed" en lugar de propagar excepción.
+        # 4. Paso opcional con return_state=True — DEMOSTRACIÓN DE RESILIENCIA
+        #    -----------------------------------------------------------------
+        #    export_eval_snapshot se invoca con return_state=True para que
+        #    cualquier fallo (disco lleno, permiso denegado, etc.) sea capturado
+        #    como un estado Failed en lugar de propagar una excepción.
+        #    Esto asegura que un error en este paso NO CRÍTICO nunca interrumpa
+        #    el flujo principal E → T → L ni bloquee el registro de cierre.
+        #
+        #    Uso en producción: si el paso falla, se notifica vía alerta/métrica
+        #    pero el pipeline continúa. La siguiente ejecución reintentará
+        #    el snapshot (retries=1) o lo regenerará desde los KPIs persistidos.
         snapshot_state = export_eval_snapshot(
             rows=rows,
             run_id=run_id,
@@ -136,8 +145,16 @@ def weekly_flow(week_start: date | None = None) -> dict[str, Any]:
             week_start=str(start.date()),
             return_state=True,
         )
-        snapshot_status = "completed" if snapshot_state.is_completed() else str(snapshot_state.type)
-
+        if snapshot_state.is_completed():
+            snapshot_status = "completed"
+            logger.info("Optional snapshot step completed successfully.")
+        else:
+            snapshot_status = str(snapshot_state.type)
+            logger.warning(
+                "Optional snapshot step did NOT complete (state=%s). "
+                "Main E→T→L pipeline unaffected.",
+                snapshot_state.type,
+            )
         # 5. Cierre exitoso
         log_run_finish(
             run_id,

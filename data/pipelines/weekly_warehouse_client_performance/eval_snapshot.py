@@ -26,6 +26,13 @@ logger = logging.getLogger(__name__)
         "Exporta snapshot JSON de KPIs semanales para evaluación/auditoría. "
         "Paso NO crítico: un fallo aquí no interrumpe E → T → L."
     ),
+    # 1 reintento c/10s: la escritura a disco del snapshot es generalmente
+    # fiable, pero un solo reintento protege contra condiciones transitorias
+    # de E/S (sistema de archivos lleno, NFS temporalmente inaccesible).
+    # No se usan más reintentos porque el paso es opcional y un fallo no
+    # interrumpe el pipeline principal.
+    retries=1,
+    retry_delay_seconds=10,
 )
 def export_eval_snapshot(
     rows: list[dict[str, Any]],

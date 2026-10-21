@@ -107,6 +107,13 @@ def _coerce_tags(tags: Any) -> dict[str, Any]:
         "Lee telemetry_events SOLO LECTURA: event_type IN (4 KPIs) y ventana "
         "[start, end) UTC. Devuelve list[dict]."
     ),
+    # 2 reintentos c/30s porque la dependencia externa (PostgreSQL/Supabase)
+    # puede sufrir cortes transitorios de red, timeouts de conexión o failover
+    # del pool. Dos reintentos cubren la mayoría de incidentes transitorios sin
+    # alargar el TTR (~1 minuto). En modo local (JSONL) los reintentos no se
+    # activan porque no hay IO remota.
+    retries=2,
+    retry_delay_seconds=30,
 )
 def extract_telemetry_events(start: datetime, end: datetime) -> list[dict[str, Any]]:
     """Extrae los eventos de los 4 KPIs en la ventana ``[start, end)`` UTC.
