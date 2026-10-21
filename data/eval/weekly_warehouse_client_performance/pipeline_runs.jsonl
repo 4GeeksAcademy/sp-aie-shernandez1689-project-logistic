@@ -37,3 +37,5 @@
 {"id": "b914c935-07de-46f1-a89a-5f30e2bc6348", "status": "success", "finished_at": "2026-10-21T17:46:58.254701+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
 {"id": "ac88f758-5777-4ad8-842e-d8d877d1dcb6", "pipeline": "weekly_warehouse_client_performance", "status": "running", "started_at": "2026-10-21T17:47:25.220026+00:00", "start_window": "2026-10-12T00:00:00+00:00", "end_window": "2026-10-19T00:00:00+00:00"}
 {"id": "ac88f758-5777-4ad8-842e-d8d877d1dcb6", "status": "success", "finished_at": "2026-10-21T17:47:29.792585+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
+{"id": "aab9a792-4d43-4b5d-a115-d7b7a7884325", "pipeline": "weekly_warehouse_client_performance", "status": "running", "started_at": "2026-10-21T18:02:43.903104+00:00", "start_window": "2026-10-12T00:00:00+00:00", "end_window": "2026-10-19T00:00:00+00:00"}
+{"id": "aab9a792-4d43-4b5d-a115-d7b7a7884325", "status": "success", "finished_at": "2026-10-21T18:02:48.561785+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
