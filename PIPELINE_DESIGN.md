@@ -354,3 +354,128 @@ Módulo **nuevo** `services/reporting/` — separado de `services/telemetry/` y 
 - **Reproducibilidad:** con `pipeline_runs` + la ventana de fechas que se registra en la consulta se puede reconstruir qué datos deberían haber entrado en cualquier semana pasada.
 - **Detección proactiva de silencio de datos:** una corrida `success` con `processed_events` muy por debajo del histórico es una alerta de datos incompletos aunque el pipeline "no haya fallado" — el KPI estaría calculándose sobre datos pobres.
 - **Contraste con `computed_at`:** como cada fila de `reporting.weekly_*` guarda su `computed_at`, se puede cruzar contra `pipeline_runs` para verificar que cada semana fue producida por una corrida `success` — trazabilidad fina de origen de cada número que verá Thomas.
+
+---
+
+## Fase 4 — Mapeo a Prefect
+
+### 4.1 Marco: dónde vive el orquestador
+
+El pipeline se implementa con **Prefect** (orquestación) sobre el diseño definido en las fases 2 y 3. Prefect sustituye al bucle manual de "trigger → correr ETL → registrar corrida" por un **flow** declarativo cuyas **tasks** mapean 1:1 a las etapas Extracción → Transformación → Carga, y cuyos **states** sustituyen al `status` del log de ejecución de la Fase 3 con el mismo vocabulario (`running`, `success`/`completed`, `failed`).
+
+**Ubicación propuesta en el monorepo:**
+
+```text
+services/reporting/
+├── pipeline.py            # Lógica E/T/L pura (funciones reutilizables y testeables)
+├── db.py                  # Engine/session a Supabase vía bloque Prefect
+├── router.py              # Endpoints HTTP: /reporting/* (Fase 2 §2.6)
+├── migrations/
+│   └── 002_reporting_tables.sql
+└── flows/
+    ├── weekly_flow.py     # Flow semanal (flow principal)
+    └── backfill_flow.py   # Flow de backfill (recálculo histórico)
+```
+
+### 4.2 Flow principal
+
+**`weekly_warehouse_client_performance_flow`** — se ejecuta cada lunes temprano (cadencia del entregable de Thomas) o a demanda vía `POST /reporting/pipeline-runs`.
+
+```python
+from prefect import flow, task
+
+@flow(name="weekly_warehouse_client_performance",
+      log_prints=True, retries=1, retry_delay_seconds=60)
+def weekly_flow(week_start: date | None = None):
+    # 1. Ventana objetivo (por defecto: la última semana ISO completa)
+    start, end, iso_week = resolve_window(week_start)
+    run_id = log_run_start("weekly_warehouse_client_performance", start, end)
+
+    # 2. E → T → L como tasks
+    raw = extract_telemetry_events(start, end)          # E
+    rows = transform_to_weekly_kpis(raw)                # T
+    upserted = load_weekly_performance(rows)            # L
+
+    # 3. Cierre del log de ejecución (Fase 3 §3.2)
+    log_run_finish(run_id, success=True,
+                   processed_events=len(raw),
+                   rows_upserted=upserted)
+```
+
+**Mapeo de flujo de datos → tasks:**
+
+| Concepto de diseño (Fase 2 §2.3) | Task de Prefect | Firma | Return |
+|----------------------------------|-----------------|-------|--------|
+| **Extracción** (leer `telemetry_events` solo lectura) | `extract_telemetry_events` | `(start: datetime, end: datetime) -> list[dict]` | Filas crudas con `timestamp`, `event_type`, `tags` (JSON) |
+| **Transformación** (tipar, extraer dims., semana ISO, groupby, KPIs) | `transform_to_weekly_kpis` | `(raw: list[dict]) -> list[dict]` | Filas agregadas por `(warehouse, client_id, week_start)` con 5 KPIs |
+| **Carga** (upsert idempotente en `reporting.*`) | `load_weekly_performance` | `(rows: list[dict]) -> int` | Número de filas `upserted` |
+| **Log de corrida** (Fase 3 §3.2) | `log_run_start` / `log_run_finish` | `(...) -> uuid` / `(run_id, ...) -> None` | Registra en `reporting.pipeline_runs` |
+
+Cada task es **independiente y libre de efectos secundarios** salvo su misma responsabilidad (reutiliza el criterio "pura" del reporte técnico): `extract` solo lee, `transform` es pura sobre su entrada, `load` es la única que escribe. Esto permite testear cada una aislada y reutilizarlas en el flow de backfill.
+
+### 4.3 Tasks (detalle E / T / L)
+
+**Task 1 — `extract_telemetry_events` (Extracción):**
+
+```python
+@task(name="extract_telemetry_events")
+def extract_telemetry_events(start: datetime, end: datetime) -> list[dict]:
+    """Lee telemetry_events SOLO LECTURA. SQL filtra event_type IN (4 KPIs)
+    y ventana timestamp [start, end) en UTC. Devuelve dicts, no Row."""
+    stmt = text("""
+        SELECT timestamp, event_type, tags
+        FROM telemetry_events
+        WHERE timestamp >= :start AND timestamp < :end
+          AND event_type IN :event_types
+    """).bindparams(bindparam("event_types", expanding=True))
+    with Session(bound=get_supabase_engine()) as s:
+        rows = s.execute(stmt, {...}).all()
+    return [{"timestamp": r.timestamp, "event_type": r.event_type, "tags": r.tags} for r in rows]
+```
+
+**Task 2 — `transform_to_weekly_kpis` (Transformación):** replica la receta del reporte técnico (Pandas): `pd.to_datetime(utc=True)` → extraer `warehouse`/`client_id` de `tags` descartando nulos → derivar `week_start` (lunes UTC de la semana ISO) → `groupby(["warehouse", "client_id", "week_start"])` con `SUM(quantity)` (inbound), `COUNT` (outbound, threshold, discrepancy) → calcular `discrepancy_rate` con guarda de división por cero.
+
+**Task 3 — `load_weekly_performance` (Carga):** ejecuta el `INSERT ... ON CONFLICT (warehouse, client_id, week_start) DO UPDATE` de la Fase 2 §2.4 y devuelve `rowcount`. Es la task que materializa la idempotencia.
+
+### 4.4 States de Prefect relevantes
+
+| State de Prefect | Cuándo se activa en nuestro pipeline | Relación con el diseño |
+|------------------|-------------------------------------|------------------------|
+| **`Pending`** | El flow está encolado esperando slot del runner (p. ej. hay otra corrida en marcha) | Primer estado del log (`pipeline_runs.status` aún no insertado) |
+| **`Running`** | El flow arranca; coincide con el `log_run_start(... 'running')` de la Fase 3 §3.2 | Estado `running` en `pipeline_runs` |
+| **`Completed`** | Las tres tasks E/T/L terminan sin excepción; el flow pasa a `log_run_finish(success=True)` | Estado `success` en `pipeline_runs` — es el único que Thomas debe considerar válido |
+| **`Failed`** | Una task lanza una excepción (DB caída, schema inválido, división inesperada) → `log_run_finish(success=False, error_message=...)` | Estado `failed` en `pipeline_runs` + `error_message`; `finished_at` queda registrado |
+| **`Retrying`** | Configurado en el flow (`retries=1`) y en `load_weekly_performance` (`retries=2`): ante errores transitorios de red se reintenta antes de marcar `Failed` | Reintentos que no contaminan `reporting.*` (la idempotencia los hace inofensivos) |
+| **`Crashed`** | El proceso muere sin oportunidad de reportar usuario-level (kill -9, falta de memoria) | Corresponde al caso de Fase 3 §3.2 "corrida colgada": queda como `running` huérfana en `pipeline_runs` → auditable |
+
+> **Nota de diseño:** el log en `reporting.pipeline_runs` y los states de Prefect son **dos vistas del mismo hecho**. Prefect es la fuente de la verdad del orquestador (states, retries, tiempo real); `pipeline_runs` es la fuente de la verdad **auditable** que sobrevive aunque Prefect UI no esté desplegado y que consume `GET /reporting/pipeline-runs/latest`. Por eso el flow escribe en ambos: el estado del endpoint refleja a Prefect, no lo reemplaza.
+
+### 4.5 Flow secundario — backfill (recálculo histórico)
+
+Segundo flow **opcional (Parte 1), necesario en la Parte 3** para escenarios de corrección:
+
+```python
+@flow(name="backfill_weekly_warehouse_client_performance")
+def backfill_flow(first_week: date, last_week: date):
+    for week_start in each_iso_monday(first_week, last_week):
+        weekly_flow(week_start=week_start)   # reutiliza el flow principal por semana
+```
+
+- **Por qué es necesario:** si se corrige la instrumentación (p. ej. se activa `inventory_discrepancy_detected`), las semanas históricas deben recalcularse sin contaminar las ya correctas.
+- **Idempotencia en backfill:** como cada semana es un grano único sobrescrito por `ON CONFLICT DO UPDATE` (Fase 3 §3.1), recalcular semanas antiguas **no duplica** ni corrompe las actuales — cada lunes de la ventana se vuelve a procesar de forma independiente.
+- **Elección de subflujo (Parte 3):** en la Parte 3, las etapas E/T/L de cada semana se elevan de tasks a **subflows** (`extract_subflow`, `transform_subflow`, `load_subflow`) para dar a cada semana su propio radio de retry y su propio state en la UI — el backfill será entonces un **flow padre** que orquesta N subflujos semanales.
+
+### 4.6 Prefect blocks (configuración y credenciales)
+
+Los blocks encapsulan la configuración para que el código del flow **no contenga secretos ni URLs**:
+
+| Block de Prefect | Qué protege/encapsula | Uso en el pipeline |
+|------------------|----------------------|--------------------|
+| `Secret` — `supabase-db-connection-string` | **Credencial** — `DATABASE_URL` completa de Supabase (engine/session) | `extract_telemetry_events` y `load_weekly_performance` la resuelven vía `block_name` sin tenerla en el código ni en `.env` del runner |
+| `PostgresDatabase` (o `SqlAlchemyConnector`) — `trackflow-supabase` | **Conexión** — host, puerto, sslmode, credenciales de Supabase | Encapsula la conexión reutilizable; la task la consume (`conn.block_name.engine`) |
+| `Secret` — `reporting-run-token` | **Credencial** — token que autentica el disparo manual (protegido por rol) | `POST /reporting/pipeline-runs` usa este token para autorizar la ejecución desde cualquier entorno |
+| `JSON` — `reporting-config` | **Configuración** — lista de `event_type` de los 4 KPIs, nombre de tabla destino, umbral de filas para modo transaccional | Centraliza valores de configuración que el diseño (Fase 2) dejó como constantes, para cambiarlos sin tocar código |
+| `CronSchedule` / `Deployment` | **Cadencia** — programación "lunes 06:00 UTC" como *deployment* de Prefect | Materializa la cadencia del entregable (reporte fresco la mañana del lunes) |
+| `Webhook` (o `Slack`/`Email` notification) — `pipeline-alerts` | **Alerta** — notificación al canal del equipo cuando un flow pasa a `Failed` | Convierte el `failed`/`crashed` en aviso proactivo (Andrés deja de enterarse por WhatsApp) |
+
+**Regla de oro:** el flow y las tasks solo referencian blocks por nombre (`Secret.load("supabase-db-connection-string")`); los valores reales viven en el workspace de Prefect Cloud o en `prefect blocks` local (via `.prefect`/variables de entorno del runner), nunca versionados en el repo. Esto mantiene la separación "config fuera del código" que el `docker-compose.yml` actual ya aplica con las variables de entorno (`DATABASE_URL`, `JWT_SECRET_KEY`).
