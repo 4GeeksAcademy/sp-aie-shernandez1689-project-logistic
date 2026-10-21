@@ -660,3 +660,36 @@ sequenceDiagram
 ### 5.7 Preparación para la Parte 3
 
 Este diseño de integración es el **contrato de consumo del dashboard de la Parte 3**: el dashboard consumirá únicamente el endpoint 1 (`GET /reporting/weekly-warehouse-client-performance`) como feed, mostrará el endpoint 3 como estado y disparará el endpoint 2 como acción. En la Parte 3 las tasks E/T/L del flow principal se elevan a subflows (Fase 4 §4.5) **sin cambiar** ninguno de estos contratos de `services/reporting/` → `data/pipelines/`: la delegación permanece idéntica, solo cambia la granularidad interna del orquestador.
+### 5.8 Ciclo de reporting
+
+**Frecuencia:** semanal — el pipeline se ejecuta cada lunes a las 06:00 UTC para
+que el reporte esté disponible al inicio de la jornada laboral en las zonas
+horarias de operación (América/Pacifico y Europa/ Madrid).
+
+**Ventana de extracción:** la última semana ISO completa (lunes 00:00 UTC →
+domingo 24:00 UTC). Por ejemplo, un lunes se procesa la semana que terminó el
+domingo anterior, no la semana en curso.
+
+**Trigger de ejecución:**
+- Producción: Prefect scheduler o cron `0 6 * * 1` (cada lunes a las 06:00 UTC).
+- Desarrollo/validación manual:
+  ```bash
+  # Última semana ISO completa
+  python data/pipelines/pipeline.py
+
+  # Semana específica (backtesting)
+  python data/pipelines/pipeline.py 2026-07-13
+
+  # Backfill de rango de semanas
+  python data/pipelines/pipeline.py backfill 2026-07-06 2026-07-20
+  ```
+
+**Garantía de idempotencia:** si una corrida falla (p. ej. por caída de base de
+datos) y se re-ejecuta el mismo día, el resultado es idéntico gracias al upsert
+basado en `ON CONFLICT (warehouse, client_id, week_start)`. Las filas ya
+existentes se actualizan, no se duplican (Fase 3 §3.1).
+
+**Monitoreo:** cada ejecución registra `started_at`, `finished_at`, `status`,
+`processed_events`, `rows_upserted` y opcionalmente `error_message` en
+`reporting.pipeline_runs` (o `data/eval/.../pipeline_runs.jsonl` en modo local).
+El endpoint `GET /reporting/pipeline-runs/latest` expone la última corrida.

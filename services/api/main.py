@@ -12,6 +12,9 @@ from routes.incidents import router as incidents_router
 from routes.suppliers import router as suppliers_router
 from routes.telemetry import router as telemetry_router
 
+# Router de reporting — separado de telemetry (Brifing-pipeline.md §6-§7).
+from services.reporting import router as reporting_router  # noqa: E402
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -31,6 +34,13 @@ app = FastAPI(title="TrackFlow Operations API", lifespan=lifespan)
 app.include_router(incidents_router)
 app.include_router(suppliers_router)
 app.include_router(telemetry_router)
+
+# Endpoints de reporting del pipeline (weekly warehouse client performance).
+# Contrato exacto definido en data/pipelines/PIPELINE_DESIGN.md §5.2.
+#  GET  /reporting/weekly-warehouse-client-performance  — KPIs semanales
+#  GET  /reporting/pipeline-runs/latest                  — metadata última corrida
+#  POST /reporting/pipeline-runs                         — disparo manual
+app.include_router(reporting_router)
 
 
 @app.exception_handler(RequestValidationError)
