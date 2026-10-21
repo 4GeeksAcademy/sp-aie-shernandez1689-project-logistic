@@ -479,3 +479,184 @@ Los blocks encapsulan la configuración para que el código del flow **no conten
 | `Webhook` (o `Slack`/`Email` notification) — `pipeline-alerts` | **Alerta** — notificación al canal del equipo cuando un flow pasa a `Failed` | Convierte el `failed`/`crashed` en aviso proactivo (Andrés deja de enterarse por WhatsApp) |
 
 **Regla de oro:** el flow y las tasks solo referencian blocks por nombre (`Secret.load("supabase-db-connection-string")`); los valores reales viven en el workspace de Prefect Cloud o en `prefect blocks` local (via `.prefect`/variables de entorno del runner), nunca versionados en el repo. Esto mantiene la separación "config fuera del código" que el `docker-compose.yml` actual ya aplica con las variables de entorno (`DATABASE_URL`, `JWT_SECRET_KEY`).
+
+---
+
+## Fase 5 — Integración con la aplicación
+
+> **Requisito de esta fase:** `services/reporting/` solo expone HTTP. **Ninguna lógica de ETL pertenece a `services/`** — cada endpoint delega en una función o flow que vive en `data/pipelines/`. Los nombres de campos, IDs de entidad y valores de dominio coinciden con el vocabulario del monorepo (validado en §5.5).
+
+### 5.1 Reconciliación con la estructura propuesta en la Fase 4
+
+La Fase 4 propuso ubicar `pipeline.py` (E/T/L) dentro de `services/reporting/`. La Fase 5 añade una regla arquitectónica que **prevalece**: la lógica de datos (extracción, transformación, carga, queries, flows Prefect) vive bajo `data/pipelines/`, que es el directorio que el monorepo reserva para pipelines (`data/pipelines/README.md`: *"cada subcarpeta … representa un pipeline, p. ej. `sales-etl`, `telemetry-stream`"*). `services/` queda como **capa de presentación HTTP exclusivamente**.
+
+**Árbol reconciliado (Fase 4 §4.1 → Fase 5):**
+
+```text
+# LÓGICA DE DATOS — data/pipelines/
+data/pipelines/weekly_warehouse_client_performance/
+├── __init__.py
+├── config.py          # EVENT_TYPES_KPI (4), nombres de tablas reporting, defaults
+├── db.py              # get_supabase_engine() resuelto desde el bloque Prefect (Fase 4 §4.6)
+├── extract.py         # extract_telemetry_events(start, end) → list[dict]   [E]
+├── transform.py       # transform_to_weekly_kpis(raw) → list[dict]          [T]
+├── load.py            # load_weekly_performance(rows) → int                 [L]
+├── runs_log.py        # log_run_start / log_run_finish → reporting.pipeline_runs (Fase 3 §3.2)
+├── queries.py         # latest_computed_week(), get_weekly_performance(), get_latest_pipeline_run()
+├── trigger.py         # trigger_weekly_run(week_start) → run_id  (lanza el flow Prefect)
+├── flows/
+│   ├── weekly_flow.py       # weekly_warehouse_client_performance (flow principal, Fase 4 §4.2)
+│   └── backfill_flow.py     # backfill (Fase 4 §4.5)
+└── migrations/
+    └── 002_reporting_tables.sql   # DDL reporting.* (Fase 2 §2.5)
+
+# CAPA HTTP — services/reporting/
+services/reporting/
+├── __init__.py
+├── router.py          # 3 endpoints /reporting/* (ver §5.2, §5.3)
+├── deps.py            # auth: get_current_user + reporting-run-token (bloque de Fase 4 §4.6)
+└── schemas.py         # modelos pydantic de request/response (validación de dominio)
+```
+
+**Regla de dependencia estricta:** `services/reporting/router.py` importa **únicamente** funciones de `data/pipelines/weekly_warehouse_client_performance/` (`from data.pipelines... import queries, trigger`). El sentido contrario **no existe**: `data/pipelines/` nunca importa `services.reporting`.
+
+### 5.2 Los tres endpoints en `services/reporting/` y la función/flow que cada uno llama
+
+| # | Endpoint (`services/reporting/router.py`) | Qué hace la capa HTTP (única responsabilidad) | Función/flow en `data/pipelines/` que llama | Lectura/Escritura |
+|---|------------------------------------------|-----------------------------------------------|---------------------------------------------|-------------------|
+| 1 | `GET /reporting/weekly-warehouse-client-performance` | Valida `week_start` (opcional, ISO, debe ser lunes de semana ISO); resuelve el default; serializa la respuesta del Briefing §6 | `queries.latest_computed_week()` (si no viene `week_start`) → `queries.get_weekly_performance(week_start)` | **Solo lectura** de `reporting.weekly_warehouse_client_performance`. Nunca toca `telemetry_events`. |
+| 2 | `POST /reporting/pipeline-runs` | Autentica con `reporting-run-token`; valida body `{"week_start": "2026-07-13"}` (opcional); devuelve `202` con `run_id` | `trigger.trigger_weekly_run(week_start)` → lanza el **flow Prefect** `weekly_warehouse_client_performance` (cuyas tasks E/T/L están en `data/pipelines/…/extract.py`, `transform.py`, `load.py`) | Recibe `run_id`; es el único de los tres que **dispara escritura** (en `reporting.*` via el flow) |
+| 3 | `GET /reporting/pipeline-runs/latest` | Autentica; serializa metadata de la última corrida | `queries.get_latest_pipeline_run()` | **Solo lectura** de `reporting.pipeline_runs`. |
+
+**Lo que `services/reporting/` NO contiene (por restricción de la Fase 5):**
+
+- ❌ Nada de SQL de agregación (`SUM`, `COUNT`, `groupby`), nada de Pandas, nada de transformación — eso vive en `extract.py` / `transform.py` / `load.py` bajo `data/pipelines/`.
+- ❌ Nada que lea `telemetry_events` en bruto desde el router — la única lectura de telemetría ocurre en `extract_telemetry_events`, dentro del flow.
+- ✅ Válido: validación de query/body, autenticación, cache TTL de la **consulta** de KPIs (patrón `cache.py` del reporte técnico), delegación y errores HTTP (422/401/404).
+
+### 5.3 Contratos de los endpoints (vocabulario de dominio del monorepo)
+
+**1) `GET /reporting/weekly-warehouse-client-performance?week_start=2026-07-13`** — feed del dashboard de la Parte 3:
+
+```json
+{
+  "week_start": "2026-07-13",
+  "entries": [
+    {
+      "warehouse": "los_angeles",
+      "client_id": "fashion-co",
+      "inbound_units_count": 4200,
+      "outbound_orders_count": 980,
+      "stockout_events_count": 3,
+      "discrepancy_events_count": 2,
+      "discrepancy_rate": 0.002
+    }
+  ]
+}
+```
+
+- **Resolución del default:** `queries.latest_computed_week()` = `SELECT MAX(week_start) FROM reporting.weekly_warehouse_client_performance` (semana materializada más reciente).
+- **Validación del query param:** `week_start` de tipo `date` ISO y día == lunes (la misma regla de semana ISO que aplica `transform.py`); si no es lunes → `422`. Esto mantiene el contrato del grano (Briefing §4: `week_start` = lunes UTC).
+- **Cache:** TTL 60 s sobre la clave `reporting:kpis:{week_start}` (reutiliza `TTLCache` de `services/api/cache.py`). El cache es una preocupación de la capa HTTP, no de datos.
+
+**2) `POST /reporting/pipeline-runs`** — disparo manual:
+
+```json
+// request (opcional: por defecto recalcula la semana más reciente)
+{ "week_start": "2026-07-13" }
+
+// response 202 Accepted
+{ "run_id": "a1b2c3d4-…", "status": "running", "pipeline": "weekly_warehouse_client_performance" }
+```
+
+- `trigger.trigger_weekly_run(week_start)` resuelve el deployment de Prefect (bloque `Deployment` de Fase 4 §4.6) y lo lanza **asíncronamente** (`run_deployment`), devolviendo `run_id` al instante. El estado final se consulta en el endpoint 3.
+- El flow que dispara es `weekly_warehouse_client_performance` de Fase 4 §4.2, cuyas tasks E/T/L (`extract_telemetry_events`, `transform_to_weekly_kpis`, `load_weekly_performance`) ahora residen bajo `data/pipelines/`.
+
+**3) `GET /reporting/pipeline-runs/latest`** — estado de la última corrida:
+
+```json
+{
+  "id": "a1b2c3d4-…",
+  "pipeline": "weekly_warehouse_client_performance",
+  "status": "success",
+  "started_at": "2026-07-13T06:00:00Z",
+  "finished_at": "2026-07-13T06:04:12Z",
+  "processed_events": 4820,
+  "rows_upserted": 18,
+  "error_message": null
+}
+```
+
+- `queries.get_latest_pipeline_run()` = `SELECT … FROM reporting.pipeline_runs ORDER BY started_at DESC LIMIT 1` — los campos son exactamente los del log de ejecución de Fase 3 §3.2.
+- Si nunca ha corrido el pipeline → `404` con cuerpo de error estándar.
+
+### 5.4 Secuencia de delegación por endpoint (quién toca qué tabla)
+
+```mermaid
+sequenceDiagram
+    participant UI as Dashboard Parte 3 / equipo
+    participant R as services/reporting/router.py (HTTP only)
+    participant DP as data/pipelines/weekly_warehouse_client_performance/
+    participant PG as Supabase PostgreSQL
+
+    Note over UI,R: 3) Estado
+    UI->>R: GET /reporting/pipeline-runs/latest
+    R->>DP: queries.get_latest_pipeline_run()
+    DP->>PG: SELECT * FROM reporting.pipeline_runs ORDER BY started_at DESC LIMIT 1
+    PG-->>DP: run row
+    DP-->>R: dict
+    R-->>UI: 200 JSON
+
+    Note over UI,R: 1) KPIs (feed)
+    UI->>R: GET /reporting/weekly-warehouse-client-performance
+    R->>DP: queries.get_weekly_performance(week_start)
+    DP->>PG: SELECT ... FROM reporting.weekly_warehouse_client_performance WHERE week_start=:w
+    PG-->>DP: entries
+    DP-->>R: list[dict]
+    R-->>UI: 200 JSON (week_start + entries)
+
+    Note over UI,R: 2) Disparo manual
+    UI->>R: POST /reporting/pipeline-runs (token + week_start?)
+    R->>DP: trigger.trigger_weekly_run(week_start)
+    DP->>DP: lanza flow Prefect weekly_warehouse_client_performance
+    Note over DP: tasks E/T/L: extract.py -> transform.py -> load.py<br/>(lees telemetry_events SOLO LECTURA,<br/>escribes reporting.* + pipeline_runs)
+    DP-->>R: run_id
+    R-->>UI: 202 { run_id, status: "running" }
+```
+
+**Lectura de `telemetry_events`:** ocurre **únicamente** dentro de `extract.py` (task `extract_telemetry_events`, modo solo lectura, con filtro de `event_type IN (4 KPIs)` y ventana de fechas). Ningún endpoint de `services/reporting/` consulta `telemetry_events`.
+
+### 5.5 Validación del vocabulario de dominio (obligatorio en esta fase)
+
+| Concepto | Valor/formato en el monorepo (fuente verificada) | Cómo lo usa `data/pipelines/` |
+|----------|------------------------------------------------|-------------------------------|
+| `warehouse` (columna y `tags.warehouse`) | `los_angeles` / `zaragoza` — enum en `docs/telemetry/event-schemas.json` (inbound/outbound/threshold/discrepancy); ejemplos en `docs/telemetry/telemetry-plan.md` §4.2 y tests (`services/api/tests/test_telemetry.py`) | Dimensión del grano; valor directo de `tags.warehouse`. El FALLBACK `LA`/`ZGZ` (UI `products/page.tsx`) **nunca llega al pipeline**: el frontend lo traduce con `mapWarehouse` en `uis/talent-pipeline-tracker/lib/instrumentation.ts`. El pipeline debe filtrar/descartar valores fuera de `{los_angeles, zaragoza}` (defensa). |
+| `client_id` (B2B, en `tags`) | Identificador de marca propietaria del SKU; ejemplos en el repo: `fashion-co` (Briefing §6), `client_001` (telemetry-plan §4.2, tests de telemetría) | Dimensión clave del grano; se extrae directo de `tags.client_id`. **No** es `client_name`. |
+| `client_name` (en modelo SKU) | Marca legible: `PureStep Footwear`, `SoundWave Electronics`, `GlowLab Cosmetics`, `UrbanThread` (CONTEXT-5.MD) | **No usado en el grano v1** (Briefing §4: dimensión `client_id`). Se documenta como enriquecimiento futuro opcional (FK a inventario para mostrar nombre en el dashboard). |
+| `product_category` | `fashion` / `electronics` / `cosmetics` (enum en schemas; `PureStep Footwear`→fashion, `SoundWave Electronics`→electronics, `GlowLab Cosmetics`→cosmetics) | Presente en `tags` pero **no es dimensión** del consolidado semanal (Briefing §4 no la lista); se mantiene fuera del grano. |
+| `product_id` / SKU | `CLT-SNK-W-42`, `CLT-SNK-W-42-Z`, `TEC-EAR-001`, `CSM-SRM-030`, `CLT-CHN-N-32`, `TEC-CHG-065` (CONTEXT-5.MD) | Presente en `tags.product_id`; **no es dimensión** del reporte (el grano es almacén×cliente×semana). |
+| `exit_type` (`outbound_order_created`) | `dispatch` / `loss` (enum en schema) | v1: `outbound_orders_count` cuenta **todos** los `outbound_order_created` (Briefing §4 no distingue). `exit_type` queda disponible en `tags` para una futura métrica "solo dispatch". |
+| `event_type` (4 KPIs) | `inbound_order_created`, `outbound_order_created`, `stock_threshold_triggered`, `inventory_discrepancy_detected` (Briefing §3; schemas presentes en `docs/telemetry/event-schemas.json`) | Filtro del extract (config `EVENT_TYPES_KPI`) y base del mapa evento→KPI (Fase 2). |
+| `week_start` | Lunes de la semana ISO, UTC (`date`) | Derivado en `transform.py` desde `timestamp` tipado UTC (`pd.to_datetime(utc=True)`), y validado también en el query param del endpoint 1. |
+| KPI fields (columna) | `inbound_units_count`, `outbound_orders_count`, `stockout_events_count`, `discrepancy_events_count`, `discrepancy_rate` (Briefing §5) | Nombres exactos de columna y de respuesta JSON — sin renombres. |
+
+**Mapa evento → campo (contrato inalterable):**
+
+| `event_type` | Campo calculado | Agregación |
+|--------------|-----------------|------------|
+| `inbound_order_created` | `inbound_units_count` | `SUM(tags.quantity)` (entero ≥ 1) |
+| `outbound_order_created` | `outbound_orders_count` | `COUNT(event)` (todos los `exit_type`) |
+| `stock_threshold_triggered` | `stockout_events_count` | `COUNT(event)` |
+| `inventory_discrepancy_detected` | `discrepancy_events_count` | `COUNT(event)` (numerador) |
+| — | `discrepancy_rate` | `discrepancy_events_count / outbound_orders_count`, `0` si `outbound_orders_count = 0` |
+
+### 5.6 Guardrails de separación (restricciones del Briefing §7)
+
+- `services/telemetry/analysis.py` y `GET /telemetry/report` **no se modifican**.
+- `telemetry_events` solo se **lee** (dentro de `extract.py`); jamás se escribe.
+- `services/reporting/` no contiene SQL de agregación ni transformación; sus únicas dependencias de datos son las funciones de `data/pipelines/weekly_warehouse_client_performance/` (§5.1).
+- La **fuente de verdad auditable** sigue siendo `reporting.pipeline_runs` (Fase 3 §3.2 / Fase 4 §4.4): el endpoint 3 la lee directamente; Prefect sigue escribiendo en ella vía `runs_log.py` como ya diseñado.
+
+### 5.7 Preparación para la Parte 3
+
+Este diseño de integración es el **contrato de consumo del dashboard de la Parte 3**: el dashboard consumirá únicamente el endpoint 1 (`GET /reporting/weekly-warehouse-client-performance`) como feed, mostrará el endpoint 3 como estado y disparará el endpoint 2 como acción. En la Parte 3 las tasks E/T/L del flow principal se elevan a subflows (Fase 4 §4.5) **sin cambiar** ninguno de estos contratos de `services/reporting/` → `data/pipelines/`: la delegación permanece idéntica, solo cambia la granularidad interna del orquestador.
