@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b1a26" />
+  <title>TrackFlow | Rendimiento semanal de almacenes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #f4f0eb;
+      color: #1c2a3a;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ────────────────────────────────────────────────── */
+    .app-wrapper {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 1.5rem 1rem 3rem;
+    }
+
+    /* ── Top bar ───────────────────────────────────────────────── */
+    .topbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .topbar h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #1c2a3a;
+      letter-spacing: -0.02em;
+    }
+    .topbar .eyebrow {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #6b7a8a;
+      margin-bottom: 0.25rem;
+    }
+    .topbar nav {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .topbar nav a {
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: #3a4a5a;
+      text-decoration: none;
+      padding: 0.375rem 0.75rem;
+      border-radius: 2rem;
+      transition: background 0.15s, color 0.15s;
+    }
+    .topbar nav a:hover { background: #e0dad3; color: #1c2a3a; }
+
+    /* ── Week selector ─────────────────────────────────────────── */
+    .week-selector {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.75rem;
+      background: #fff;
+      border-radius: 1rem;
+      padding: 1rem 1.25rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+      margin-bottom: 1.5rem;
+    }
+    .week-selector label {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      color: #3a4a5a;
+    }
+    .week-selector input[type="date"] {
+      font-family: inherit;
+      font-size: 0.875rem;
+      padding: 0.375rem 0.75rem;
+      border: 1px solid #d4cdc4;
+      border-radius: 0.5rem;
+      background: #faf8f6;
+      color: #1c2a3a;
+    }
+    .week-selector button {
+      font-family: inherit;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      padding: 0.5rem 1.25rem;
+      border: none;
+      border-radius: 0.5rem;
+      background: #1a5c7a;
+      color: #fff;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .week-selector button:hover { background: #0f4a65; }
+    .week-selector button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .week-selector .feedback {
+      font-size: 0.75rem;
+      color: #6b7a8a;
+    }
+
+    /* ── Summary cards ─────────────────────────────────────────── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .kpi-card {
+      background: #fff;
+      border-radius: 1rem;
+      padding: 1.25rem 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .kpi-card .kpi-label {
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #6b7a8a;
+      margin-bottom: 0.375rem;
+    }
+    .kpi-card .kpi-value {
+      font-size: 1.75rem;
+      font-weight: 800;
+      color: #1c2a3a;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+    }
+    .kpi-card .kpi-desc {
+      font-size: 0.75rem;
+      color: #8a9aaa;
+      margin-top: 0.25rem;
+    }
+    .kpi-card .kpi-unit {
+      font-size: 0.8125rem;
+      font-weight: 500;
+      color: #5a6a7a;
+    }
+    .kpi-card.rate .kpi-value { color: #b45309; }
+    .kpi-card.alert .kpi-value { color: #b91c1c; }
+    .kpi-card.good .kpi-value { color: #0e7e5a; }
+
+    /* ── Table ──────────────────────────────────────────────────── */
+    .panel {
+      background: #fff;
+      border-radius: 1rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+      overflow: hidden;
+      margin-bottom: 1.5rem;
+    }
+    .panel-head {
+      padding: 1.25rem 1.5rem 0.75rem;
+      border-bottom: 1px solid #ece6e0;
+    }
+    .panel-head h2 {
+      font-size: 1rem;
+      font-weight: 700;
+      color: #1c2a3a;
+    }
+    .panel-head p {
+      font-size: 0.75rem;
+      color: #6b7a8a;
+      margin-top: 0.25rem;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      padding: 0 1.5rem 1.5rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+    }
+    thead th {
+      text-align: left;
+      font-weight: 600;
+      color: #5a6a7a;
+      padding: 0.75rem 0.5rem 0.5rem;
+      border-bottom: 2px solid #ece6e0;
+      white-space: nowrap;
+    }
+    thead th .sub { font-weight: 400; color: #8a9aaa; }
+    tbody td {
+      padding: 0.625rem 0.5rem;
+      border-bottom: 1px solid #f0ece6;
+      color: #1c2a3a;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: #faf8f6; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .badge-rate {
+      display: inline-block;
+      font-weight: 600;
+      padding: 0.125rem 0.5rem;
+      border-radius: 1rem;
+    }
+    .badge-rate.low { background: #e0f2e6; color: #0e7e5a; }
+    .badge-rate.medium { background: #fef3d4; color: #b45309; }
+    .badge-rate.high { background: #fee2e2; color: #b91c1c; }
+    .empty-state {
+      padding: 2rem 1.5rem;
+      text-align: center;
+      color: #8a9aaa;
+      font-size: 0.875rem;
+    }
+
+    /* ── Loading & error ───────────────────────────────────────── */
+    .loading-state, .error-state {
+      padding: 2rem 1.5rem;
+      text-align: center;
+    }
+    .loading-state { color: #6b7a8a; }
+    .error-state { color: #b91c1c; }
+    .error-state button {
+      margin-top: 0.75rem;
+      font-family: inherit;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      padding: 0.5rem 1rem;
+      border: 1px solid #d4cdc4;
+      border-radius: 0.5rem;
+      background: #fff;
+      cursor: pointer;
+    }
+    [hidden] { display: none !important; }
+
+    /* ── Spinner ─────────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 1.5rem;
+      height: 1.5rem;
+      border: 3px solid #ece6e0;
+      border-top-color: #1a5c7a;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Footer note ───────────────────────────────────────────── */
+    .footer-note {
+      font-size: 0.6875rem;
+      color: #8a9aaa;
+      text-align: center;
+      margin-top: 2rem;
+    }
+
+    /* ── Responsive ─────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .app-wrapper { padding: 1rem; }
+      .kpi-card .kpi-value { font-size: 1.375rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-wrapper">
+    <!-- Top bar -->
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">TrackFlow · Panel de operaciones</p>
+        <h1>Rendimiento semanal de almacenes</h1>
+      </div>
+      <nav aria-label="Navegación">
+        <a href="../../index.html">Inicio</a>
+        <a href="../telemetry/index.html">Telemetría técnica</a>
+        <a href="../../application/app/incidents/panel.html">Incidencias</a>
+      </nav>
+    </header>
+
+    <!-- Week selector -->
+    <section class="week-selector" aria-label="Selector de semana">
+      <label for="weekStart">Semana (lunes ISO):</label>
+      <input type="date" id="weekStart" />
+      <button id="loadBtn" type="button">Consultar KPIs</button>
+      <span id="feedback" class="feedback"></span>
+    </section>
+
+    <!-- Summary cards -->
+    <section class="kpi-grid" id="summaryCards" aria-label="Resumen de KPIs">
+      <div class="kpi-card">
+        <p class="kpi-label">Volumen de entrada</p>
+        <p class="kpi-value" id="totalInbound">—</p>
+        <p class="kpi-desc">Unidades recibidas esta semana</p>
+      </div>
+      <div class="kpi-card good">
+        <p class="kpi-label">Throughput de salida</p>
+        <p class="kpi-value" id="totalOutbound">—</p>
+        <p class="kpi-desc">Pedidos despachados</p>
+      </div>
+      <div class="kpi-card alert">
+        <p class="kpi-label">Quiebres de stock</p>
+        <p class="kpi-value" id="totalStockout">—</p>
+        <p class="kpi-desc">Alertas por inventario agotado</p>
+      </div>
+      <div class="kpi-card">
+        <p class="kpi-label">Discrepancias detectadas</p>
+        <p class="kpi-value" id="totalDiscrepancy">—</p>
+        <p class="kpi-desc">Inventario físico vs esperado</p>
+      </div>
+      <div class="kpi-card rate">
+        <p class="kpi-label">Tasa de discrepancia</p>
+        <p class="kpi-value" id="totalRate">—</p>
+        <p class="kpi-desc">% de pedidos con error de inventario</p>
+      </div>
+    </section>
+
+    <!-- Loading -->
+    <div id="loadingState" class="loading-state" hidden>
+      <div class="spinner"></div>
+      <p style="margin-top:0.5rem">Cargando KPIs semanales…</p>
+    </div>
+
+    <!-- Error -->
+    <div id="errorState" class="error-state" hidden role="alert">
+      <p id="errorMessage">No se pudieron cargar los datos.</p>
+      <button id="retryBtn" type="button">Reintentar</button>
+    </div>
+
+    <!-- Detail table -->
+    <section class="panel" aria-labelledby="detail-title">
+      <div class="panel-head">
+        <h2 id="detail-title">Desglose por almacén y cliente</h2>
+        <p id="tableCaption">Selecciona una semana y consulta los KPIs.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Almacén</th>
+              <th>Cliente</th>
+              <th class="num">Volumen entrada</th>
+              <th class="num">Throughput salida</th>
+              <th class="num">Quiebres stock</th>
+              <th class="num">Discrepancias</th>
+              <th class="num">Tasa discrepancia</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody">
+            <tr><td colspan="7" class="empty-state">Sin datos. Consulta una semana para ver los resultados.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- KPI legend -->
+    <section class="panel" aria-labelledby="legend-title">
+      <div class="panel-head">
+        <h2 id="legend-title">¿Qué significan estos indicadores?</h2>
+      </div>
+      <div style="padding:1rem 1.5rem 1.5rem; display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:1rem; font-size:0.8125rem; color:#3a4a5a;">
+        <div>
+          <strong>Volumen de entrada</strong> — Cantidad total de unidades recibidas en el almacén durante la semana.
+        </div>
+        <div>
+          <strong>Throughput de salida</strong> — Número de pedidos despachados. Mide el ritmo de operación.
+        </div>
+        <div>
+          <strong>Quiebres de stock</strong> — Veces que se detectó inventario agotado. Idealmente 0.
+        </div>
+        <div>
+          <strong>Tasa de discrepancia</strong> — Proporción de pedidos con diferencias entre inventario esperado y real. <em>Objetivo: &lt; 5%.</em>
+        </div>
+      </div>
+    </section>
+
+    <p class="footer-note">Datos alimentados por <code>GET /reporting/weekly-warehouse-client-performance</code></p>
+  </div>
+
+  <script>
+    /**
+     * Dashboard de rendimiento semanal de almacenes.
+     * Consume GET /reporting/weekly-warehouse-client-performance
+     * desde services/reporting/router.py (Briefing §6, Endpoint 1).
+     *
+     * Diseñado para stakeholders de negocio no técnicos:
+     * - Nombres en lenguaje natural
+     * - Tarjetas resumen con descripciones
+     * - Tabla detallada con formato amigable
+     * - Leyenda de indicadores
+     * - Colores semáforo en tasas
+     */
+
+    const API_BASE = (localStorage.getItem('trackflow_api_base') || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+
+    const dom = {
+      weekStart: document.getElementById('weekStart'),
+      loadBtn: document.getElementById('loadBtn'),
+      feedback: document.getElementById('feedback'),
+      loadingState: document.getElementById('loadingState'),
+      errorState: document.getElementById('errorState'),
+      errorMessage: document.getElementById('errorMessage'),
+      retryBtn: document.getElementById('retryBtn'),
+      tableBody: document.getElementById('tableBody'),
+      tableCaption: document.getElementById('tableCaption'),
+
+      totalInbound: document.getElementById('totalInbound'),
+      totalOutbound: document.getElementById('totalOutbound'),
+      totalStockout: document.getElementById('totalStockout'),
+      totalDiscrepancy: document.getElementById('totalDiscrepancy'),
+      totalRate: document.getElementById('totalRate'),
+    };
+
+    // ── Helpers ────────────────────────────────────────────────────
+
+    function fmtNum(n) {
+      return Number(n).toLocaleString('es-ES');
+    }
+
+    function fmtPct(n) {
+      const v = Number(n);
+      if (!Number.isFinite(v)) return '—';
+      return `${(v * 100).toFixed(1)} %`;
+    }
+
+    function rateClass(rate) {
+      const v = Number(rate);
+      if (v <= 0.05) return 'low';
+      if (v <= 0.15) return 'medium';
+      return 'high';
+    }
+
+    function rateLabel(rate) {
+      const v = Number(rate);
+      if (v <= 0.05) return '≤ 5 % · Normal';
+      if (v <= 0.15) return '5-15 % · Atención';
+      return '> 15 % · Crítico';
+    }
+
+    function setLoading(on) {
+      dom.loadingState.hidden = !on;
+      dom.loadBtn.disabled = on;
+      if (on) dom.errorState.hidden = true;
+    }
+
+    function showError(msg) {
+      dom.loadingState.hidden = true;
+      dom.errorState.hidden = false;
+      dom.errorMessage.textContent = msg || 'No se pudieron cargar los datos.';
+    }
+
+    // ── Default: last Monday ───────────────────────────────────────
+
+    function getLastMonday() {
+      const d = new Date();
+      const day = d.getDay();
+      const diff = (day === 0 ? 6 : day - 1);
+      const monday = new Date(d);
+      monday.setDate(d.getDate() - diff - 7); // last complete ISO week
+      return monday.toISOString().slice(0, 10);
+    }
+
+    dom.weekStart.value = getLastMonday();
+
+    // ── Render ──────────────────────────────────────────────────────
+
+    function render(data) {
+      const entries = data.entries || [];
+
+      // Summary cards
+      let sumInbound = 0, sumOutbound = 0, sumStockout = 0, sumDisc = 0;
+      let totalDiscRate = 0;
+      for (const e of entries) {
+        sumInbound   += Number(e.inbound_units_count) || 0;
+        sumOutbound  += Number(e.outbound_orders_count) || 0;
+        sumStockout  += Number(e.stockout_events_count) || 0;
+        sumDisc      += Number(e.discrepancy_events_count) || 0;
+        totalDiscRate += Number(e.discrepancy_rate) || 0;
+      }
+      const avgRate = entries.length > 0 ? totalDiscRate / entries.length : 0;
+
+      dom.totalInbound.textContent = fmtNum(sumInbound);
+      dom.totalOutbound.textContent = fmtNum(sumOutbound);
+      dom.totalStockout.textContent = fmtNum(sumStockout);
+      dom.totalDiscrepancy.textContent = fmtNum(sumDisc);
+      dom.totalRate.textContent = fmtPct(avgRate);
+
+      // Table
+      if (entries.length === 0) {
+        dom.tableBody.innerHTML = '<tr><td colspan="7" class="empty-state">No hay datos consolidados para esta semana.</td></tr>';
+        dom.tableCaption.textContent = `Semana del ${data.week_start} — sin registros.`;
+        return;
+      }
+
+      dom.tableCaption.textContent = `Semana del ${data.week_start} · ${entries.length} combinaciones almacén-cliente`;
+      const fragment = document.createDocumentFragment();
+      for (const e of entries) {
+        const tr = document.createElement('tr');
+        const rate = Number(e.discrepancy_rate) || 0;
+        tr.innerHTML = `
+          <td>${escHtml(e.warehouse)}</td>
+          <td>${escHtml(e.client_id)}</td>
+          <td class="num">${fmtNum(e.inbound_units_count)}</td>
+          <td class="num">${fmtNum(e.outbound_orders_count)}</td>
+          <td class="num">${fmtNum(e.stockout_events_count)}</td>
+          <td class="num">${fmtNum(e.discrepancy_events_count)}</td>
+          <td class="num"><span class="badge-rate ${rateClass(rate)}">${fmtPct(rate)}</span></td>
+        `;
+        fragment.append(tr);
+      }
+      dom.tableBody.replaceChildren(fragment);
+      dom.feedback.textContent = 'Datos actualizados';
+    }
+
+    function escHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    // ── Fetch ──────────────────────────────────────────────────────
+
+    async function loadData() {
+      const weekVal = dom.weekStart.value;
+      if (!weekVal) {
+        dom.feedback.textContent = 'Selecciona una fecha (lunes de la semana ISO).';
+        return;
+      }
+
+      setLoading(true);
+      dom.feedback.textContent = 'Consultando…';
+
+      try {
+        const token = localStorage.getItem('trackflow_access_token');
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const url = `${API_BASE}/reporting/weekly-warehouse-client-performance?week_start=${weekVal}`;
+        const resp = await fetch(url, { headers });
+        const body = await resp.json().catch(() => null);
+
+        if (!resp.ok) {
+          const detail = body?.detail || `Error ${resp.status}`;
+          throw new Error(detail);
+        }
+
+        render(body);
+        dom.loadingState.hidden = true;
+        dom.errorState.hidden = true;
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+
+    // ── Events ─────────────────────────────────────────────────────
+
+    dom.loadBtn.addEventListener('click', loadData);
+    dom.retryBtn.addEventListener('click', loadData);
+
+    // Auto-load on mount
+    loadData();
+  </script>
+</body>
+</html>

@@ -3,6 +3,9 @@
 Contiene las tres etapas del flujo (Extracción → Transformación → Carga),
 el log de corridas, las consultas de lectura para la capa HTTP y el trigger
 de ejecución. Ver PIPELINE_DESIGN.md Fase 5 §5.1 para el árbol reconciliado.
+
+Los subflows (``subflows/``) encapsulan cada etapa como ``@flow`` con inputs
+y outputs explícitos Pydantic, y son invocados desde el flow principal.
 """
 
 from data.pipelines.weekly_warehouse_client_performance.config import (
@@ -35,6 +38,20 @@ from data.pipelines.weekly_warehouse_client_performance.queries import (
 from data.pipelines.weekly_warehouse_client_performance.trigger import (
     trigger_weekly_run,
 )
+from data.pipelines.weekly_warehouse_client_performance.subflows import (
+    extract_subflow,
+    transform_subflow,
+    load_subflow,
+    export_eval_snapshot_subflow,
+    ExtractInput,
+    ExtractOutput,
+    TransformInput,
+    TransformOutput,
+    LoadInput,
+    LoadOutput,
+    ExportInput,
+    ExportOutput,
+)
 
 __all__ = [
     "EVENT_TYPES_KPI",
@@ -53,4 +70,17 @@ __all__ = [
     "log_run_start",
     "transform_to_weekly_kpis",
     "trigger_weekly_run",
+    # Subflows
+    "extract_subflow",
+    "transform_subflow",
+    "load_subflow",
+    "export_eval_snapshot_subflow",
+    "ExtractInput",
+    "ExtractOutput",
+    "TransformInput",
+    "TransformOutput",
+    "LoadInput",
+    "LoadOutput",
+    "ExportInput",
+    "ExportOutput",
 ]
