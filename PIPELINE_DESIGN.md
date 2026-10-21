@@ -141,3 +141,160 @@ El `Brifing-pipeline.md` define 4 KPIs de negocio que **Thomas (CEO) y Ana (Head
 | **Servicio** | `services/telemetry/` | `services/reporting/` (nuevo) |
 
 **Conclusión de la brecha:** El reporte técnico actual y el pipeline de negocio que describe el `Brifing-pipeline.md` son **ortogonales** — comparten la fuente de datos (`telemetry_events`) pero responden preguntas distintas, para audiencias distintas, con frecuencias y granularidades distintas. No hay solapamiento funcional. La deuda técnica identificada es que `inventory_discrepancy_detected` no está instrumentado en el frontend, lo que será necesario abordar para que el pipeline de discrepancia tenga datos reales.
+
+---
+
+## Fase 2 — Diseño del pipeline
+
+### 2.1 Propósito del pipeline
+
+> **Producir el consolidado semanal que alimenta el "Reporte Semanal de Desempeño por Almacén y Cliente" de Thomas (CEO) y Ana (Head of Warehouse Operations)**, calculando los 4 KPIs de negocio del `Brifing-pipeline.md` (volumen de entrada, throughput de salida, frecuencia de quiebre de stock y tasa de discrepancia) a partir de las métricas obligatorias de telemetría (`inbound_order_created`, `outbound_order_created`, `stock_threshold_triggered`, `inventory_discrepancy_detected`), agregadas por `warehouse` + `client_id` por semana ISO.
+
+**Desglose rastreable (cada KPI → su métrica de telemetría obligatoria):**
+
+| KPI (Brifing-pipeline.md §2) | Métrica(s) obligatoria(s) de telemetría (CONTEXT-TELE.md §3) | Agregación |
+|------------------------------|--------------------------------------------------------------|-----------|
+| **Volumen de entrada** | `inbound_order_created` | `SUM(tags.quantity)` |
+| **Throughput de salida** | `outbound_order_created` | `COUNT(event)` |
+| **Frecuencia de quiebre de stock** | `stock_threshold_triggered` | `COUNT(event)` |
+| **Tasa de discrepancia** | `inventory_discrepancy_detected` (numerador) / `outbound_order_created` (denominador) | `COUNT(disc) / COUNT(out)` |
+
+### 2.2 Formato de extracción (fuentes)
+
+**Fuente primaria — `telemetry_events` (Supabase/PostgreSQL):**
+
+- **Formato del dato:** filas normalizadas con columnas fijas, y las dimensiones de negocio dentro de la columna `tags` (JSONB):
+
+  ```sql
+  SELECT timestamp, event_type, level, value, message, tags
+  FROM telemetry_events
+  ```
+
+  Las propiedades del envelope del plan de telemetría (`warehouse`, `client_id`, `product_id`, `product_category`, `quantity`, `reference`, `exit_type`, `threshold_value`, `current_stock`, `expected_quantity`, `actual_quantity`, `variance`) llegan como claves de `tags` (JSONB).
+
+- **Frecuencia de actualización de la fuente:** los eventos se **insertan en tiempo real** vía `POST /telemetry/events` desde el frontend (batch + `sendBeacon`), en **modo append-only** — cada evento es inmutable. El dato no se actualiza en el lugar; el snapshot cambia continuamente a medida que se emiten nuevos eventos.
+
+**Fuentes secundarias (dominio) disponibles si son necesarias:**
+- `inventory` (SKUs/StockEntry/StockExit en `services/user-api`) — para validar clientes/almacenes reales o enriquecer con `client_name` si el reporte quiere mostrar nombre de marca y no solo `client_id`. En la v1 **no se requieren** (el Briefing limita el alcance a `telemetry_events`), pero se documentan como opción de enriquecimiento futura.
+
+**Modo de acceso:** el pipeline lee en **modo solo lectura**. Nunca escribe de vuelta en `telemetry_events` (restricción de negocio, Brifing-pipeline.md §7).
+
+### 2.3 Flujo de datos (Extracción → Transformación → Carga)
+
+```mermaid
+flowchart LR
+    subgraph EXT[R 🔵 Extract — Extracción]
+        A1[telemetry_events<br/>PostgreSQL / Supabase] --> A2[SQL: SELECT ...<br/>WHERE event_type IN 4 KPIs<br/>AND timestamp en ventana<br/>solo lectura]
+    end
+
+    subgraph TRF[T 🟠 Transform — Transformación]
+        A2 --> B1[Pandas<br/>timestamp → datetime UTC]
+        B1 --> B2[Extraer warehouse / client_id<br/>de tags · descartar nulos]
+        B2 --> B3[Derivar semana ISO:<br/>week_start = lunes UTC]
+        B3 --> B4[groupby warehouse · client_id · week_start]
+        B4 --> B5[Dentro de cada grupo:<br/>SUM quantity inbound<br/>COUNT outbound · COUNT threshold<br/>COUNT discrepancy]
+        B5 --> B6[Calcular discrepancy_rate =<br/>disc / out · 0 si out = 0]
+    end
+
+    subgraph LDR[L 🟢 Load — Carga]
+        B6 --> C1[Upsert idempotente en<br/>reporting.weekly_warehouse_client_performance<br/>clave unique warehouse · client_id · week_start]
+        C1 --> C2[Registrar corrida en<br/>reporting.pipeline_runs]
+    end
+
+    subgraph SER[Serve — Exposición]
+        C2 --> D1[GET /reporting/weekly-warehouse-client-performance<br/>consulta de KPIs]
+        C2 --> D2[POST /reporting/pipeline-runs<br/>disparo manual]
+        C2 --> D3[GET /reporting/pipeline-runs/latest<br/>estado de la última corrida]
+    end
+
+    EXT --> TRF --> LDR --> SER
+```
+
+**Tres etapas claramente separadas:**
+
+| Etapa | Entrada → Salida | Responsabilidad |
+|-------|-----------------|-----------------|
+| **Extracción** | `telemetry_events` → DataFrame crudo tipado | SQL con filtros de `event_type` y ventana `timestamp` (inicio inclusivo / fin exclusivo, UTC). Solo lee las filas necesarias; nunca carga la tabla completa. |
+| **Transformación** | DataFrame crudo → `week_start`, dimensiones y 5 campos calculados | Tipado UTC, extracción dimensional de `tags`, derivación de semana ISO, `groupby` + agregación, cálculo de la tasa. |
+| **Carga** | Resultado agregado → `reporting.weekly_warehouse_client_performance` | Upsert idempotente por la clave única `(warehouse, client_id, week_start)`, más registro de corrida en `reporting.pipeline_runs`. |
+
+### 2.4 Manejo de fuentes que actualizan registros (estrategia anti-duplicados)
+
+`telemetry_events` es **append-only**: aquí el problema de "actualizar en el lugar" no se da porque los eventos nunca se modifican ni se borran. Después de correr el pipeline dos veces sobre la misma semana, **no debe duplicarse ninguna fila** en `reporting`. Estrategia concreta:
+
+1. **Clave de idempotencia natural:** el grano de la tabla destino es único por `(warehouse, client_id, week_start)`. Si la misma semana se recalcula, el resultado agrega la misma información y debe **sobrescribir**, no insertar una segunda fila.
+
+2. **Upsert (INSERT ... ON CONFLICT) apoyado en el constraint `unique (warehouse, client_id, week_start)`**:
+
+   ```sql
+   insert into reporting.weekly_warehouse_client_performance (
+     warehouse, client_id, week_start,
+     inbound_units_count, outbound_orders_count,
+     stockout_events_count, discrepancy_events_count,
+     discrepancy_rate
+   )
+   select ...  -- agregación del pipeline
+   on conflict (warehouse, client_id, week_start)
+   do update set
+     inbound_units_count = excluded.inbound_units_count,
+     outbound_orders_count = excluded.outbound_orders_count,
+     stockout_events_count = excluded.stockout_events_count,
+     discrepancy_events_count = excluded.discrepancy_events_count,
+     discrepancy_rate = excluded.discrepancy_rate;
+   ```
+
+3. **Por qué no se duplica ni siquiera ante re-corridas parciales:** aunque el pipeline se ejecute dos veces y entre una ventana de datos que ya fue agregada, `ON CONFLICT` convierte el intento de duplicado en una **actualización in situ** de la única fila del grano. El resultado final siempre refleja la última corrida completa.
+
+4. **Si en el futuro una fuente de dominio insertara actualizaciones de un evento (p.ej. `outbound_order_created` re-emitido):** el data contract inmutable del plan de telemetría (§8.1 "eventos inmutables") descarta esa posibilidad para este pipeline. Aun así, la defensa de negocio es la misma: el `eventId` del envelope es el dato fuente; la agregación es por grano semanal, por lo que una re-emisión legítima (corrección) quedaría absorbida como parte de la misma semana y sobrescrita por el upsert.
+
+### 2.5 Tablas de destino nuevas (esquema `reporting`)
+
+**Tabla única del entregable** — nombre exacto de la sección *Destination table* del `Brifing-pipeline.md` §5:
+
+```sql
+create table reporting.weekly_warehouse_client_performance (
+  id uuid primary key default gen_random_uuid(),
+  warehouse text not null,
+  client_id text not null,
+  week_start date not null,
+  inbound_units_count integer not null default 0,
+  outbound_orders_count integer not null default 0,
+  stockout_events_count integer not null default 0,
+  discrepancy_events_count integer not null default 0,
+  discrepancy_rate numeric not null default 0,
+  computed_at timestamptz not null default now(),
+  unique (warehouse, client_id, week_start)
+);
+```
+
+**Tabla de apoyo para historial/estado de corridas** (reutiliza el patrón que el propio Briefing sugiere en §6):
+
+```sql
+create table reporting.pipeline_runs (
+  id uuid primary key default gen_random_uuid(),
+  pipeline text not null default 'weekly_warehouse_client_performance',
+  status text not null default 'running',   -- running | success | failed
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  processed_events integer not null default 0,
+  rows_upserted integer not null default 0,
+  error_message text
+);
+```
+
+> Ambos esquemas están **completamente separados** de `telemetry_events`: el pipeline jamás escribe ahí, y la tabla reporting es la única fuente de verdad del entregable semanal.
+
+### 2.6 Endpoints nuevos en `services/reporting/`
+
+Módulo **nuevo** `services/reporting/` — separado de `services/telemetry/` y de `GET /telemetry/report`:
+
+| Método | Ruta | Propósito | Relación con `telemetry_events` |
+|--------|------|-----------|-------------------------------|
+| `GET` | `/reporting/weekly-warehouse-client-performance` | **Consulta de KPIs:** acepta `week_start` opcional (por defecto la semana calculada más reciente); devuelve todas las combinaciones almacén/cliente de esa semana | Lee **solo** la tabla `reporting.*` materializada — nunca lee `telemetry_events` |
+| `GET` | `/reporting/pipeline-runs/latest` | **Estado:** metadata de la última corrida del pipeline (status, fechas, eventos procesados, filas upserted) | Lee `reporting.pipeline_runs` |
+| `POST` | `/reporting/pipeline-runs` | **Disparo manual:** ejecuta la extracción → transformación → carga y registra la corrida | Ejecuta el pipeline que **lee** `telemetry_events` en solo lectura y **escribe** en `reporting.*` |
+
+**Separación explícita:**
+- `services/telemetry/analysis.py` y `GET /telemetry/report` **no se modifican** (restricción del Brifing-pipeline.md §7).
+- `services/reporting/` tiene su propio pipeline (p. ej. `pipeline.py`), su propio router y su propia lógica de carga; el único punto de contacto con telemetría es la **lectura** de `telemetry_events` en la etapa de extracción.
+- Se reutiliza el patrón de cache del reporte técnico (TTL) solo para la **consulta** de KPIs, no para la corrida del pipeline: la corrida siempre recalcula; la consulta sirve valores ya materializados.
