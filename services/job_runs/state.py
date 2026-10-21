@@ -19,7 +19,7 @@ Transiciones:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlmodel import Session, select, text
@@ -30,13 +30,13 @@ from services.job_runs.models import JobRun, JobRunStatus
 logger = logging.getLogger(__name__)
 
 
-def create_run(session: Session, job_name: str, target_date: str) -> JobRun:
+def create_run(session: Session, job_name: str, target_date: date) -> JobRun:
     """Crea un registro en estado ``pending``.
 
     Args:
         session: Sesión SQLModel activa.
         job_name: Nombre del job.
-        target_date: Fecha objetivo en formato YYYY-MM-DD (UTC).
+        target_date: Fecha objetivo (UTC).
 
     Returns:
         La instancia ``JobRun`` creada (ya persistida).
@@ -216,7 +216,7 @@ def get_run(session: Session, run_id: str) -> dict[str, Any] | None:
     }
 
 
-def is_locked(session: Session, job_name: str, target_date: str) -> bool:
+def is_locked(session: Session, job_name: str, target_date: date) -> bool:
     """Verifica si el lock está tomado para (job_name, target_date).
 
     Args:
@@ -238,7 +238,7 @@ def is_locked(session: Session, job_name: str, target_date: str) -> bool:
     return existing is not None
 
 
-def is_completed(session: Session, job_name: str, target_date: str) -> bool:
+def is_completed(session: Session, job_name: str, target_date: date) -> bool:
     """Verifica si ya se completó el job para la fecha dada (idempotencia).
 
     Args:

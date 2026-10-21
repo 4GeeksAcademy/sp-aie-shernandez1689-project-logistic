@@ -7,7 +7,7 @@ segundo plano (DEV-53).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -68,7 +68,7 @@ class JobRun(SQLModel, table=True):
             comment="Nombre del job (ej. nightly_export). Identifica el proceso orquestado.",
         ),
     )
-    target_date: str = SQLField(
+    target_date: date = SQLField(
         sa_column=Column(
             Date,
             nullable=False,
