@@ -4,9 +4,12 @@ PIPELINE_DESIGN.md Fase 4 §4.2 (flow principal) y §4.5 (backfill):
 
 Flow principal ``weekly_warehouse_client_performance``:
 1. Resuelve la ventana temporal (por defecto: última semana ISO completa).
-2. log_run_start → extract → transform → load → log_run_finish.
-3. Paso opcional: export_eval_snapshot con return_state=True
+2. log_run_start → extract_subflow → transform_subflow → load_subflow → log_run_finish.
+3. Paso opcional: export_eval_snapshot_subflow con return_state=True
    (un fallo aquí NO interrumpe E → T → L).
+
+Cada subflow tiene inputs y outputs explícitos (Pydantic) — no depende de
+variables globales entre subflows.
 
 Flow de backfill ``backfill_weekly_warehouse_client_performance``:
 - Itera sobre un rango de semanas ISO llamando al flow principal por semana.
@@ -23,21 +26,19 @@ from prefect import flow
 from data.pipelines.weekly_warehouse_client_performance.config import (
     PIPELINE_NAME,
 )
-from data.pipelines.weekly_warehouse_client_performance.eval_snapshot import (
-    export_eval_snapshot,
-)
-from data.pipelines.weekly_warehouse_client_performance.extract import (
-    extract_telemetry_events,
-)
-from data.pipelines.weekly_warehouse_client_performance.load import (
-    load_weekly_performance,
-)
 from data.pipelines.weekly_warehouse_client_performance.runs_log import (
     log_run_finish,
     log_run_start,
 )
-from data.pipelines.weekly_warehouse_client_performance.transform import (
-    transform_to_weekly_kpis,
+from data.pipelines.weekly_warehouse_client_performance.subflows import (
+    ExtractInput,
+    export_eval_snapshot_subflow,
+    ExportInput,
+    extract_subflow,
+    load_subflow,
+    LoadInput,
+    transform_subflow,
+    TransformInput,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,6 +98,10 @@ def resolve_window(week_start: date | None = None) -> tuple[datetime, datetime, 
 def weekly_flow(week_start: date | None = None) -> dict[str, Any]:
     """Ejecuta el pipeline semanal: E → T → L + snapshot opcional.
 
+    Cada etapa crítica (E, T, L) se ejecuta como un subflow con inputs y
+    outputs explícitos. La exportación de snapshot es opcional y se invoca
+    con ``return_state=True`` para aislar su fallo del flujo principal.
+
     Parameters
     ----------
     week_start : date | None
@@ -122,27 +127,24 @@ def weekly_flow(week_start: date | None = None) -> dict[str, Any]:
     )
 
     try:
-        # 3. E → T → L  (etapas obligatorias con @task)
-        raw: list[dict] = extract_telemetry_events(start, end)
-        rows: list[dict] = transform_to_weekly_kpis(raw)
-        upserted: int = load_weekly_performance(rows)
+        # 3. E → T → L  (etapas como subflows con inputs/outputs explícitos)
+        extract_result = extract_subflow(ExtractInput(start=start, end=end))
+        raw = extract_result.raw_events
 
-        # 4. Paso opcional con return_state=True — DEMOSTRACIÓN DE RESILIENCIA
-        #    -----------------------------------------------------------------
-        #    export_eval_snapshot se invoca con return_state=True para que
-        #    cualquier fallo (disco lleno, permiso denegado, etc.) sea capturado
-        #    como un estado Failed en lugar de propagar una excepción.
-        #    Esto asegura que un error en este paso NO CRÍTICO nunca interrumpa
-        #    el flujo principal E → T → L ni bloquee el registro de cierre.
-        #
-        #    Uso en producción: si el paso falla, se notifica vía alerta/métrica
-        #    pero el pipeline continúa. La siguiente ejecución reintentará
-        #    el snapshot (retries=1) o lo regenerará desde los KPIs persistidos.
-        snapshot_state = export_eval_snapshot(
-            rows=rows,
-            run_id=run_id,
-            iso_week=iso_week,
-            week_start=str(start.date()),
+        transform_result = transform_subflow(TransformInput(raw_events=raw))
+        rows = transform_result.kpi_rows
+
+        load_result = load_subflow(LoadInput(kpi_rows=rows))
+        upserted = load_result.upserted_count
+
+        # 4. Paso opcional con return_state=True
+        snapshot_state = export_eval_snapshot_subflow(
+            ExportInput(
+                kpi_rows=rows,
+                run_id=run_id,
+                iso_week=iso_week,
+                week_start=str(start.date()),
+            ),
             return_state=True,
         )
         if snapshot_state.is_completed():
@@ -152,23 +154,24 @@ def weekly_flow(week_start: date | None = None) -> dict[str, Any]:
             snapshot_status = str(snapshot_state.type)
             logger.warning(
                 "Optional snapshot step did NOT complete (state=%s). "
-                "Main E→T→L pipeline unaffected.",
+                "Main E->T->L pipeline unaffected.",
                 snapshot_state.type,
             )
+
         # 5. Cierre exitoso
         log_run_finish(
             run_id,
             success=True,
-            processed_events=len(raw),
+            processed_events=extract_result.event_count,
             rows_upserted=upserted,
         )
 
         logger.info(
-            "Weekly flow %s completed: %d events → %d KPI rows (upserted=%d). "
+            "Weekly flow %s completed: %d events -> %d KPI rows (upserted=%d). "
             "Snapshot: %s.",
             iso_week,
-            len(raw),
-            len(rows),
+            extract_result.event_count,
+            transform_result.row_count,
             upserted,
             snapshot_status,
         )
@@ -177,7 +180,7 @@ def weekly_flow(week_start: date | None = None) -> dict[str, Any]:
             "run_id": run_id,
             "iso_week": iso_week,
             "week_start": str(start.date()),
-            "processed_events": len(raw),
+            "processed_events": extract_result.event_count,
             "rows_upserted": upserted,
             "status": "success",
             "snapshot_status": snapshot_status,
@@ -231,7 +234,7 @@ def backfill_flow(first_week: date, last_week: date) -> list[dict[str, Any]]:
     last = _iso_monday_from_date(last_week)
 
     if last < current:
-        logger.warning("backfill: last_week (%s) < first_week (%s) — empty.", last, current)
+        logger.warning("backfill: last_week (%s) < first_week (%s) - empty.", last, current)
         return results
 
     while current <= last:
