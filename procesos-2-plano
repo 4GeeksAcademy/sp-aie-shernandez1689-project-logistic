@@ -1,0 +1,88 @@
+# Procesos en Segundo Plano
+
+<!-- hide -->
+
+Por [@marcogonzalo](https://github.com/marcogonzalo) y [otros colaboradores](https://github.com/4GeeksAcademy/ai-engineering-company-project-monorepo/graphs/contributors) en [4Geeks Academy](https://4geeksacademy.com/)
+
+[![build by developers](https://img.shields.io/badge/build_by-Developers-blue)](https://4geeks.com)
+[![4Geeks Academy](https://img.shields.io/twitter/follow/4geeksacademy?style=social&logo=x)](https://x.com/4geeksacademy)
+
+_These instructions are [available in English](./README.md)._
+
+<!-- endhide -->
+
+---
+
+## 🎯 Tu reto
+
+> 📌 Estás construyendo sobre **tu copia** del **[monorepo](https://github.com/4GeeksAcademy/ai-engineering-company-project-monorepo)** de la empresa seleccionada al inicio del curso — no en un repositorio nuevo.
+
+Tu empresa tiene un pipeline de datos y una API con telemetría instrumentada. El problema es que alguien tiene que ejecutar el pipeline cada noche. Tu tech lead ha registrado el siguiente ticket:
+
+> **Ticket #DEV-53 — Script nocturno de telemetría**
+>
+> Necesitamos un script que se ejecute cada noche de forma automática, sin intervención manual. El script debe exportar los datos de telemetría del día anterior a CSV (si aún no se ha hecho), lanzar el pipeline de datos, y dejar constancia en base de datos de qué pasó y cuándo.
+>
+> **Criterios de aceptación:**
+>
+> - El script es un proceso completamente independiente de la API — no puede bloquear ningún endpoint ni ejecutarse en el mismo hilo de FastAPI.
+> - Si el script ya está corriendo cuando el siguiente ciclo lo dispara, la segunda instancia debe abortar silenciosamente. No dos ejecuciones en paralelo.
+> - Si el script falla, el estado de ese registro en base de datos debe quedar en `failed`, no en `processing`. Ningún registro puede quedarse zombi.
+> - El script debe ser idempotente: si se ejecuta dos veces sobre el mismo día, el resultado debe ser el mismo que si se hubiera ejecutado una sola vez.
+> - Cada ejecución queda registrada con timestamp, estado (`pending` → `processing` → `completed` | `failed`) y, en caso de error, el mensaje de la excepción.
+>   > Pon el script en `scripts/` y la lógica de estado en `services/`. El disparador queda en crontab o en el scheduler del framework — la decisión es tuya, justifícala en el PR.
+
+### 📚 Conocimiento complementario — Ciclo de vida de una tarea en segundo plano
+
+Antes de escribir una línea de código, hay un concepto arquitectónico que debes interiorizar: **en procesamiento en segundo plano, un dato no existe solo como "dato" — existe como un estado.**
+
+La máquina de estados canónica para este tipo de tarea es:
+
+```
+pending → processing → completed
+                    ↘ failed
+```
+
+Cada transición importa:
+
+- **`pending`** — la tarea está esperando ser ejecutada. Se crea el registro antes de empezar.
+- **`processing`** — se actualiza al inicio de la ejecución, antes de hacer ningún trabajo. Esto es lo que impide que otro proceso tome la misma tarea.
+- **`completed`** — se actualiza solo si todo terminó bien.
+- **`failed`** — se actualiza si se captura cualquier excepción. Nunca debe quedarse en `processing`.
+
+El **distributed lock es el estado `processing` mismo** — no una tabla, columna o flag aparte. Al iniciar, el script pasa un registro de `job_runs` a `processing`. Si otra instancia encuentra una fila `processing` para `nightly_export`, aborta silenciosamente. Al terminar —bien o mal— el registro pasa a `completed` o `failed`, lo que libera el lock. No implementes un segundo mecanismo de bloqueo.
+
+Un script que implementa esta máquina de estados puede fallar, reiniciarse o ejecutarse fuera de horario y siempre dejará el sistema en un estado conocido y recuperable.
+
+### 📚 Conocimiento complementario — Cómo encaja en el monorepo
+
+**`job_runs` ≠ `pipeline_runs`** — no son duplicados:
+
+| Tabla           | Capa                                  | Qué registra                                                                    |
+| --------------- | ------------------------------------- | ------------------------------------------------------------------------------- |
+| `job_runs`      | Orquestación nocturna (este proyecto) | Export CSV, trigger del subprocess del pipeline, lock e idempotencia del script |
+| `pipeline_runs` | ETL interno (Hito 6)                  | Fases extract/transform/load, watermark, filas procesadas                       |
+
+El script nocturno escribe en `job_runs`. El subprocess del pipeline escribe en `pipeline_runs` durante su propia ejecución.
+
+**El CSV es backup, no input del pipeline.** El script exporta `telemetry_events` desde la base de datos a `data/raw/telemetry_YYYY-MM-DD.csv` para auditoría y recuperación. El pipeline que construiste en el Hito 6 lee desde `telemetry_events` en BD (vía SQL/watermark) — **no** lee el archivo CSV. No conectes el pipeline para consumir el archivo de exportación.
+
+**Convenciones de fecha y subprocess:**
+
+- **"Ayer"** = día calendario anterior en **UTC** (`datetime.now(timezone.utc).date() - timedelta(days=1)`).
+- **`TARGET_DATE=YYYY-MM-DD`** sobrescribe la fecha objetivo para pruebas sin cambiar código.
+- **Subprocess del pipeline** (referencia — ajusta al entry point de tu Hito 6 si difiere):
+
+```bash
+python -m data.pipelines.telemetry_kpi_daily.run --no-prefect
+```
+
+> 🔀 **PR aprobado → haz merge a `main`.** Si no, la funcionalidad no se despliega y tu siguiente rama parte de código desactualizado, lo que acaba en conflictos de merge.
+
+---
+
+## 🌱 Cómo Empezar el Proyecto
+
+1. Revisa tu monorepo: identifica las tablas de telemetría existentes y las convenciones de nomenclatura que ya has usado para rutas y campos.
+2. Crea la tabla de control de ejecuciones en base de datos (puedes añadirla al schema existente o crear una migración nueva).
+3. Implementa el script en `scripts/nightly_export.py` y el servicio de control de estado en `services/`.
