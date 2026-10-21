@@ -298,3 +298,59 @@ Módulo **nuevo** `services/reporting/` — separado de `services/telemetry/` y 
 - `services/telemetry/analysis.py` y `GET /telemetry/report` **no se modifican** (restricción del Brifing-pipeline.md §7).
 - `services/reporting/` tiene su propio pipeline (p. ej. `pipeline.py`), su propio router y su propia lógica de carga; el único punto de contacto con telemetría es la **lectura** de `telemetry_events` en la etapa de extracción.
 - Se reutiliza el patrón de cache del reporte técnico (TTL) solo para la **consulta** de KPIs, no para la corrida del pipeline: la corrida siempre recalcula; la consulta sirve valores ya materializados.
+
+---
+
+## Fase 3 — Resiliencia e idempotencia
+
+### 3.1 Estrategia de idempotencia ante fallo en la fase de carga
+
+**Escenario:** el pipeline falla a mitad de la carga (p. ej. la conexión a Supabase se corta después de haber hecho el upsert de algunas semanas, o el proceso muere entre commits). Si se vuelve a correr, **los datos ya cargados no se corrompen ni se duplican** por construcción. Garantías concretas:
+
+1. **Grano semanal único — la clave es el escudo anti-duplicación.**
+   La tabla destino tiene un único grano por `(warehouse, client_id, week_start)` protegido por el constraint `unique`. Una re-corrida **nunca puede crear una segunda fila**: el `INSERT ... ON CONFLICT (warehouse, client_id, week_start) DO UPDATE` convierte cualquier intento de insertar sobre un grano ya existente en una **actualización in situ** de esa única fila. El duplicado es estructuralmente imposible.
+
+2. **La re-corrida es una re-agregación completa, no un "continuar desde donde iba".**
+   El pipeline no lleva estado incremental entre corridas. Cada ejecución:
+   - relee **toda** la ventana de semanas objetivo desde `telemetry_events` (solo lectura),
+   - la re-agrega desde cero (Extracción → Transformación),
+   - y **sobrescribe** el resultado de cada grano con `DO UPDATE`.
+   
+   Esto significa que si la corrida 1 cargó semanas A y B y falló antes de C, la corrida 2 simplemente recalcula A, B y C y deja **todos** en el estado de la última corrida completa. No puede quedar la mezcla "corrida 1 para A/B y corrida 2 para C": cada fila reflecta íntegramente la corrida más reciente que la tocó.
+
+3. **Actualizaciones atómicas por fila — sin corrupción parcial.**
+   `ON CONFLICT DO UPDATE` actualiza las 5 columnas calculadas (`inbound_units_count`, `outbound_orders_count`, `stockout_events_count`, `discrepancy_events_count`, `discrepancy_rate`) en una transacción por statement. Una fila nunca queda "a medias" (p. ej. con volumen nuevo pero tasa de discrepancia vieja): el update es atómico.
+
+4. **`computed_at` permite detectar y auditar re-cálculos, no confundirlos con duplicados.**
+   Cada fila sobrescrita actualiza su `computed_at` a la hora de la última corrida. Si hay dudas sobre qué corrida produjo un número, el log de ejecución (3.2) lo resuelve; los datos de negocio (los 5 KPIs) son siempre los de la última escritura.
+
+5. **Carga en dos fases opcional para corridas de gran volumen (recomendado).**
+   Si en producción el volumen de una semana supera un umbral de filas destino, se puede envolver toda la escritura en **una sola transacción** (`BEGIN ... COMMIT`): si algo falla a mitad, `ROLLBACK` deja `reporting.*` exactamente como estaba antes de la corrida — ni una fila tocada. Esto añade una garantía aún más fuerte (todo-o-nada), aunque con `ON CONFLICT` la idempotencia ya está asegurada incluso sin transacción.
+
+6. **`telemetry_events` jamás se escribe.** La fuente permanece intacta en cualquier escenario de fallo. El peor caso de una re-corrida es un recálculo redundante — barato y seguro.
+
+**Resumen de la garantía:** *duplicado imposible por constraint, corrupción imposible por atomicidad por fila, y estado final siempre coherente con la última corrida que tocó cada grano — aunque el fallo ocurra en mitad de la carga.*
+
+### 3.2 Log de ejecución del pipeline
+
+**Campos mínimos por corrida** (coinciden con la tabla `reporting.pipeline_runs` de la §2.5):
+
+| Campo | Tipo | Ejemplo | Por qué es necesario para auditar en producción |
+|-------|------|---------|------------------------------------------------|
+| `id` | `uuid` PK | `a1b2...` | Identifica de forma unívoca cada corrida; es la clave foránea de referencia para cualquier investigación ("¿qué pasó en la corrida X?"). Sin él no hay trazabilidad puntual. |
+| `pipeline` | `text` | `weekly_warehouse_client_performance` | Distingue la corrida de potenciales pipelines futuros en la misma tabla. En este hito es una constante, pero su presencia evita ambigüedades cuando el sistema crezca. |
+| `started_at` | `timestamptz` | `2026-10-21T06:00:00Z` | **Hora de inicio.** Permite saber si el pipeline corrió en la ventana esperada (p. ej. la madrugada del lunes) o si llegó tarde — crítico porque Thomas espera el reporte fresco la mañana del lunes. Sin él no puedes medir el SLA de la corrida. |
+| `finished_at` | `timestamptz` | `2026-10-21T06:04:12Z` | **Hora de fin.** Con `started_at` da la **duración** de la corrida. Una duración anómala (mucho mayor que el histórico) es señal temprana de degradación o de que algo cambió en la fuente. Nulo si la corrida no terminó. |
+| `status` | `text` | `success` / `failed` | **Estado de la corrida.** Es el campo que consume el endpoint `GET /reporting/pipeline-runs/latest`: el equipo o un sistema de alertas debe saber al instante si el reporte del lunes está en falso o realmente calculado. Sin él, `reporting.*` podría estar desactualizado sin aviso. |
+| `processed_events` | `integer` | `4,820` | **Registros de origen leídos** en la extracción (eventos de `telemetry_events` en ventana). Permite detectar caídas de volumen ("¿por qué esta semana solo 500 eventos si el promedio es 4,000?") que podrían indicar instrumentación rota o datos faltantes — condiciona la confianza en los KPIs. |
+| `rows_upserted` | `integer` | `18` | **Filas destino escritas/actualizadas.** Número de granos `warehouse × client_id` servidos en esta corrida. Un valor 0 o muy bajo frente al histórico es señal de que la semana no se pobló (¿no hubo eventos?, ¿filtro erróneo?). Es el contador de la parte de carga. |
+| `error_message` | `text` (nulo si OK) | `ConnectionError: connection to Supabase timed out` | **Detalle del error** cuando `status = failed`. Es lo que permite a un desarrollador diagnosticar sin adivinar: mensaje, trace tipificado y contexto de la causa raíz. Sin él, un `failed` es un callejón sin salida. |
+
+**Registro en dos momentos (por eso `error_message` y `finished_at` pueden ser nulos):**
+1. **Al arrancar:** se inserta la fila con `status = 'running'`, `started_at = now()`, `processed_events = 0`.
+2. **Al terminar (éxito o fallo):** `UPDATE` la misma fila con `status = 'success' | 'failed'`, `finished_at = now()`, los contadores reales y, si aplica, `error_message`. De esta forma una corrida que muere con el proceso (sin llegar a actualizar) queda visible como `running` colgado, lo que es en sí mismo una condición auditable.
+
+**Valor de auditoría en producción:**
+- **Reproducibilidad:** con `pipeline_runs` + la ventana de fechas que se registra en la consulta se puede reconstruir qué datos deberían haber entrado en cualquier semana pasada.
+- **Detección proactiva de silencio de datos:** una corrida `success` con `processed_events` muy por debajo del histórico es una alerta de datos incompletos aunque el pipeline "no haya fallado" — el KPI estaría calculándose sobre datos pobres.
+- **Contraste con `computed_at`:** como cada fila de `reporting.weekly_*` guarda su `computed_at`, se puede cruzar contra `pipeline_runs` para verificar que cada semana fue producida por una corrida `success` — trazabilidad fina de origen de cada número que verá Thomas.
