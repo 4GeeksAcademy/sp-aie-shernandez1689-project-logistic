@@ -22,3 +22,5 @@
 {"id": "a35e7045-1081-4ed8-bb3d-18c27f27254c", "status": "success", "finished_at": "2026-10-21T15:26:23.954752+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
 {"id": "3c926b0a-4a2e-4f16-9c9f-b515834421a6", "pipeline": "weekly_warehouse_client_performance", "status": "running", "started_at": "2026-10-21T15:26:24.082798+00:00", "start_window": "2026-10-12T00:00:00+00:00", "end_window": "2026-10-19T00:00:00+00:00"}
 {"id": "3c926b0a-4a2e-4f16-9c9f-b515834421a6", "status": "success", "finished_at": "2026-10-21T15:26:24.390561+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
+{"id": "219cc019-44a1-421c-baca-8c55d71342bb", "pipeline": "weekly_warehouse_client_performance", "status": "running", "started_at": "2026-10-21T15:39:37.365722+00:00", "start_window": "2026-10-12T00:00:00+00:00", "end_window": "2026-10-19T00:00:00+00:00"}
+{"id": "219cc019-44a1-421c-baca-8c55d71342bb", "status": "success", "finished_at": "2026-10-21T15:39:37.645187+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
