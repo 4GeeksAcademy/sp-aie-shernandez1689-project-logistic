@@ -18,3 +18,7 @@
 {"id": "2229bf44-5e84-444c-9909-15f136f7daa8", "status": "success", "finished_at": "2026-10-21T15:20:03.340908+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
 {"id": "3dbbb3a8-3886-4bd4-ae12-de0e38da2309", "pipeline": "weekly_warehouse_client_performance", "status": "running", "started_at": "2026-10-21T15:20:03.444347+00:00", "start_window": "2026-10-12T00:00:00+00:00", "end_window": "2026-10-19T00:00:00+00:00"}
 {"id": "3dbbb3a8-3886-4bd4-ae12-de0e38da2309", "status": "success", "finished_at": "2026-10-21T15:20:03.683999+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
+{"id": "a35e7045-1081-4ed8-bb3d-18c27f27254c", "pipeline": "weekly_warehouse_client_performance", "status": "running", "started_at": "2026-10-21T15:26:23.615659+00:00", "start_window": "2026-10-12T00:00:00+00:00", "end_window": "2026-10-19T00:00:00+00:00"}
+{"id": "a35e7045-1081-4ed8-bb3d-18c27f27254c", "status": "success", "finished_at": "2026-10-21T15:26:23.954752+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}
+{"id": "3c926b0a-4a2e-4f16-9c9f-b515834421a6", "pipeline": "weekly_warehouse_client_performance", "status": "running", "started_at": "2026-10-21T15:26:24.082798+00:00", "start_window": "2026-10-12T00:00:00+00:00", "end_window": "2026-10-19T00:00:00+00:00"}
+{"id": "3c926b0a-4a2e-4f16-9c9f-b515834421a6", "status": "success", "finished_at": "2026-10-21T15:26:24.390561+00:00", "processed_events": 277, "rows_upserted": 10, "error_message": null}

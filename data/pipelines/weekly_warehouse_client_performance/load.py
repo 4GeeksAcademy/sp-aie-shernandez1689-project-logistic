@@ -35,7 +35,10 @@ ON CONFLICT (warehouse, client_id, week_start) DO UPDATE SET
     outbound_orders_count = EXCLUDED.outbound_orders_count,
     stockout_events_count = EXCLUDED.stockout_events_count,
     discrepancy_events_count = EXCLUDED.discrepancy_events_count,
-    discrepancy_rate = EXCLUDED.discrepancy_rate;
+    discrepancy_rate = EXCLUDED.discrepancy_rate,
+    -- Refrescar computed_at para que la re-ejecución (idempotente)
+    -- deje trazabilidad de cuándo se calculó realmente cada fila.
+    computed_at = NOW();
 """
 def _write_local_kpis(rows: list[dict[str, Any]]) -> int:
     """Modo local: escribe KPIs a JSONL en ``data/eval/``. Devuelve filas escritas."""
