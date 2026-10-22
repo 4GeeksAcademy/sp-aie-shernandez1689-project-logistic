@@ -22,12 +22,23 @@ import logging
 import os
 from collections.abc import Generator
 from pathlib import Path
-from typing import Annotated
 
 from dotenv import load_dotenv
-from fastapi import Depends
 from sqlalchemy.engine import make_url
 from sqlmodel import Session, SQLModel, create_engine
+
+# FastAPI es opcional — el scheduler (script independiente) no necesita
+# las dependencias web, solo el engine y Session.
+try:
+    from typing import Annotated  # type: ignore[attr-defined]
+
+    from fastapi import Depends  # type: ignore[import-untyped]
+
+    _HAS_FASTAPI = True
+except ImportError:
+    Annotated = None  # type: ignore[assignment]
+    Depends = None  # type: ignore[assignment]
+    _HAS_FASTAPI = False
 
 # Cargar .env desde services/api/ (compartido con el resto de servicios)
 API_DIR = Path(__file__).resolve().parents[1] / "api"
@@ -92,4 +103,8 @@ def get_db() -> Generator[Session, None, None]:
             raise
 
 
-JobRunnerDBSession = Annotated[Session, Depends(get_db)]
+# Solo disponible con FastAPI instalado (contexto web).
+# El scheduler (script standalone) no la necesita.
+JobRunnerDBSession = None
+if _HAS_FASTAPI:
+    JobRunnerDBSession = Annotated[Session, Depends(get_db)]  # type: ignore[assignment]

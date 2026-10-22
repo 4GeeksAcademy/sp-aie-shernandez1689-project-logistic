@@ -44,6 +44,20 @@ services:
     networks:
       - development
 
+  # ── Scheduler nocturno (worker independiente) ────────────────────
+  # NO comparte el hilo principal de la API. Corre el pipeline
+  # semanal via cron del SO. Ver infra/crontab para la expresión.
+  scheduler:
+    build:
+      context: .
+      dockerfile: infra/scheduler.Dockerfile
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      TARGET_DATE: ${TARGET_DATE:-}
+    restart: unless-stopped
+    networks:
+      - development
+
 networks:
   development:
     name: ${DOCKER_NETWORK_NAME:?Define DOCKER_NETWORK_NAME in .env}

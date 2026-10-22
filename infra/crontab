@@ -1,0 +1,51 @@
+# ─────────────────────────────────────────────────────────────
+# Crontab — Talent Pipeline Tracker: scheduler nocturno
+# ─────────────────────────────────────────────────────────────
+#
+# Propósito
+# ---------
+# Ejecuta el pipeline semanal de desempeño por almacén y cliente
+# (weekly_warehouse_client_performance) de forma automática.
+#
+# Expresión cron: 0 2 * * 1
+#   ┌─ minuto   (0)
+#   │ ┌─ hora     (2 → 02:00 UTC)
+#   │ │ ┌─ día del mes (*)
+#   │ │ │ ┌─ mes      (*)
+#   │ │ │ │ ┌─ día de la semana (1 → lunes)
+#   │ │ │ │ │
+#   0 2 * * 1
+#
+# Justificación
+# -------------
+# - Lunes 02:00 UTC: procesa la semana ISO anterior (completa).
+# - 02:00 UTC: ventana de baja actividad en Supabase.
+# - Lunes: la semana ISO anterior ya finalizó el domingo.
+# - Sin TARGET_DATE: el scheduler resuelve la última semana completa.
+#
+# Instalación (Linux / contenedor)
+# --------------------------------
+#   crontab infra/crontab
+#
+# O desde Docker (ver infra/scheduler.Dockerfile + docker-compose.yml):
+#   services:
+#     scheduler:
+#       build:
+#         context: .
+#         dockerfile: infra/scheduler.Dockerfile
+#       environment:
+#         DATABASE_URL: ${DATABASE_URL}
+#       restart: unless-stopped
+#
+# Variables de entorno requeridas
+# -------------------------------
+# DATABASE_URL  — conexión PostgreSQL (Supabase)
+#
+# Variables opcionales
+# --------------------
+# TARGET_DATE   — YYYY-MM-DD o YYYY-WNN (para pruebas, sobreescribe fecha)
+# ─────────────────────────────────────────────────────────────
+
+# Scheduler del pipeline semanal
+# Expresión: cada lunes a las 02:00 UTC
+0 2 * * 1 cd /workspaces/sp-aie-shernandez1689-project-logistic && python services/job_runner/scheduler.py >> /var/log/scheduler.log 2>&1
