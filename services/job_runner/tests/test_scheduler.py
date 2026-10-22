@@ -171,10 +171,9 @@ class TestRunSchedulerGuardianes:
             run_scheduler(target_date_str="2026-07-13")
 
             mock_logger.info.assert_any_call(
-                "Date %s already successfully completed for pipeline '%s'. "
-                "Nothing to do.",
-                "2026-07-13",
+                "SCHEDULER SKIP | pipeline=%s date=%s status=SUCCESS — already processed",
                 "weekly_warehouse_client_performance",
+                "2026-07-13",
             )
 
     def test_ejecuta_pipeline_normal(self):

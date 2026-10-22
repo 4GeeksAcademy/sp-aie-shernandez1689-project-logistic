@@ -58,6 +58,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from services.job_runner.db import get_engine, init_db  # noqa: E402
+from services.job_runner.models import JobRunStatus  # noqa: E402
 from services.job_runner.runner import (  # noqa: E402
     create_job_run,
     has_completed_for_date,
@@ -162,40 +163,37 @@ def run_scheduler(target_date_str: str | None = None) -> None:
     target_week = resolve_target_week(target_date_str)
     date_str = target_week.isoformat()
 
-    logger.info("=" * 60)
-    logger.info("Scheduler started — target week: %s", date_str)
-    logger.info("=" * 60)
+    start_seq = "=" * 40
+    logger.info("%s SCHEDULER START pipeline=%s week=%s %s", start_seq, PIPELINE_NAME, date_str, start_seq)
 
     # 2. Inicializar conexión a BD
-    logger.info("Initializing database connection...")
+    logger.info("SCHEDULER INIT | pipeline=%s", PIPELINE_NAME)
     init_db()
     engine = get_engine()
 
     with Session(engine) as session:
         # 3. Verificar candado de concurrencia
-        logger.info("Checking processing lock for '%s'...", PIPELINE_NAME)
+        logger.info("SCHEDULER GUARD | pipeline=%s check=processing_lock", PIPELINE_NAME)
         if has_processing_lock(session, PIPELINE_NAME):
             logger.error(
-                "Concurrent execution detected: pipeline '%s' already in "
-                "PROCESSING state. Aborting.",
+                "SCHEDULER ABORT | pipeline=%s reason=concurrent_lock status=PROCESSING",
                 PIPELINE_NAME,
             )
             sys.exit(1)
 
         # 4. Verificar que la fecha no esté ya completada
-        logger.info("Checking if date %s is already completed...", date_str)
+        logger.info("SCHEDULER GUARD | pipeline=%s check=date_completed date=%s", PIPELINE_NAME, date_str)
         if has_completed_for_date(session, PIPELINE_NAME, date_str):
             logger.info(
-                "Date %s already successfully completed for pipeline '%s'. "
-                "Nothing to do.",
-                date_str,
+                "SCHEDULER SKIP | pipeline=%s date=%s status=SUCCESS — already processed",
                 PIPELINE_NAME,
+                date_str,
             )
-            logger.info("Scheduler finished — date already processed.")
+            logger.info("%s SCHEDULER FINISH pipeline=%s status=skipped %s", start_seq, PIPELINE_NAME, start_seq)
             return
 
         # 5. Crear registro pending
-        logger.info("Creating job run for %s week %s...", PIPELINE_NAME, date_str)
+        logger.info("SCHEDULER CREATE | pipeline=%s date=%s status=PENDING", PIPELINE_NAME, date_str)
         run = create_job_run(
             session,
             pipeline=PIPELINE_NAME,
@@ -203,14 +201,12 @@ def run_scheduler(target_date_str: str | None = None) -> None:
             date_to=None,  # trigger_weekly_run maneja su propia ventana
         )
         run_id = run.id
-        logger.info("JobRun created: id=%s", run_id)
+        logger.info("SCHEDULER CREATED | pipeline=%s id=%s status=PENDING", PIPELINE_NAME, run_id)
 
         # 6. Ejecutar pipeline bajo el ciclo de vida de run_job
         logger.info(
-            "Launching pipeline '%s' (run_id=%s, week_start=%s)...",
-            PIPELINE_NAME,
-            run_id,
-            target_week,
+            "SCHEDULER EXEC | pipeline=%s id=%s week=%s status=TRIGGERING",
+            PIPELINE_NAME, run_id, date_str,
         )
 
         run_job(
@@ -221,10 +217,8 @@ def run_scheduler(target_date_str: str | None = None) -> None:
         )
 
         logger.info(
-            "Pipeline '%s' completed successfully (run_id=%s, week=%s).",
-            PIPELINE_NAME,
-            run_id,
-            date_str,
+            "%s SCHEDULER FINISH pipeline=%s id=%s week=%s status=%s %s",
+            start_seq, PIPELINE_NAME, run_id, date_str, JobRunStatus.SUCCESS.value, start_seq,
         )
 
 
@@ -245,8 +239,10 @@ def main() -> None:
 
     try:
         run_scheduler(target_date_str=target_date)
+    except SystemExit:
+        raise  # respetar sys.exit(1) por lock, sys.exit(2) por error
     except Exception:
-        logger.exception("Scheduler failed unexpectedly.")
+        logger.exception("SCHEDULER CRASH | pipeline=%s status=EXCEPTION — unexpected error", PIPELINE_NAME)
         sys.exit(2)
 
 

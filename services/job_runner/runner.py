@@ -79,7 +79,10 @@ def create_job_run(
     session.add(run)
     session.commit()
     session.refresh(run)
-    logger.info("JobRun created: id=%s pipeline=%s", run.id, run.pipeline)
+    logger.info(
+        "JOB_RUN CREATED | pipeline=%s id=%s date_from=%s status=%s",
+        run.pipeline, run.id, run.date_from, JobRunStatus.PENDING.value,
+    )
     return run
 
 
@@ -187,10 +190,8 @@ def update_job_run_status(
     # Validación: no sobrescribir un estado terminal
     if is_terminal(run.status):
         logger.warning(
-            "Attempt to update terminal JobRun %s from %s to %s — ignored",
-            run_id,
-            run.status,
-            new_status.value,
+            "JOB_RUN TERMINAL_IGNORED | id=%s pipeline=%s current=%s attempted=%s — no-op",
+            run_id, run.pipeline, run.status, new_status.value,
         )
         return run
 
@@ -215,7 +216,10 @@ def update_job_run_status(
     session.refresh(run)
 
     logger.info(
-        "JobRun %s status → %s (pipeline=%s)", run_id, new_status.value, run.pipeline
+        "JOB_RUN STATUS_TRANSITION | id=%s pipeline=%s status=%s processed=%d upserted=%d error=%s",
+        run_id, run.pipeline, new_status.value,
+        run.processed_events, run.rows_upserted,
+        run.error_message or "",
     )
     return run
 
@@ -245,7 +249,13 @@ def has_processing_lock(session: Session, pipeline: str) -> bool:
         JobRun.status == JobRunStatus.PROCESSING,
     )
     existing = session.exec(statement).first()
-    return existing is not None
+    locked = existing is not None
+    if locked:
+        logger.warning(
+            "JOB_RUN LOCK_DETECTED | pipeline=%s status=%s — concurrent execution blocked",
+            pipeline, JobRunStatus.PROCESSING.value,
+        )
+    return locked
 
 
 def has_completed_for_date(session: Session, pipeline: str, date_str: str) -> bool:
@@ -272,7 +282,13 @@ def has_completed_for_date(session: Session, pipeline: str, date_str: str) -> bo
         JobRun.status == JobRunStatus.SUCCESS,
     )
     existing = session.exec(statement).first()
-    return existing is not None
+    completed = existing is not None
+    if completed:
+        logger.info(
+            "JOB_RUN DATE_COMPLETED | pipeline=%s date=%s status=%s — skip",
+            pipeline, date_str, JobRunStatus.SUCCESS.value,
+        )
+    return completed
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +330,11 @@ def run_job(
             registrado y actualizado el estado a ``failed``.
     """
     # ── 1. Marcar como processing ───────────────────────────────────
+    pipeline_name = _get_pipeline_name(session, run_id)
+    logger.info(
+        "JOB_RUN START | id=%s pipeline=%s status=%s",
+        run_id, pipeline_name, JobRunStatus.PROCESSING.value,
+    )
     update_job_run_status(session, run_id, JobRunStatus.PROCESSING)
 
     try:
@@ -324,9 +345,10 @@ def run_job(
         # ── 3. Fallo → failed + log + relanzar ──────────────────────
         error_msg = f"{type(exc).__name__}: {exc}"
         logger.exception(
-            "JobRun %s failed (pipeline=%s): %s",
+            "JOB_RUN FAILED | id=%s pipeline=%s status=%s error=%s",
             run_id,
-            _get_pipeline_name(session, run_id),
+            pipeline_name,
+            JobRunStatus.FAILED.value,
             error_msg,
         )
         update_job_run_status(
@@ -340,6 +362,10 @@ def run_job(
     else:
         # ── 4. Éxito → success ──────────────────────────────────────
         update_job_run_status(session, run_id, JobRunStatus.SUCCESS)
+        logger.info(
+            "JOB_RUN COMPLETED | id=%s pipeline=%s status=%s",
+            run_id, pipeline_name, JobRunStatus.SUCCESS.value,
+        )
         return result
 
 
