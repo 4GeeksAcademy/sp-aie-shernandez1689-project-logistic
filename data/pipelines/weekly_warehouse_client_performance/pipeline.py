@@ -31,6 +31,8 @@ from data.pipelines.weekly_warehouse_client_performance.runs_log import (
     log_run_start,
 )
 from data.pipelines.weekly_warehouse_client_performance.subflows import (
+    CsvBackupInput,
+    csv_backup_subflow,
     ExtractInput,
     export_eval_snapshot_subflow,
     ExportInput,
@@ -131,6 +133,26 @@ def weekly_flow(week_start: date | None = None) -> dict[str, Any]:
         extract_result = extract_subflow(ExtractInput(start=start, end=end))
         raw = extract_result.raw_events
 
+        # 4a. Backup CSV opcional con return_state=True
+        csv_backup_state = csv_backup_subflow(
+            CsvBackupInput(
+                raw_events=raw,
+                iso_week=iso_week,
+                week_start=str(start.date()),
+            ),
+            return_state=True,
+        )
+        if csv_backup_state.is_completed():
+            csv_backup_status = "completed"
+            logger.info("Optional CSV backup step completed successfully.")
+        else:
+            csv_backup_status = str(csv_backup_state.type)
+            logger.warning(
+                "Optional CSV backup step did NOT complete (state=%s). "
+                "Main E->T->L pipeline unaffected.",
+                csv_backup_state.type,
+            )
+
         transform_result = transform_subflow(TransformInput(raw_events=raw))
         rows = transform_result.kpi_rows
 
@@ -184,6 +206,7 @@ def weekly_flow(week_start: date | None = None) -> dict[str, Any]:
             "rows_upserted": upserted,
             "status": "success",
             "snapshot_status": snapshot_status,
+            "csv_backup_status": csv_backup_status,
         }
 
     except Exception as exc:
