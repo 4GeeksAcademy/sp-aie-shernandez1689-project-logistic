@@ -8,8 +8,13 @@
 -- Máquina de estados: pending → processing → completed
 --                                     ↘ failed
 --
--- El estado `processing` actúa como distributed lock: si existe una
--- fila processing para (job_name, target_date), otra instancia aborta.
+-- El estado `processing` actúa como distributed lock (job-level, sin
+-- tabla/columna aparte): si existe una fila processing para el job
+-- (p. ej. nightly_export), otra instancia aborta silenciosamente.
+--
+-- La idempotencia se resuelve con la pareja (job_name, target_date):
+-- si existe un registro completed para esa pareja exacta, el script no
+-- vuelve a ejecutar el trabajo. Solo job_name sin target_date no basta.
 --
 -- Capa: orquestación nocturna.
 -- No confundir con reporting.pipeline_runs (ETL interno, Hito 6).
@@ -37,8 +42,9 @@ CREATE TABLE IF NOT EXISTS job_runs (
 --        AND target_date = '2026-10-20'
 --        AND status IN ('processing', 'completed');
 --
---    job_name + target_date es la clave de idempotencia:
---    si existe un registro completed, no se debe ejecutar de nuevo.
+-- (job_name, target_date) es la clave de idempotencia:
+-- si existe un registro completed para esa pareja exacta, el script no
+-- vuelve a ejecutar el trabajo. Solo job_name sin target_date no basta.
 CREATE INDEX IF NOT EXISTS idx_job_runs_name_date
     ON job_runs (job_name, target_date);
 

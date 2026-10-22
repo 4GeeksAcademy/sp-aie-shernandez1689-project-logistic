@@ -13,7 +13,15 @@ Uso:
 
 La máquina de estados (pending → processing → completed | failed) y el
 distributed lock se gestionan a través de la tabla ``job_runs``
-(ver ``services/job_runs/``).
+(ver ``services/job_runs/``), sin tabla ni columna de lock aparte:
+
+- **Lock vía ``processing``**: si ya existe un registro ``job_runs`` con
+  status='processing' para este job, el script aborta silenciosamente y
+  registra la cancelación.
+- **Idempotencia vía ``target_date``**: si ya existe un registro
+  ``completed`` para la pareja (job_name, target_date), el script no
+  vuelve a exportar el CSV ni relanza el pipeline y registra la omisión
+  por duplicado. Solo job_name sin target_date no basta.
 
 El CSV se escribe en ``data/raw/telemetry_YYYY-MM-DD.csv`` y es un snapshot
 de backup/auditoría — **no** lo consume el pipeline (lee desde BD).
@@ -42,6 +50,8 @@ from services.job_runs.state import (
     complete_run,
     create_run,
     fail_run,
+    is_completed,
+    is_locked,
     start_processing,
 )
 
@@ -239,12 +249,40 @@ def main() -> None:
     logger.info("Connecting to database...")
     engine = get_engine()
     with Session(engine) as session:
+        # ── Guard 1: LOCK vía processing (job-level) ────────────
+        # Si ya existe un registro job_runs con status='processing' para
+        # este job, aborta silenciosamente y registra la cancelación.
+        # Sin tabla ni columna de lock aparte: el estado processing ES el lock.
+        if is_locked(session, JOB_NAME):
+            logger.info(
+                "Canceled: another instance is already processing job '%s' "
+                "(status='processing' exists in job_runs). Aborting silently.",
+                JOB_NAME,
+            )
+            sys.exit(0)
+
+        # ── Guard 2: IDEMPOTENCIA vía target_date ───────────────
+        # Si ya existe un registro completed para (job_name, target_date),
+        # no volvemos a exportar el CSV ni relanzamos el pipeline.
+        # Solo job_name sin target_date no basta: la clave es la pareja exacta.
+        if is_completed(session, JOB_NAME, target_date):
+            logger.info(
+                "Skipped (duplicate): job '%s' already completed for "
+                "target_date=%s. No CSV export and no pipeline run.",
+                JOB_NAME,
+                target_date,
+            )
+            sys.exit(0)
+
         # ── Paso 1: Crear registro en pending ─────────────────────
         run = create_run(session, JOB_NAME, target_date)
         logger.info("Job run created: id=%s status=%s", run.id, run.status)
 
-        # ── Paso 2: Adquirir lock ─────────────────────────────────
-        if not start_processing(session, run.id):
+        # ── Paso 2: Adquirir lock (atómico, job-level) ───────────
+        # Re-chequeo atómico: otra instancia pudo crear/avanzar su propio
+        # registro entre el Guard 1 y este UPDATE. start_processing()
+        # solo tiene éxito si no existe otra fila 'processing' del job.
+        if not start_processing(session, run.id, JOB_NAME, target_date):
             logger.info(
                 "Lock not acquired for %s target_date=%s — "
                 "another instance is already processing. Aborting silently.",

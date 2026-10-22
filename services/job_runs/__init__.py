@@ -12,18 +12,30 @@ La máquina de estados sigue el ciclo:
                          ↘ failed
 
 El estado ``processing`` actúa como **distributed lock** — no se necesita
-una tabla/columna separada de bloqueo.
+una tabla/columna separada de bloqueo. El lock es job-level: si existe una
+fila ``processing`` para el job (p. ej. ``nightly_export``), otra instancia
+aborta silenciosamente.
+
+La **idempotencia** se resuelve con la pareja (job_name, target_date):
+si existe una fila ``completed`` para esa pareja exacta, el trabajo no se
+relanza (solo job_name sin target_date no basta).
 
 Uso típico (desde scripts/):
 
     from services.job_runs.state import create_run, start_processing, \
-        complete_run, fail_run
+        complete_run, fail_run, is_locked, is_completed
     from services.job_runs.database import get_session
 
     with next(get_session()) as session:
-        run = create_run(session, "nightly_export", "2026-10-20")
-        if not start_processing(session, run.id):
-            sys.exit(0)  # otro proceso ya lo tomó
+        # Lock vía processing: aborta silenciosamente si otra instancia corre
+        if is_locked(session, "nightly_export"):
+            sys.exit(0)
+        # Idempotencia vía target_date: omite si ya se completó
+        if is_completed(session, "nightly_export", target_date):
+            sys.exit(0)
+        run = create_run(session, "nightly_export", target_date)
+        if not start_processing(session, run.id, "nightly_export", target_date):
+            sys.exit(0)  # otro proceso ya lo tomó (re-chequeo atómico)
         try:
             # ... hacer trabajo ...
             complete_run(session, run.id)

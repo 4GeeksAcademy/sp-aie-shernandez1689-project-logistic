@@ -5,13 +5,20 @@ Implementa el ciclo de vida:
     pending → processing → completed
                          ↘ failed
 
-El estado ``processing`` actúa como **distributed lock**: si existe una
-fila con (job_name, target_date, status='processing'), otra instancia
-aborta silenciosamente.
+El estado ``processing`` actúa como **distributed lock** (job-level,
+sin tabla o columna de lock aparte): si existe una fila con
+status='processing' para el job (p. ej. ``nightly_export``), otra
+instancia aborta silenciosamente. El lock se adquiere de forma atómica
+en ``start_processing()`` mediante un UPDATE condicionado a que no
+exista otra fila ``processing`` del mismo job.
+
+La **idempotencia** se resuelve con la pareja (job_name, target_date):
+si existe una fila ``completed`` para esa pareja exacta, el script no
+vuelve a ejecutar el trabajo (solo job_name sin target_date no basta).
 
 Transiciones:
     - ``create_run()`` → crea un registro en pending
-    - ``start_processing()`` → pending → processing (lock)
+    - ``start_processing()`` → pending → processing (lock job-level atómico)
     - ``complete_run()`` → processing → completed
     - ``fail_run()`` → processing → failed
 """
@@ -19,10 +26,12 @@ Transiciones:
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import date, datetime, timezone
 from typing import Any
 
-from sqlmodel import Session, select, text
+from sqlalchemy import exists, update
+from sqlmodel import Session, select
 
 from services.job_runs.database import get_engine
 from services.job_runs.models import JobRun, JobRunStatus
@@ -39,14 +48,15 @@ def create_run(session: Session, job_name: str, target_date: date) -> JobRun:
         target_date: Fecha objetivo (UTC).
 
     Returns:
-        La instancia ``JobRun`` creada (ya persistida).
-
-    Note:
-        Si ya existe un registro ``completed`` para (job_name, target_date),
-        la función retorna el registro existente sin crear uno nuevo
-        (idempotencia — verifica antes de crear).
+        La instancia ``JobRun`` creada (ya persistida), o el registro
+        ``completed`` existente si la pareja (job_name, target_date) ya
+        fue procesada (idempotencia). El llamador puede distinguir ambos
+        casos mediante ``run.status``: ``completed`` indica que el trabajo
+        ya se ejecutó y no debe relanzarse.
     """
-    # Verificar si ya hay un registro completed (idempotencia)
+    # Idempotencia: si ya existe un registro completed para
+    # (job_name, target_date), devolver ese registro sin crear uno nuevo.
+    # job_name sin target_date NO basta — la clave es la pareja exacta.
     existing = session.exec(
         select(JobRun).where(
             JobRun.job_name == job_name,
@@ -64,7 +74,12 @@ def create_run(session: Session, job_name: str, target_date: date) -> JobRun:
         )
         return existing
 
+    # El id se asigna en cliente (uuid4) en vez de depender solo del
+    # server_default gen_random_uuid(): esto hace la lógica portable a
+    # SQLite en tests y garantiza que run.id esté poblado y estable tras
+    # commit/refresh en cualquier backend.
     run = JobRun(
+        id=str(uuid.uuid4()),
         job_name=job_name,
         target_date=target_date,
         status=JobRunStatus.PENDING.value,
@@ -76,42 +91,75 @@ def create_run(session: Session, job_name: str, target_date: date) -> JobRun:
     return run
 
 
-def start_processing(session: Session, run_id: str) -> bool:
+def start_processing(session: Session, run_id: str, job_name: str | None = None,
+                     target_date: date | None = None) -> bool:
     """Intenta adquirir el lock: pending → processing.
+
+    El lock es **job-level** (estado ``processing`` del propio registro,
+    sin tabla/columna aparte). Se adquiere de forma atómica: el UPDATE
+    solo tiene éxito si la fila está ``pending`` **y** no existe otra
+    fila ``processing`` para el mismo job. Si se pasa ``job_name`` (y
+    opcionalmente ``target_date``), la condición de no-duplicado se aplica
+    sobre ese job; de lo contrario solo sobre el propio ``run_id``.
 
     Args:
         session: Sesión SQLModel activa.
         run_id: ID del registro a procesar.
+        job_name: Nombre del job (para el lock job-level).
+        target_date: Fecha objetivo (opcional, afina el lock).
 
     Returns:
         ``True`` si se adquirió el lock (se actualizó a processing).
-        ``False`` si el lock está tomado (otra instancia ya está procesando).
+        ``False`` si el lock está tomado (otra instancia ya está
+        procesando el job) o el registro ya no está en ``pending``.
     """
     now = datetime.now(timezone.utc)
+    processing = JobRunStatus.PROCESSING.value
+    pending = JobRunStatus.PENDING.value
 
-    # UPDATE ... SET status = 'processing' WHERE id = :id AND status = 'pending'
-    # Atomic: si otra instancia ya lo tomó, la fila afectada es 0.
-    stmt = text(
-        "UPDATE job_runs "
-        "SET status = :processing, started_at = :now "
-        "WHERE id = :id AND status = :pending"
-    )
-    result = session.exec(
-        stmt,
-        params={
-            "processing": JobRunStatus.PROCESSING.value,
-            "pending": JobRunStatus.PENDING.value,
-            "now": now,
-            "id": run_id,
-        },
-    )
+    if job_name is None:
+        # Compatibilidad con llamadores que solo pasan run_id:
+        # UPDATE ... WHERE id = :id AND status = 'pending' (atómico por fila).
+        stmt = (
+            update(JobRun)
+            .where(JobRun.id == run_id, JobRun.status == pending)
+            .values(status=processing, started_at=now)
+        )
+    else:
+        # Lock job-level atómico: tomamos la fila solo si sigue pending y
+        # NO existe otra fila processing para el mismo job. Usamos el ORM
+        # update() con subconsulta NOT EXISTS para que el binding del id
+        # (UUID) sea consistente entre PostgreSQL y SQLite (tests).
+        sub = select(JobRun.id).where(
+            JobRun.job_name == job_name,
+            JobRun.status == processing,
+            JobRun.id != run_id,
+        )
+        if target_date is not None:
+            sub = sub.where(JobRun.target_date == target_date)
+
+        stmt = (
+            update(JobRun)
+            .where(
+                JobRun.id == run_id,
+                JobRun.status == pending,
+                ~exists(sub),
+            )
+            .values(status=processing, started_at=now)
+        )
+
+    result = session.exec(stmt)
     session.commit()
 
     acquired = result.rowcount > 0
     if acquired:
         logger.info("Lock acquired for job_run %s", run_id)
     else:
-        logger.warning("Lock NOT acquired for job_run %s — already taken or invalid", run_id)
+        logger.warning(
+            "Lock NOT acquired for job_run %s — another instance is already "
+            "processing this job, or the run is no longer pending",
+            run_id,
+        )
 
     return acquired
 
@@ -127,20 +175,18 @@ def complete_run(session: Session, run_id: str) -> bool:
         ``True`` si se actualizó correctamente.
     """
     now = datetime.now(timezone.utc)
-    stmt = text(
-        "UPDATE job_runs "
-        "SET status = :completed, finished_at = :now "
-        "WHERE id = :id AND status = :processing"
+    stmt = (
+        update(JobRun)
+        .where(
+            JobRun.id == run_id,
+            JobRun.status == JobRunStatus.PROCESSING.value,
+        )
+        .values(
+            status=JobRunStatus.COMPLETED.value,
+            finished_at=now,
+        )
     )
-    result = session.exec(
-        stmt,
-        params={
-            "completed": JobRunStatus.COMPLETED.value,
-            "processing": JobRunStatus.PROCESSING.value,
-            "now": now,
-            "id": run_id,
-        },
-    )
+    result = session.exec(stmt)
     session.commit()
 
     success = result.rowcount > 0
@@ -164,21 +210,19 @@ def fail_run(session: Session, run_id: str, error_message: str) -> bool:
         ``True`` si se actualizó correctamente.
     """
     now = datetime.now(timezone.utc)
-    stmt = text(
-        "UPDATE job_runs "
-        "SET status = :failed, finished_at = :now, error_message = :error "
-        "WHERE id = :id AND status = :processing"
+    stmt = (
+        update(JobRun)
+        .where(
+            JobRun.id == run_id,
+            JobRun.status == JobRunStatus.PROCESSING.value,
+        )
+        .values(
+            status=JobRunStatus.FAILED.value,
+            finished_at=now,
+            error_message=error_message,
+        )
     )
-    result = session.exec(
-        stmt,
-        params={
-            "failed": JobRunStatus.FAILED.value,
-            "processing": JobRunStatus.PROCESSING.value,
-            "now": now,
-            "id": run_id,
-            "error": error_message,
-        },
-    )
+    result = session.exec(stmt)
     session.commit()
 
     success = result.rowcount > 0
@@ -216,25 +260,30 @@ def get_run(session: Session, run_id: str) -> dict[str, Any] | None:
     }
 
 
-def is_locked(session: Session, job_name: str, target_date: date) -> bool:
-    """Verifica si el lock está tomado para (job_name, target_date).
+def is_locked(session: Session, job_name: str, target_date: date | None = None) -> bool:
+    """Verifica si el lock está tomado para un job.
+
+    El lock es **job-level** (estado ``processing``): se comprueba si
+    existe una fila con status='processing' para ``job_name`` — cualquier
+    instancia en procesamiento cancela una nueva. Si se pasa
+    ``target_date``, la comprobación se restringe a esa fecha exacta.
 
     Args:
         session: Sesión SQLModel activa.
         job_name: Nombre del job.
-        target_date: Fecha objetivo.
+        target_date: Fecha objetivo (opcional).
 
     Returns:
         ``True`` si existe un registro en estado ``processing``.
     """
-    existing = session.exec(
-        select(JobRun).where(
-            JobRun.job_name == job_name,
-            JobRun.target_date == target_date,
-            JobRun.status == JobRunStatus.PROCESSING.value,
-        )
-    ).first()
+    query = select(JobRun).where(
+        JobRun.job_name == job_name,
+        JobRun.status == JobRunStatus.PROCESSING.value,
+    )
+    if target_date is not None:
+        query = query.where(JobRun.target_date == target_date)
 
+    existing = session.exec(query).first()
     return existing is not None
 
 
