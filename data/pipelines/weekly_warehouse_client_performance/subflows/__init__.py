@@ -16,15 +16,20 @@ from data.pipelines.weekly_warehouse_client_performance.subflows.load_flow impor
 from data.pipelines.weekly_warehouse_client_performance.subflows.export_flow import (
     export_eval_snapshot_subflow,
 )
+from data.pipelines.weekly_warehouse_client_performance.subflows.csv_backup_flow import (
+    csv_backup_subflow,
+)
 from data.pipelines.weekly_warehouse_client_performance.subflows.models import (
-    ExtractInput,
-    ExtractOutput,
-    TransformInput,
-    TransformOutput,
-    LoadInput,
-    LoadOutput,
+    CsvBackupInput,
+    CsvBackupOutput,
     ExportInput,
     ExportOutput,
+    ExtractInput,
+    ExtractOutput,
+    LoadInput,
+    LoadOutput,
+    TransformInput,
+    TransformOutput,
 )
 
 __all__ = [
@@ -32,12 +37,15 @@ __all__ = [
     "transform_subflow",
     "load_subflow",
     "export_eval_snapshot_subflow",
-    "ExtractInput",
-    "ExtractOutput",
-    "TransformInput",
-    "TransformOutput",
-    "LoadInput",
-    "LoadOutput",
+    "csv_backup_subflow",
+    "CsvBackupInput",
+    "CsvBackupOutput",
     "ExportInput",
     "ExportOutput",
+    "ExtractInput",
+    "ExtractOutput",
+    "LoadInput",
+    "LoadOutput",
+    "TransformInput",
+    "TransformOutput",
 ]

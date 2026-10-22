@@ -157,3 +157,43 @@ class ExportOutput(BaseModel):
     path: str = Field(..., description="Ruta del archivo snapshot exportado")
     rows_count: int = Field(..., ge=0, description="Número de filas en el snapshot")
     run_id: str = Field(..., description="UUID de la corrida del pipeline")
+
+# ── CSV Backup (opcional) ──────────────────────────────────────────────────────
+
+
+class CsvBackupInput(BaseModel):
+    """Input del subflow opcional de backup CSV de eventos crudos.
+
+    Parameters
+    ----------
+    raw_events : list[dict]
+        Eventos crudos extraídos (output del subflow de extracción).
+    iso_week : str
+        Etiqueta ISO de la semana (ej. ``"2026-W28"``).
+    week_start : str
+        Fecha ISO del lunes de la semana.
+    """
+
+    raw_events: list[dict[str, Any]] = Field(
+        ..., description="Eventos crudos a exportar como backup CSV"
+    )
+    iso_week: str = Field(..., description="Etiqueta ISO de la semana")
+    week_start: str = Field(..., description="Fecha ISO del lunes de la semana")
+
+
+class CsvBackupOutput(BaseModel):
+    """Output del subflow opcional de backup CSV.
+
+    Parameters
+    ----------
+    path : str
+        Ruta del archivo CSV generado en ``data/raw/``.
+    rows_count : int
+        Número de filas exportadas.
+    iso_week : str
+        Etiqueta ISO de la semana asociada.
+    """
+
+    path: str = Field(..., description="Ruta del archivo CSV en data/raw/")
+    rows_count: int = Field(..., ge=0, description="Número de filas exportadas")
+    iso_week: str = Field(..., description="Etiqueta ISO de la semana")
