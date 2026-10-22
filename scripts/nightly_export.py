@@ -45,15 +45,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from services.job_runner import JobRunOutcome, run_job
 from services.job_runs.database import get_engine
-from services.job_runs.state import (
-    complete_run,
-    create_run,
-    fail_run,
-    is_completed,
-    is_locked,
-    start_processing,
-)
 
 # ── Logger ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -217,6 +210,22 @@ def run_pipeline() -> None:
         logger.info("Pipeline output:\n%s", result.stdout.strip())
 
 
+def do_nightly_export(session: Session, target_date: date) -> None:
+    """Trabajo real: exporta CSV (si no existe) y lanza el pipeline.
+
+    Esta función se pasa como ``work`` a ``job_runner.run_job``; el estado
+    de ``job_runs`` (pending → processing → completed | failed) y el
+    distributed lock los gestiona ``run_job``.
+    """
+    path = csv_path(target_date)
+    if path.exists():
+        logger.info("CSV already exists: %s — skipping export.", path)
+    else:
+        export_telemetry_to_csv(session, target_date)
+
+    run_pipeline()
+
+
 # ── Entry point ─────────────────────────────────────────────────────────────
 
 
@@ -249,23 +258,29 @@ def main() -> None:
     logger.info("Connecting to database...")
     engine = get_engine()
     with Session(engine) as session:
-        # ── Guard 1: LOCK vía processing (job-level) ────────────
-        # Si ya existe un registro job_runs con status='processing' para
-        # este job, aborta silenciosamente y registra la cancelación.
-        # Sin tabla ni columna de lock aparte: el estado processing ES el lock.
-        if is_locked(session, JOB_NAME):
+        # The state machine (pending → processing → completed | failed) and
+        # the distributed lock are handled by job_runner.run_job using the
+        # job_runs table (no separate lock table or column):
+        #   - canceled_locked → another instance holds the 'processing' lock
+        #   - skipped_duplicate → already completed for (job_name, target_date)
+        #   - locked → atomic re-check lost the race
+        #   - executed → CSV export + pipeline, marked completed
+        # On any unhandled exception, job_runner marks the run failed, logs,
+        # and re-raises; no job_runs record is ever left in 'processing'.
+        try:
+            outcome = run_job(session, JOB_NAME, target_date, do_nightly_export)
+        except BaseException as exc:
+            logger.error("Nightly export failed for %s: %s", target_date, exc)
+            sys.exit(1)
+
+        if outcome.outcome == "canceled_locked":
             logger.info(
                 "Canceled: another instance is already processing job '%s' "
                 "(status='processing' exists in job_runs). Aborting silently.",
                 JOB_NAME,
             )
             sys.exit(0)
-
-        # ── Guard 2: IDEMPOTENCIA vía target_date ───────────────
-        # Si ya existe un registro completed para (job_name, target_date),
-        # no volvemos a exportar el CSV ni relanzamos el pipeline.
-        # Solo job_name sin target_date no basta: la clave es la pareja exacta.
-        if is_completed(session, JOB_NAME, target_date):
+        if outcome.outcome == "skipped_duplicate":
             logger.info(
                 "Skipped (duplicate): job '%s' already completed for "
                 "target_date=%s. No CSV export and no pipeline run.",
@@ -273,16 +288,7 @@ def main() -> None:
                 target_date,
             )
             sys.exit(0)
-
-        # ── Paso 1: Crear registro en pending ─────────────────────
-        run = create_run(session, JOB_NAME, target_date)
-        logger.info("Job run created: id=%s status=%s", run.id, run.status)
-
-        # ── Paso 2: Adquirir lock (atómico, job-level) ───────────
-        # Re-chequeo atómico: otra instancia pudo crear/avanzar su propio
-        # registro entre el Guard 1 y este UPDATE. start_processing()
-        # solo tiene éxito si no existe otra fila 'processing' del job.
-        if not start_processing(session, run.id, JOB_NAME, target_date):
+        if outcome.outcome == "locked":
             logger.info(
                 "Lock not acquired for %s target_date=%s — "
                 "another instance is already processing. Aborting silently.",
@@ -291,26 +297,8 @@ def main() -> None:
             )
             sys.exit(0)
 
-        # ── Paso 3: Ejecutar el trabajo ───────────────────────────
-        try:
-            # 3a. Exportar CSV (solo si no existe)
-            path = csv_path(target_date)
-            if path.exists():
-                logger.info("CSV already exists: %s — skipping export.", path)
-            else:
-                export_telemetry_to_csv(session, target_date)
-
-            # 3b. Lanzar pipeline como subprocess
-            run_pipeline()
-
-            # ── Paso 4: Marcar como completado ────────────────────
-            complete_run(session, run.id)
-            logger.info("Nightly export completed successfully for %s.", target_date)
-
-        except Exception as exc:
-            logger.exception("Nightly export failed for %s.", target_date)
-            fail_run(session, run.id, str(exc))
-            sys.exit(1)
+        # outcome == "executed"
+        logger.info("Nightly export completed successfully for %s.", target_date)
 
 
 if __name__ == "__main__":

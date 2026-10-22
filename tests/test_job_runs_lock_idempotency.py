@@ -211,18 +211,24 @@ def test_create_run_creates_pending_when_not_completed(session_factory):
 
 
 def test_script_guards_use_is_locked_and_is_completed():
-    """El script importa y usa los guards (contrato del flujo principal).
+    """El script delega en ``run_job`` (que encapsula lock + idempotencia).
 
-    Verifica que ``nightly_export.main`` referencia ambos checks primeros
-    en su flujo, de modo que el lock (processing) y la idempotencia
-    (completed + target_date) se comprueban antes de crear/ejecutar.
+    Verifica que ``nightly_export.main`` usa ``job_runner.run_job`` en su
+    flujo real, de modo que el lock (processing) y la idempotencia
+    (completed + target_date) se comprueban antes de ejecutar el trabajo
+    (dentro de ``run_job``).
     """
     import inspect
 
     from scripts import nightly_export
+    from services import job_runner
 
     src = inspect.getsource(nightly_export.main)
-    # El orden importa: primero el lock, luego la idempotencia.
-    assert src.index("is_locked") < src.index("is_completed")
-    assert "Canceled:" in src or "processing" in src
-    assert "duplicate" in src or "already completed" in src
+    run_src = inspect.getsource(job_runner.run_job)
+
+    # El script se apoya en run_job para los guards.
+    assert "run_job(" in src
+    # Dentro de run_job: primero el lock, luego la idempotencia.
+    assert run_src.index("has_processing_lock") < run_src.index("has_completed_for_date")
+    assert "Canceled:" in run_src or "already processing" in run_src
+    assert "duplicate" in run_src or "already completed" in run_src
