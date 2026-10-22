@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlmodel import SQLModel
 
 from db_telemetry import engine as telemetry_engine
-from models import TelemetryEventRecord
+from models import CeleryTaskFailure, TelemetryEventRecord
 from routes.incidents import router as incidents_router
 from routes.suppliers import router as suppliers_router
 from routes.telemetry import router as telemetry_router

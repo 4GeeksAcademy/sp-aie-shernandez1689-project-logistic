@@ -7,12 +7,18 @@ Tareas disponibles:
 - ``generate_telemetry_report``: genera el reporte técnico de telemetría
   (la operación más costosa de la API). Ver services/telemetry/analysis.py
   para la lógica interna.
+
+Dead Letter Queue (DLQ):
+- Cuando una tarea agota todos los reintentos (max_retries), el hook
+  ``on_failure`` de la clase base ``DatabaseTask`` persiste el fallo
+  en la tabla ``celery_task_failures`` (PostgreSQL).
 """
 
 from __future__ import annotations
 
 import logging
 import sys
+import traceback as tb_module
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,6 +36,7 @@ from celery import Task
 from sqlmodel import Session
 
 from db_telemetry import engine as telemetry_engine
+from models import CeleryTaskFailure
 from services.celery_app import celery_app
 from services.telemetry import build_telemetry_report
 
@@ -37,9 +44,59 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseTask(Task):
-    """Task base que maneja la sesión de base de datos."""
+    """Task base con:
+
+    - ``on_failure``: persiste el fallo definitivo en la tabla
+      ``celery_task_failures`` (Dead Letter Queue) cuando se agotan
+      los reintentos.
+    - ``after_return``: cierra la sesión de base de datos.
+    """
 
     _session: Session | None = None
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        """Hook ejecutado cuando la tarea falla definitivamente.
+
+        Se invoca solo cuando se han agotado todos los reintentos
+        (``max_retries``). Persiste el fallo en la DLQ.
+        """
+        task_name = self.name or "unknown"
+
+        logger.error(
+            "Task %s (%s) failed permanently after %d retries: %s",
+            task_name,
+            task_id,
+            self.max_retries or 0,
+            exc,
+        )
+
+        if telemetry_engine is None:
+            logger.warning("Cannot persist DLQ entry: DATABASE_URL not configured")
+            return
+
+        try:
+            with Session(telemetry_engine) as session:
+                record = CeleryTaskFailure(
+                    task_id=task_id,
+                    task_name=task_name,
+                    attempt=(self.request.retries if hasattr(self, "request") else 0) + 1,
+                    error=str(exc),
+                    traceback=tb_module.format_exc() if einfo else None,
+                    failed_at=datetime.now(timezone.utc),
+                )
+                session.add(record)
+                session.commit()
+                logger.info(
+                    "DLG entry recorded for task %s (%s)",
+                    task_name,
+                    task_id,
+                )
+        except Exception as persist_exc:
+            logger.error(
+                "Failed to persist DLQ entry for task %s: %s",
+                task_id,
+                persist_exc,
+            )
 
     def after_return(self, status, retval, task_id, args, kwargs, einfo):
         """Cierra la sesión después de cada ejecución."""
@@ -53,8 +110,11 @@ class DatabaseTask(Task):
     bind=True,
     name="generate_telemetry_report",
     max_retries=3,
-    default_retry_delay=30,  # segundos antes de reintentar
-    acks_late=True,  # no perder tarea si el worker muere
+    acks_late=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,  # 10 minutos como tope máximo
+    retry_jitter=True,
 )
 def generate_telemetry_report(
     self,
@@ -64,6 +124,17 @@ def generate_telemetry_report(
     """Genera el reporte completo de telemetría de forma asíncrona.
 
     Reemplaza la llamada síncrona en ``GET /telemetry/report``.
+
+    Reintentos con backoff exponencial:
+        - ``max_retries=3`` (4 intentos en total)
+        - ``retry_backoff=True`` → countdown = 2^retry * BASE_RETRY_DELAY
+          (30s → 60s → 120s → 240s)
+        - ``retry_jitter=True`` → añade dispersión aleatoria para evitar
+          tormentas de reintentos (thundering herd).
+
+    Dead Letter Queue:
+        - Si tras 3 reintentos sigue fallando, el hook ``on_failure`` de
+          ``DatabaseTask`` persiste el error en ``celery_task_failures``.
 
     Args:
         start_date_iso: Inicio de la ventana (ISO 8601).
@@ -76,31 +147,31 @@ def generate_telemetry_report(
                 "period": {"from": "...", "to": "..."},
                 "metrics": { <métrica>: [...] },
             }
-
-    Raises:
-        Exception: Reintenta hasta 3 veces si falla la conexión a DB.
     """
     if telemetry_engine is None:
-        raise RuntimeError("DATABASE_URL no está configurada; no se puede generar el reporte.")
+        raise RuntimeError(
+            "DATABASE_URL no está configurada; no se puede generar el reporte."
+        )
 
     start = datetime.fromisoformat(start_date_iso)
     end = datetime.fromisoformat(end_date_iso)
 
     logger.info(
-        "Generating telemetry report (task=%s) for window %s – %s",
+        "Generating telemetry report (task=%s, attempt=%d) for window %s – %s",
         self.request.id,
+        self.request.retries + 1 if hasattr(self, "request") else 1,
         start_date_iso,
         end_date_iso,
     )
 
-    try:
-        with Session(telemetry_engine) as session:
-            metrics = build_telemetry_report(session, start, end)
-    except Exception as exc:
-        logger.warning("Telemetry report generation failed, retrying: %s", exc)
-        raise self.retry(exc=exc) from exc
+    with Session(telemetry_engine) as session:
+        metrics = build_telemetry_report(session, start, end)
 
-    logger.info("Telemetry report generated successfully (task=%s)", self.request.id)
+    logger.info(
+        "Telemetry report generated successfully (task=%s, attempt=%d)",
+        self.request.id,
+        self.request.retries + 1 if hasattr(self, "request") else 1,
+    )
 
     return {
         "period": {
