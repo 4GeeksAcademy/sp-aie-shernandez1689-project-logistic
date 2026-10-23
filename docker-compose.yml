@@ -110,6 +110,20 @@ services:
     networks:
       - development
 
+  # ── Qdrant (vector store for RAG) ────────────────────────────
+  # Almacén de vectores para la base de conocimiento de TrackFlow.
+  # Expone API REST en :6333 y dashboard en :6334.
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_DASHBOARD_PORT:-6334}:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+    networks:
+      - development
+
 networks:
   development:
     name: ${DOCKER_NETWORK_NAME:?Define DOCKER_NETWORK_NAME in .env}
@@ -120,3 +134,4 @@ volumes:
   website_next:
   backoffice_next:
   backend_data:
+  qdrant_storage:

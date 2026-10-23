@@ -1,0 +1,163 @@
+/* Consulta a base de conocimiento — estilos sobre suppliers/styles.css */
+
+.knowledge-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.knowledge-form textarea {
+  width: 100%;
+  min-height: 100px;
+  resize: vertical;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0b1c2b;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+  transition: border-color 140ms ease;
+}
+
+.knowledge-form textarea:focus {
+  outline: 3px solid rgba(103, 232, 249, 0.28);
+  outline-offset: 1px;
+  border-color: var(--brand);
+}
+
+.knowledge-form textarea::placeholder {
+  color: #8598a8;
+}
+
+.knowledge-form .submit-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.knowledge-form .submit-row button {
+  padding: 0.6rem 1.5rem;
+}
+
+.knowledge-form .submit-row button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Loading inline indicator (shown alongside submit button) */
+.loading-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--warn);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--line);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* State panels */
+.state-panel {
+  display: grid;
+  gap: 0.75rem;
+  text-align: center;
+  padding: 2rem 1.5rem;
+}
+
+.state-panel h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.state-panel p {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.state-panel .error-detail {
+  color: var(--danger);
+  font-size: 0.85rem;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  word-break: break-word;
+}
+
+/* Answer panel */
+.answer-content {
+  font-size: 0.95rem;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.answer-content p {
+  margin: 0 0 0.75rem;
+}
+
+/* Source items */
+.source-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.6rem 0.85rem;
+  background: rgba(17, 42, 61, 0.5);
+  font-size: 0.82rem;
+  color: var(--muted);
+  display: grid;
+  gap: 0.2rem;
+}
+
+.source-item .source-doc {
+  font-weight: 700;
+  color: var(--brand);
+}
+
+.source-item .source-section {
+  color: var(--text);
+}
+
+/* Example questions */
+.examples-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.example-btn {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  background: rgba(17, 42, 61, 0.5);
+  color: var(--muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+  white-space: nowrap;
+}
+
+.example-btn:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+/* Empty state icon */
+.state-icon {
+  font-size: 2rem;
+  line-height: 1;
+  opacity: 0.5;
+}

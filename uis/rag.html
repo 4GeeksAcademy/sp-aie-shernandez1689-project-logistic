@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TrackFlow - Asistente RAG</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              ink: "#111827",
+              coral: "#f97316",
+              sand: "#fef3c7",
+              mint: "#10b981",
+            },
+          },
+        },
+      };
+    </script>
+  </head>
+  <body class="min-h-screen bg-slate-950 text-white">
+    <header role="banner" class="border-b border-cyan-300/20 bg-slate-950/95 backdrop-blur">
+      <nav
+        class="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-4 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-10"
+        aria-label="Navegacion principal"
+      >
+        <a href="index.html" aria-label="Ir al inicio de TrackFlow" class="text-base font-extrabold tracking-wide text-cyan-200">TrackFlow</a>
+        <ul class="flex flex-wrap gap-3 text-xs text-slate-300 sm:text-sm">
+          <li><a href="index.html" class="hover:text-cyan-200">Inicio</a></li>
+          <li><a href="testing.html" class="hover:text-cyan-200">Data Lab</a></li>
+          <li><a href="rag.html" aria-current="page" class="font-semibold text-amber-300 hover:text-amber-200">Asistente RAG</a></li>
+        </ul>
+      </nav>
+    </header>
+    <main class="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+      <section class="mb-6 rounded-2xl border border-cyan-300/20 bg-slate-900/80 p-5 shadow-lg shadow-cyan-900/10 backdrop-blur sm:p-7">
+        <p class="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200">TrackFlow</p>
+        <h1 class="mt-2 text-3xl font-black text-white sm:text-4xl">Asistente Comercial RAG</h1>
+        <p class="mt-2 text-sm text-slate-300">
+          Haz preguntas sobre SLAs, devoluciones, transportistas y tarifas de almacenamiento
+          de TrackFlow. El asistente responde basandose exclusivamente en la base de conocimiento.
+        </p>
+      </section>
+
+      <!-- Formulario de consulta -->
+      <section class="mb-6 rounded-2xl border border-cyan-300/20 bg-slate-900/80 p-5 shadow-lg sm:p-7">
+        <form id="query-form" class="flex flex-col gap-4">
+          <label for="question" class="text-sm font-semibold text-slate-300">Tu pregunta:</label>
+          <textarea
+            id="question"
+            rows="3"
+            class="w-full rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none focus:ring-1 focus:ring-cyan-400"
+            placeholder="Ej: Cual es el SLA de entrega estandar para Espana peninsular?"
+            required
+          ></textarea>
+          <div class="flex items-center justify-between">
+            <button
+              type="submit"
+              id="submit-btn"
+              class="rounded-lg bg-cyan-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-cyan-500 disabled:opacity-50"
+            >
+              Consultar
+            </button>
+            <span id="loading" class="hidden text-sm text-amber-300">Consultando base de conocimiento...</span>
+          </div>
+        </form>
+      </section>
+
+      <!-- Respuesta -->
+      <section id="response-section" class="hidden rounded-2xl border border-mint/20 bg-slate-900/80 p-5 shadow-lg sm:p-7">
+        <h2 class="mb-3 text-lg font-bold text-white">Respuesta</h2>
+        <div id="answer" class="prose prose-invert max-w-none whitespace-pre-wrap text-sm leading-relaxed text-slate-200"></div>
+
+        <!-- Fuentes -->
+        <div id="sources-section" class="mt-6 hidden">
+          <h3 class="mb-2 text-sm font-semibold text-cyan-200">Fuentes consultadas:</h3>
+          <ul id="sources-list" class="space-y-2"></ul>
+        </div>
+
+        <!-- Sin informacion -->
+        <div id="no-info" class="mt-4 hidden rounded-xl border border-amber-300/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-200">
+          No se encontro informacion suficiente en la base de conocimiento.
+        </div>
+      </section>
+
+      <!-- Sugerencias -->
+      <section class="mt-6 rounded-2xl border border-cyan-300/20 bg-slate-900/50 p-5 shadow-lg sm:p-7">
+        <h2 class="mb-3 text-sm font-semibold text-slate-400">Preguntas de ejemplo</h2>
+        <div class="flex flex-wrap gap-2">
+          <button class="example-btn rounded-full border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:border-cyan-400 hover:text-cyan-200">
+            Cual es el SLA de entrega en Espana?
+          </button>
+          <button class="example-btn rounded-full border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:border-cyan-400 hover:text-cyan-200">
+            Que transportista cubre mejor Aragon rural?
+          </button>
+          <button class="example-btn rounded-full border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:border-cyan-400 hover:text-cyan-200">
+            Cuanto cuesta el almacenaje de un palet?
+          </button>
+          <button class="example-btn rounded-full border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:border-cyan-400 hover:text-cyan-200">
+            Como funcionan las devoluciones internacionales?
+          </button>
+          <button class="example-btn rounded-full border border-slate-700 px-3 py-1.5 text-xs text-slate-300 hover:border-cyan-400 hover:text-cyan-200">
+            Que pasa con los SLAs durante Black Friday?
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const API_BASE = "http://localhost:8000"; // Ajusta segun tu backend
+
+      const form = document.getElementById("query-form");
+      const questionInput = document.getElementById("question");
+      const submitBtn = document.getElementById("submit-btn");
+      const loading = document.getElementById("loading");
+      const responseSection = document.getElementById("response-section");
+      const answerDiv = document.getElementById("answer");
+      const sourcesSection = document.getElementById("sources-section");
+      const sourcesList = document.getElementById("sources-list");
+      const noInfo = document.getElementById("no-info");
+
+      // Preguntas de ejemplo
+      document.querySelectorAll(".example-btn") .forEach((btn) => {
+        btn.addEventListener("click", () => {
+          questionInput.value = btn.textContent.trim();
+          form.requestSubmit();
+        });
+      });
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const question = questionInput.value.trim();
+        if (!question) return;
+
+        // Mostrar loading
+        submitBtn.disabled = true;
+        loading.classList.remove("hidden");
+        responseSection.classList.add("hidden");
+        noInfo.classList.add("hidden");
+
+        try {
+          const resp = await fetch(`${API_BASE}/api/rag/query`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question, k: 3 }),
+          });
+
+          if (!resp.ok) {
+            const errData = await resp.json().catch(() => ({}));
+            throw new Error(errData.detail || `Error ${resp.status}`);
+          }
+
+          const data = await resp.json();
+
+          // Mostrar respuesta
+          answerDiv.textContent = data.answer || "Sin respuesta.";
+          responseSection.classList.remove("hidden");
+
+          if (data.has_sufficient_info && data.sources && data.sources.length > 0) {
+            sourcesList.innerHTML = data.sources
+              .map(
+                (s) => `
+                  <li class="rounded-lg border border-slate-700/50 bg-slate-800/50 px-3 py-2 text-xs text-slate-400">
+                    <span class="font-semibold text-cyan-300">${s.source_document}</span>
+                    &mdash; ${s.section}
+                    <span class="ml-2 text-slate-500">(score: ${s.score.toFixed(4)})</span>
+                  </li>
+                `
+              )
+              .join("");
+            sourcesSection.classList.remove("hidden");
+          } else {
+            sourcesSection.classList.add("hidden");
+            noInfo.classList.remove("hidden");
+          }
+        } catch (err) {
+          answerDiv.textContent = "Error: " + err.message;
+          responseSection.classList.remove("hidden");
+          sourcesSection.classList.add("hidden");
+        } finally {
+          submitBtn.disabled = false;
+          loading.classList.add("hidden");
+        }
+      });
+    </script>
+  </body>
+</html>

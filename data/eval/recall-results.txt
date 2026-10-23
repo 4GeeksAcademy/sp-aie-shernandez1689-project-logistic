@@ -1,0 +1,73 @@
+======================================================================
+📊 RAG Recall@3 Measurement (TF-IDF local substitute)
+======================================================================
+
+📝 Loaded 10 eval queries from test-queries.json
+📦 Built 28 chunks from /workspaces/sp-aie-shernandez1689-project-logistic/docs/company-knowledge-base
+
+🔍 Measuring Recall@3...
+
+  ❌ Q1: ¿Cuál es el SLA de entrega estándar para España peninsular?
+      Expected: trackflow-sla-delivery / España peninsular
+      [0.4664] trackflow-sla-delivery / General  src✓
+      [0.2968] trackflow-carrier-coverage / España  
+      [0.2106] trackflow-carrier-coverage / Aragón rural  tok✓
+
+  ✅ Q2: ¿Qué plazo de devolución ofrece TrackFlow?
+      Expected: trackflow-returns-policy / Ventana de devolución
+      [0.4118] trackflow-returns-policy / Ventana de devolución  src✓ sec✓ tok✓
+      [0.2650] trackflow-returns-policy / Excepciones  src✓
+      [0.2400] trackflow-returns-policy / Devoluciones nacionales (España)  src✓
+
+  ✅ Q3: ¿Qué transportista cubre mejor Aragón rural?
+      Expected: trackflow-carrier-coverage / Aragón rural
+      [0.2770] trackflow-carrier-coverage / Aragón rural  src✓ sec✓ tok✓
+      [0.0996] trackflow-carrier-coverage / Zonas rurales de EE. UU.  src✓
+      [0.0446] trackflow-carrier-coverage / Requisitos de integración  src✓
+
+  ✅ Q4: ¿Cuánto cuesta el almacenaje de un palet estándar por día?
+      Expected: trackflow-storage-pricing / Tarifas base de almacenamiento
+      [0.5954] trackflow-storage-pricing / Tarifas base de almacenamiento  src✓ sec✓ tok✓
+      [0.2806] trackflow-returns-policy / Devoluciones nacionales (España)  
+      [0.2647] trackflow-storage-pricing / Servicios adicionales  src✓
+
+  ✅ Q5: ¿Se pueden devolver productos internacionalmente de forma automática?
+      Expected: trackflow-returns-policy / Devoluciones internacionales (EE. UU.)
+      [0.1649] trackflow-returns-policy / Devoluciones internacionales (EE. UU.)  src✓ sec✓ tok✓
+      [0.1510] trackflow-storage-pricing / Facturación  
+      [0.1469] trackflow-returns-policy / Excepciones  src✓
+
+  ✅ Q6: ¿Qué sucede con los SLAs durante Black Friday?
+      Expected: trackflow-sla-delivery / Excepciones por alta demanda
+      [0.2685] trackflow-returns-policy / Excepciones  
+      [0.2356] trackflow-sla-delivery / Excepciones por alta demanda  src✓ sec✓ tok✓
+      [0.1810] trackflow-sla-delivery / Estándares de entrega  src✓
+
+  ❌ Q7: ¿Hay descuentos por volumen en almacenamiento?
+      Expected: trackflow-storage-pricing / Descuentos por volumen
+      [0.3950] trackflow-storage-pricing / General  src✓
+      [0.2000] trackflow-storage-pricing / Facturación  src✓
+      [0.1461] trackflow-storage-pricing / Servicios adicionales  src✓
+
+  ✅ Q8: ¿Qué transportistas están disponibles para envíos en Estados Unidos?
+      Expected: trackflow-carrier-coverage / Estados Unidos
+      [0.2905] trackflow-sla-delivery / Estándares de entrega  
+      [0.2614] trackflow-carrier-coverage / General  src✓
+      [0.2236] trackflow-carrier-coverage / Zonas rurales de EE. UU.  src✓ tok✓
+
+  ✅ Q9: ¿Cuánto tiempo tarda un reembolso después de una devolución en España?
+      Expected: trackflow-returns-policy / Devoluciones nacionales (España)
+      [0.2545] trackflow-returns-policy / Devoluciones nacionales (España)  src✓ sec✓ tok✓
+      [0.2373] trackflow-returns-policy / Ventana de devolución  src✓
+      [0.2110] trackflow-carrier-coverage / Requisitos de integración  
+
+  ✅ Q10: ¿Siguen aplicando las penalizaciones por incumplimiento de SLA durante Black Fri
+      Expected: trackflow-sla-delivery / Penalizaciones por incumplimiento
+      [0.3344] trackflow-sla-delivery / General  src✓
+      [0.2162] trackflow-returns-policy / Excepciones  
+      [0.1678] trackflow-sla-delivery / Penalizaciones por incumplimiento  src✓ sec✓ tok✓
+
+======================================================================
+📊 Recall@3: 8/10 = 80.0%
+✅ ✅ ✅ TARGET METIDO: 80.0% ≥ 80.0%
+======================================================================

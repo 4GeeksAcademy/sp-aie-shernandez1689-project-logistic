@@ -1,0 +1,72 @@
+[
+  {
+    "id": 1,
+    "question": "¿Cuál es el SLA de entrega estándar para España peninsular?",
+    "expected_source": "trackflow-sla-delivery",
+    "expected_section": "España peninsular",
+    "expected_text_tokens": ["2–3", "días", "laborables"]
+  },
+  {
+    "id": 2,
+    "question": "¿Qué plazo de devolución ofrece TrackFlow?",
+    "expected_source": "trackflow-returns-policy",
+    "expected_section": "Ventana de devolución",
+    "expected_text_tokens": ["30", "días", "naturales"]
+  },
+  {
+    "id": 3,
+    "question": "¿Qué transportista cubre mejor Aragón rural?",
+    "expected_source": "trackflow-carrier-coverage",
+    "expected_section": "Aragón rural",
+    "expected_text_tokens": ["MRW", "95%"]
+  },
+  {
+    "id": 4,
+    "question": "¿Cuánto cuesta el almacenaje de un palet estándar por día?",
+    "expected_source": "trackflow-storage-pricing",
+    "expected_section": "Tarifas base de almacenamiento",
+    "expected_text_tokens": ["4,50", "palet"]
+  },
+  {
+    "id": 5,
+    "question": "¿Se pueden devolver productos internacionalmente de forma automática?",
+    "expected_source": "trackflow-returns-policy",
+    "expected_section": "Devoluciones internacionales (EE. UU.)",
+    "expected_text_tokens": ["no", "automáticas", "gestión", "manual"]
+  },
+  {
+    "id": 6,
+    "question": "¿Qué sucede con los SLAs durante Black Friday?",
+    "expected_source": "trackflow-sla-delivery",
+    "expected_section": "Excepciones por alta demanda",
+    "expected_text_tokens": ["Black Friday", "extenderse", "alta demanda"]
+  },
+  {
+    "id": 7,
+    "question": "¿Hay descuentos por volumen en almacenamiento?",
+    "expected_source": "trackflow-storage-pricing",
+    "expected_section": "Descuentos por volumen",
+    "expected_text_tokens": ["100", "palets", "5%"]
+  },
+  {
+    "id": 8,
+    "question": "¿Qué transportistas están disponibles para envíos en Estados Unidos?",
+    "expected_source": "trackflow-carrier-coverage",
+    "expected_section": "Estados Unidos",
+    "expected_text_tokens": ["UPS", "FedEx", "USPS"]
+  },
+  {
+    "id": 9,
+    "question": "¿Cuánto tiempo tarda un reembolso después de una devolución en España?",
+    "expected_source": "trackflow-returns-policy",
+    "expected_section": "Devoluciones nacionales (España)",
+    "expected_text_tokens": ["5–7", "días", "laborables"]
+  },
+  {
+    "id": 10,
+    "question": "¿Siguen aplicando las penalizaciones por incumplimiento de SLA durante Black Friday?",
+    "expected_source": "trackflow-sla-delivery",
+    "expected_section": "Penalizaciones por incumplimiento",
+    "expected_text_tokens": ["no", "aplican", "alta demanda"]
+  }
+]

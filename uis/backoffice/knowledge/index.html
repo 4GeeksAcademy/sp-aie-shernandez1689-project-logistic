@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#071521" />
+    <title>TrackFlow | Consulta de conocimiento</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../../application/app/suppliers/styles.css" />
+    <link rel="stylesheet" href="./knowledge.css" />
+  </head>
+  <body>
+    <div class="backdrop" aria-hidden="true"></div>
+
+    <main class="page">
+      <!-- ── Topbar ────────────────────────────────────────────── -->
+      <header class="topbar" role="banner">
+        <div>
+          <p class="eyebrow">TrackFlow Backoffice · Base de conocimiento</p>
+          <h1>Asistente de consulta RAG</h1>
+        </div>
+        <nav class="menu-links" aria-label="Navegación principal">
+          <a href="../../application/app/incidents/panel.html">Panel incidencias</a>
+          <a href="../../application/app/suppliers/index.html">Proveedores</a>
+          <a href="../../index.html">Inicio</a>
+        </nav>
+      </header>
+
+      <!-- ── Formulario de consulta ─────────────────────────────── -->
+      <section class="panel" aria-labelledby="query-title">
+        <div class="panel-head">
+          <h2 id="query-title">Consulta</h2>
+          <p>
+            Haz una pregunta sobre SLAs, devoluciones, transportistas o tarifas
+            de almacenamiento de TrackFlow.
+          </p>
+        </div>
+
+        <form id="queryForm" class="knowledge-form">
+          <label for="questionInput">
+            Tu pregunta
+            <textarea
+              id="questionInput"
+              rows="4"
+              placeholder="Ej: ¿Cuál es el SLA de entrega estándar para España peninsular?"
+              required
+            ></textarea>
+          </label>
+
+          <div class="submit-row">
+            <button type="submit" id="submitBtn">Consultar</button>
+            <span id="loadingIndicator" class="loading-indicator" hidden>
+              <span class="loading-spinner" aria-hidden="true"></span>
+              Consultando base de conocimiento…
+            </span>
+          </div>
+        </form>
+      </section>
+
+      <!-- ── Estado: error ─────────────────────────────────────── -->
+      <section id="errorState" class="panel state-panel" role="alert" hidden>
+        <div class="state-icon" aria-hidden="true">⚠️</div>
+        <h2>No se pudo completar la consulta</h2>
+        <p id="errorMessage">Ocurrió un error inesperado.</p>
+        <p id="errorDetail" class="error-detail"></p>
+        <button type="button" id="retryBtn">Reintentar</button>
+      </section>
+
+      <!-- ── Estado: sin información suficiente ────────────────── -->
+      <section id="noInfoState" class="panel state-panel" hidden>
+        <div class="state-icon" aria-hidden="true">🔍</div>
+        <h2>Sin información suficiente</h2>
+        <p>
+          La base de conocimiento no contiene información suficiente para
+          responder tu pregunta. Intenta reformularla o sé más específico.
+        </p>
+        <button type="button" id="rephraseBtn" class="ghost">Reformular pregunta</button>
+      </section>
+
+      <!-- ── Estado: respuesta ─────────────────────────────────── -->
+      <section id="answerSection" class="panel" hidden>
+        <div class="panel-head">
+          <h2>Respuesta</h2>
+        </div>
+        <div id="answerContent" class="answer-content"></div>
+
+        <!-- Fuentes consultadas -->
+        <div id="sourcesSection" class="panel-head" style="margin-top: 1.5rem" hidden>
+          <h3 style="color: var(--brand); font-size: 0.88rem; margin: 0">
+            Fuentes consultadas
+          </h3>
+          <p style="margin: 0.2rem 0 0; color: var(--muted); font-size: 0.82rem">
+            Documentos de la base de conocimiento utilizados para generar la respuesta.
+          </p>
+        </div>
+        <div id="sourcesList" style="display: grid; gap: 0.5rem; margin-top: 0.75rem"></div>
+      </section>
+
+      <!-- ── Preguntas de ejemplo ──────────────────────────────── -->
+      <section class="panel" aria-labelledby="examples-title">
+        <div class="panel-head">
+          <h2 id="examples-title">Preguntas de ejemplo</h2>
+          <p>Haz clic en una pregunta para rellenar el formulario automáticamente.</p>
+        </div>
+        <div class="examples-grid">
+          <button type="button" class="example-btn" data-question="¿Cuál es el SLA de entrega estándar para España peninsular?">
+            SLA entrega España
+          </button>
+          <button type="button" class="example-btn" data-question="¿Qué transportista cubre mejor Aragón rural?">
+            Cobertura Aragón rural
+          </button>
+          <button type="button" class="example-btn" data-question="¿Cuánto cuesta el almacenaje de un palet completo?">
+            Precio almacenaje palet
+          </button>
+          <button type="button" class="example-btn" data-question="¿Cómo funcionan las devoluciones internacionales?">
+            Devoluciones internacionales
+          </button>
+          <button type="button" class="example-btn" data-question="¿Qué sucede con los SLAs durante Black Friday?">
+            SLAs en Black Friday
+          </button>
+          <button type="button" class="example-btn" data-question="¿Cuánto tiempo tengo para devolver un producto comprado online?">
+            Plazo de devolución
+          </button>
+          <button type="button" class="example-btn" data-question="¿Ofrecen almacenamiento para mercancía peligrosa?">
+            Almacenaje mercancía peligrosa
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      (function () {
+        "use strict";
+
+        /* ─── Config ─────────────────────────────────────────── */
+        const API_BASE = "http://localhost:8000";
+
+        /* ─── DOM refs ────────────────────────────────────────── */
+        const $ = (id) => document.getElementById(id);
+
+        const form = $("queryForm");
+        const input = $("questionInput");
+        const submitBtn = $("submitBtn");
+        const loading = $("loadingIndicator");
+
+        const errorState = $("errorState");
+        const errorMsg = $("errorMessage");
+        const errorDetail = $("errorDetail");
+        const retryBtn = $("retryBtn");
+
+        const noInfoState = $("noInfoState");
+        const rephraseBtn = $("rephraseBtn");
+
+        const answerSection = $("answerSection");
+        const answerContent = $("answerContent");
+        const sourcesSection = $("sourcesSection");
+        const sourcesList = $("sourcesList");
+
+        let lastQuestion = "";
+
+        /* ─── Helpers ────────────────────────────────────────── */
+
+        function hideAll() {
+          errorState.hidden = true;
+          noInfoState.hidden = true;
+          answerSection.hidden = true;
+        }
+
+        function setLoading(isLoading) {
+          submitBtn.disabled = isLoading;
+          loading.hidden = !isLoading;
+        }
+
+        function friendlyError(status) {
+          if (status === 401) return "Tu sesión ha expirado. Inicia sesión nuevamente.";
+          if (status === 403) return "No tienes permiso para usar este servicio.";
+          if (status === 422) return "La pregunta no tiene el formato esperado.";
+          if (status === 503) return "El servicio de conocimiento no está disponible.";
+          if (status >= 500) return "Error interno del servidor. Inténtalo más tarde.";
+          return "No se pudo conectar con el servicio.";
+        }
+
+        /* ─── Consulta a la API ───────────────────────────────── */
+
+        async function queryKnowledge(question) {
+          const resp = await fetch(API_BASE + "/knowledge/query", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question }),
+          });
+
+          if (!resp.ok) {
+            const body = await resp.json().catch(() => ({}));
+            const err = new Error(body.detail || friendlyError(resp.status));
+            err.status = resp.status;
+            err.detail = body.detail || "";
+            throw err;
+          }
+
+          return await resp.json();
+        }
+
+        /* ─── Renderizado ─────────────────────────────────────── */
+
+        function renderAnswer(data) {
+          answerContent.textContent = data.answer || "Sin respuesta.";
+
+          // Las fuentes no vienen del endpoint /knowledge/query (solo devuelve {"answer":"..."})
+          // pero se deja la sección preparada por si se amplía en el futuro.
+          sourcesSection.hidden = true;
+          sourcesList.innerHTML = "";
+
+          answerSection.hidden = false;
+        }
+
+        function renderError(err) {
+          errorMsg.textContent = friendlyError(err.status || 0);
+          errorDetail.textContent = err.detail || err.message || "";
+          errorState.hidden = false;
+        }
+
+        function renderNoInfo() {
+          noInfoState.hidden = false;
+        }
+
+        /* ─── Acción principal ────────────────────────────────── */
+
+        async function submitQuestion(question) {
+          lastQuestion = question;
+          hideAll();
+          setLoading(true);
+
+          try {
+            const data = await queryKnowledge(question);
+            const answer = (data.answer || "").trim();
+
+            if (!answer || answer.includes("no tengo información suficiente") || answer.includes("lo siento")) {
+              renderNoInfo();
+            } else {
+              renderAnswer(data);
+            }
+          } catch (err) {
+            renderError(err);
+          } finally {
+            setLoading(false);
+          }
+        }
+
+        /* ─── Eventos ─────────────────────────────────────────── */
+
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          const question = input.value.trim();
+          if (!question) return;
+          submitQuestion(question);
+        });
+
+        // Ejemplos: al hacer clic, rellenan el input y envían
+        document.querySelectorAll(".example-btn").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            const q = this.getAttribute("data-question");
+            if (q) {
+              input.value = q;
+              submitQuestion(q);
+            }
+          });
+        });
+
+        // Reintentar con la misma pregunta
+        retryBtn.addEventListener("click", function () {
+          if (lastQuestion) submitQuestion(lastQuestion);
+        });
+
+        // Reformular: enfocar el input
+        rephraseBtn.addEventListener("click", function () {
+          input.focus();
+          hideAll();
+        });
+
+        // Enter en el textarea (Ctrl/Cmd+Enter también)
+        input.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            form.requestSubmit();
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>
