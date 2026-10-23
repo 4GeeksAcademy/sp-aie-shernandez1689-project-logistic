@@ -143,8 +143,8 @@
         try {
           const resp = await fetch(`${API_BASE}/api/rag/query`, {
             method: "POST",
-            headers: { "Content-Type": "appliction/json" },
-            body: JSON.stringify({ question, top_k: 3 }),
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question, k: 3 }),
           });
 
           if (!resp.ok) {
