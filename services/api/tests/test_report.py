@@ -1,19 +1,17 @@
-"""Tests del endpoint GET /telemetry/report (Fase 2).
+"""Tests del endpoint GET /telemetry/report (Fase 2, ahora asíncrono).
 
 Verifican que el endpoint:
-- Resuelve la ventana por defecto (últimos 7 días UTC) y la pasa al pipeline
-- Acepta start_date / end_date explícitos y los normaliza a UTC
-- Devuelve la estructura ``{period: {from, to}, metrics: {...}}``
-- Cachea el resultado (TTL 60 s): no recalcula en cada request
+- Resuelve la ventana de fechas y la pasa a send_task de Celery
+- Devuelve 202 Accepted con ``{"task_id": "..."}`` inmediatamente
 - Responde 422 si la ventana es inválida
 - Responde 503 si no hay DATABASE_URL configurada
+- Requiere autenticación
 """
 
 import sys
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,57 +20,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import routes.telemetry as telemetry_routes
 from auth import CurrentUser, get_current_user
-from cache import telemetry_report_cache
 from main import app
 from routes.telemetry import _resolve_period
 
 
-class FakeSession:
-    """Context manager que sustituye a sqlmodel.Session sin tocar la DB."""
-
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-FAKE_METRICS = {
-    "events_per_day": [{"date": "2026-10-16", "events": 2}],
-    "events_per_type_per_day": [],
-    "error_rate_daily": [],
-    "error_rate_by_type": [
-        {"event_type": "api_response_error_recorded", "total": 4, "errors": 1, "error_rate": 0.25},
-    ],
-    "api_errors_by_endpoint": [],
-    "auth_failure_rate": [{"date": "2026-10-16", "attempts": 1, "failures": 0, "failure_rate": 0.0}],
-}
-
-
 @pytest.fixture
 def report_env(monkeypatch):
-    """Prepara el entorno para el endpoint de reporte.
+    """Prepara el entorno para el endpoint asíncrono de reporte.
 
-    Sustituye la DB real por un objeto truthy, la Session por un fake y el
-    pipeline por una función que registra las llamadas. Limpia el cache y la
-    dependencia de auth al terminar.
+    Sustituye la DB real por un objeto truthy y celery_app.send_task por
+    un mock que registra las llamadas y devuelve un AsyncResult simulado.
+    Limpia la dependencia de auth al terminar.
     """
     calls: list[dict] = []
     engine = object()
 
     monkeypatch.setattr(telemetry_routes, "telemetry_engine", engine)
-    monkeypatch.setattr(telemetry_routes, "Session", FakeSession)
 
-    def fake_build(session, start, end):
-        calls.append({"start": start, "end": end})
-        return FAKE_METRICS
+    def fake_send_task(name, args):
+        calls.append({"name": name, "args": args})
+        mock_result = MagicMock()
+        mock_result.id = "fake-task-uuid-1234"
+        return mock_result
 
-    monkeypatch.setattr(telemetry_routes, "build_telemetry_report", fake_build)
+    monkeypatch.setattr(telemetry_routes.celery_app, "send_task", fake_send_task)
 
-    telemetry_report_cache.invalidate_all()
     app.dependency_overrides[get_current_user] = lambda: CurrentUser(
         id="test-admin", email="admin@example.com", role="admin",
     )
@@ -82,7 +54,6 @@ def report_env(monkeypatch):
             yield {"client": test_client, "calls": calls, "engine": engine}
     finally:
         app.dependency_overrides.clear()
-        telemetry_report_cache.invalidate_all()
 
 
 # ---------------------------------------------------------------------------
@@ -134,86 +105,51 @@ class TestResolvePeriod:
 
 
 # ---------------------------------------------------------------------------
-# Tests del endpoint
+# Tests del endpoint asíncrono
 # ---------------------------------------------------------------------------
 
 
 class TestTelemetryReportEndpoint:
-    def test_returns_report_structure(self, report_env):
-        """Respuesta 200 con {period: {from, to}, metrics: {...}}."""
+    def test_returns_202_with_task_id(self, report_env):
+        """Respuesta 202 con {"task_id": "..."}."""
         client = report_env["client"]
         response = client.get("/telemetry/report")
-        assert response.status_code == 200
+        assert response.status_code == 202
 
         body = response.json()
-        assert "period" in body
-        assert "from" in body["period"]
-        assert "to" in body["period"]
-        assert "metrics" in body
-        assert body["metrics"]["events_per_day"] == FAKE_METRICS["events_per_day"]
-        assert body["metrics"]["error_rate_by_type"] == FAKE_METRICS["error_rate_by_type"]
-        assert isinstance(body["metrics"]["events_per_day"], list)
+        assert "task_id" in body
+        assert body["task_id"] == "fake-task-uuid-1234"
 
-    def test_default_window_is_7_days_utc(self, report_env):
-        """Sin parámetros → el pipeline recibe una ventana de ~7 días UTC."""
+    def test_enqueues_celery_task_with_default_window(self, report_env):
+        """Sin parámetros → send_task recibe la tarea con ventana ~7 días."""
         client = report_env["client"]
         response = client.get("/telemetry/report")
-        assert response.status_code == 200
+        assert response.status_code == 202
 
         calls = report_env["calls"]
         assert len(calls) == 1
-        start, end = calls[0]["start"], calls[0]["end"]
+        assert calls[0]["name"] == "generate_telemetry_report"
+        # args son strings ISO, verificar que la ventana es ~7 días
+        start = datetime.fromisoformat(calls[0]["args"][0])
+        end = datetime.fromisoformat(calls[0]["args"][1])
         assert start.tzinfo is not None
         assert end.tzinfo is not None
         assert timedelta(days=6, hours=23) < (end - start) <= timedelta(days=7)
 
-    def test_explicit_dates_are_passed_to_pipeline(self, report_env):
-        """start_date y end_date explícitos llegan al pipeline normalizados UTC."""
+    def test_explicit_dates_are_passed_to_celery(self, report_env):
+        """start_date y end_date explícitos llegan a send_task normalizados UTC."""
         client = report_env["client"]
         start = "2026-10-01T00:00:00Z"
         end = "2026-10-08T00:00:00Z"
         response = client.get(f"/telemetry/report?start_date={start}&end_date={end}")
-        assert response.status_code == 200
+        assert response.status_code == 202
 
         calls = report_env["calls"]
         assert len(calls) == 1
-        resolved_start, resolved_end = calls[0]["start"], calls[0]["end"]
+        resolved_start = datetime.fromisoformat(calls[0]["args"][0])
+        resolved_end = datetime.fromisoformat(calls[0]["args"][1])
         assert resolved_start == datetime(2026, 10, 1, tzinfo=timezone.utc)
         assert resolved_end == datetime(2026, 10, 8, tzinfo=timezone.utc)
-        assert response.json()["period"]["from"].startswith("2026-10-01")
-        assert response.json()["period"]["to"].startswith("2026-10-08")
-
-    def test_same_window_is_cached(self, report_env):
-        """Misma ventana → el pipeline se ejecuta una sola vez (cache)."""
-        client = report_env["client"]
-        assert client.get("/telemetry/report").status_code == 200
-        assert client.get("/telemetry/report").status_code == 200
-        assert len(report_env["calls"]) == 1
-
-    def test_expired_cache_recalculates(self, report_env):
-        """Cache expirado → el pipeline se ejecuta de nuevo."""
-        client = report_env["client"]
-        assert client.get("/telemetry/report").status_code == 200
-        assert len(report_env["calls"]) == 1
-
-        # Forzar expiración del almacén interno del cache
-        for key, (expires_at, value) in list(telemetry_report_cache._store.items()):
-            telemetry_report_cache._store[key] = (time.monotonic() - 1, value)
-
-        assert client.get("/telemetry/report").status_code == 200
-        assert len(report_env["calls"]) == 2
-
-    def test_different_window_is_computed_again(self, report_env):
-        """Otra ventana → no golpea el cache de la ventana anterior."""
-        client = report_env["client"]
-        assert client.get("/telemetry/report").status_code == 200
-        assert len(report_env["calls"]) == 1
-
-        response = client.get(
-            "/telemetry/report?start_date=2026-09-01T00:00:00Z&end_date=2026-09-08T00:00:00Z"
-        )
-        assert response.status_code == 200
-        assert len(report_env["calls"]) == 2
 
     def test_invalid_window_returns_422(self, report_env):
         """start_date >= end_date → 422."""
@@ -227,32 +163,140 @@ class TestTelemetryReportEndpoint:
     def test_missing_database_returns_503(self, monkeypatch):
         """Sin DATABASE_URL configurada → 503."""
         monkeypatch.setattr(telemetry_routes, "telemetry_engine", None)
-        monkeypatch.setattr(telemetry_routes, "Session", FakeSession)
-        monkeypatch.setattr(
-            telemetry_routes,
-            "build_telemetry_report",
-            lambda session, start, end: FAKE_METRICS,
-        )
         app.dependency_overrides[get_current_user] = lambda: CurrentUser(
             id="test-admin", email="admin@example.com", role="admin",
         )
-        telemetry_report_cache.invalidate_all()
         try:
             with TestClient(app) as client:
                 response = client.get("/telemetry/report")
             assert response.status_code == 503
         finally:
             app.dependency_overrides.clear()
-            telemetry_report_cache.invalidate_all()
 
     def test_requires_authentication(self, report_env):
         """Sin token (sin override de auth) → 401."""
         app.dependency_overrides.clear()
-        telemetry_report_cache.invalidate_all()
         try:
             with TestClient(app, raise_server_exceptions=False) as client:
                 response = client.get("/telemetry/report")
             assert response.status_code in (401, 403)
         finally:
             app.dependency_overrides.clear()
-            telemetry_report_cache.invalidate_all()
+
+
+# ---------------------------------------------------------------------------
+# Tests del endpoint GET /tasks/{task_id}
+# ---------------------------------------------------------------------------
+
+
+class TestTaskStatusEndpoint:
+    def test_returns_pending_for_unknown_task(self, monkeypatch):
+        """Tarea que no existe en Redis → status pending."""
+        mock_async_result = MagicMock()
+        mock_async_result.state = "PENDING"
+        mock_async_result.result = None
+
+        def fake_async_result(task_id, app):
+            return mock_async_result
+
+        monkeypatch.setattr("routes.tasks.AsyncResult", fake_async_result)
+
+        app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+            id="test-admin", email="admin@example.com", role="admin",
+        )
+        try:
+            with TestClient(app) as client:
+                response = client.get("/tasks/some-unknown-uuid")
+            assert response.status_code == 200
+            body = response.json()
+            assert body["task_id"] == "some-unknown-uuid"
+            assert body["status"] == "pending"
+            assert "result" not in body
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_returns_success_with_result(self, monkeypatch):
+        """Tarea completada con éxito → status success + result."""
+        mock_async_result = MagicMock()
+        mock_async_result.state = "SUCCESS"
+        mock_async_result.result = {"period": {"from": "...", "to": "..."}, "metrics": {}}
+
+        def fake_async_result(task_id, app):
+            return mock_async_result
+
+        monkeypatch.setattr("routes.tasks.AsyncResult", fake_async_result)
+
+        app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+            id="test-admin", email="admin@example.com", role="admin",
+        )
+        try:
+            with TestClient(app) as client:
+                response = client.get("/tasks/some-uuid")
+            assert response.status_code == 200
+            body = response.json()
+            assert body["task_id"] == "some-uuid"
+            assert body["status"] == "success"
+            assert "period" in body["result"]
+            assert "metrics" in body["result"]
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_returns_failure_with_error(self, monkeypatch):
+        """Tarea que falló → status failure + error message."""
+        mock_async_result = MagicMock()
+        mock_async_result.state = "FAILURE"
+        mock_async_result.result = RuntimeError("DB connection lost")
+
+        def fake_async_result(task_id, app):
+            return mock_async_result
+
+        monkeypatch.setattr("routes.tasks.AsyncResult", fake_async_result)
+
+        app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+            id="test-admin", email="admin@example.com", role="admin",
+        )
+        try:
+            with TestClient(app) as client:
+                response = client.get("/tasks/some-uuid")
+            assert response.status_code == 200
+            body = response.json()
+            assert body["task_id"] == "some-uuid"
+            assert body["status"] == "failure"
+            assert "error" in body["result"]
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_returns_started_for_running_task(self, monkeypatch):
+        """Tarea en ejecución → status started."""
+        mock_async_result = MagicMock()
+        mock_async_result.state = "STARTED"
+        mock_async_result.result = None
+
+        def fake_async_result(task_id, app):
+            return mock_async_result
+
+        monkeypatch.setattr("routes.tasks.AsyncResult", fake_async_result)
+
+        app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+            id="test-admin", email="admin@example.com", role="admin",
+        )
+        try:
+            with TestClient(app) as client:
+                response = client.get("/tasks/some-uuid")
+            assert response.status_code == 200
+            body = response.json()
+            assert body["task_id"] == "some-uuid"
+            assert body["status"] == "started"
+            assert "result" not in body
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_requires_authentication(self, monkeypatch):
+        """Sin token → 401."""
+        app.dependency_overrides.clear()
+        try:
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.get("/tasks/some-uuid")
+            assert response.status_code in (401, 403)
+        finally:
+            app.dependency_overrides.clear()

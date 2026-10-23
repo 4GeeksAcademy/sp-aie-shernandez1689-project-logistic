@@ -6,10 +6,11 @@
   inválidos **sin cancelar el lote**, y persiste los válidos en Supabase en
   una única operación de bulk insert.
 
-* ``GET /telemetry/report`` — endpoint de reporte técnico. Resuelve la ventana
-  (por defecto últimos 7 días UTC, inicio inclusivo / fin exclusivo) **una
-  sola vez**, llama al pipeline de ``services/telemetry`` y cachea el
-  resultado 60 s (TTL) para no recalcular en cada request.
+* ``GET /telemetry/report`` — endpoint de reporte técnico asíncrono. Resuelve
+  la ventana temporal (por defecto últimos 7 días UTC) **una sola vez**, encola
+  la tarea Celery ``generate_telemetry_report`` y devuelve inmediatamente
+  ``202 Accepted`` con ``{"task_id": "..."}``. El cliente debe consultar
+  ``GET /tasks/{task_id}`` para obtener el resultado final.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError as PydanticValidationError
 from sqlmodel import Session
 
@@ -33,13 +34,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from auth import get_current_user  # noqa: E402
-from cache import (  # noqa: E402
-    CACHE_KEY_TELEMETRY_REPORT,
-    telemetry_report_cache,
-)
 from db_telemetry import engine as telemetry_engine  # noqa: E402
 from models import TelemetryEvent, TelemetryEventRecord  # noqa: E402
-from services.telemetry import build_telemetry_report  # noqa: E402
+from services.celery_app import celery_app  # noqa: E402
 
 
 API_DIR = Path(__file__).resolve().parents[1]
@@ -276,28 +273,6 @@ def ingest_telemetry_events(body: TelemetryIngestRequest) -> TelemetryIngestResp
 # ---------------------------------------------------------------------------
 
 
-class TelemetryPeriod(BaseModel):
-    """Ventana temporal resuelta del reporte (UTC, ISO 8601)."""
-
-    from_: str = Field(..., alias="from")
-    to: str
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class TelemetryReportResponse(BaseModel):
-    """Cuerpo de ``GET /telemetry/report``.
-
-    Estructura fija del tele-report.md:
-    ``{ "period": {"from", "to"}, "metrics": { <métrica>: [...] } }``.
-    ``metrics`` es un dict abierto porque el catálogo de métricas del
-    pipeline puede crecer sin romper el contrato del endpoint.
-    """
-
-    period: TelemetryPeriod
-    metrics: dict[str, list[dict[str, Any]]]
-
-
 def _round_to_minute(dt: datetime) -> datetime:
     """Trunca un datetime a la resolución del minuto completo.
 
@@ -336,16 +311,16 @@ def _resolve_period(
     return a.astimezone(timezone.utc), b.astimezone(timezone.utc)
 
 
-def _build_cache_key(start_date: datetime, end_date: datetime) -> str:
-    return (
-        f"{CACHE_KEY_TELEMETRY_REPORT}"
-        f"{start_date.isoformat()}|{end_date.isoformat()}"
-    )
+class TaskEnqueuedResponse(BaseModel):
+    """Respuesta inmediata cuando una operación pesada se encola."""
+
+    task_id: str
 
 
 @router.get(
     "/report",
-    response_model=TelemetryReportResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=TaskEnqueuedResponse,
     dependencies=[Depends(get_current_user)],
 )
 def get_telemetry_report(
@@ -357,12 +332,16 @@ def get_telemetry_report(
         default=None,
         description="Fin exclusivo de la ventana (ISO 8601). Por defecto now.",
     ),
-) -> TelemetryReportResponse:
-    """Reporte técnico de telemetría.
+) -> TaskEnqueuedResponse:
+    """Reporte técnico de telemetría (asíncrono).
 
-    El pipeline de análisis vive en ``services/telemetry``; este endpoint se
-    limita a: resolver la ventana **una vez**, llamar al pipeline con ella y
-    cachear el resultado 60 s para no recalcular en cada request.
+    En lugar de ejecutar el pipeline de análisis de forma síncrona, este
+    endpoint encola la tarea ``generate_telemetry_report`` en Celery y
+    devuelve inmediatamente un ``task_id``. El cliente puede usar
+    ``GET /tasks/{task_id}`` para consultar el progreso y resultado.
+
+    La ventana temporal se resuelve en el momento de encolar (una sola vez),
+    igual que en la versión síncrona anterior.
     """
     if telemetry_engine is None:
         raise HTTPException(
@@ -375,15 +354,16 @@ def get_telemetry_report(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    cache_key = _build_cache_key(start, end)
-    hit, cached = telemetry_report_cache.get(cache_key)
-    if hit:
-        return cached
+    task = celery_app.send_task(
+        "generate_telemetry_report",
+        args=[start.isoformat(), end.isoformat()],
+    )
 
-    with Session(telemetry_engine) as session:
-        metrics = build_telemetry_report(session, start, end)
+    logger.info(
+        "Telemetry report task enqueued: task_id=%s, window=%s – %s",
+        task.id,
+        start.isoformat(),
+        end.isoformat(),
+    )
 
-    period = TelemetryPeriod(from_=start.isoformat(), to=end.isoformat())
-    response = TelemetryReportResponse(period=period, metrics=metrics)
-    telemetry_report_cache.set(cache_key, response)
-    return response
+    return TaskEnqueuedResponse(task_id=task.id)
