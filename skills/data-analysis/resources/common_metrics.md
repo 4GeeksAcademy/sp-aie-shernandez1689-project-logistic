@@ -30,4 +30,24 @@ Definitions and formulas for KPIs used across transversal projects. Adapt to com
 
 ---
 
+## Forecasting / Demand (TrackFlow — sales forecast milestone)
+
+- **MSE (EUR²)**: `Σ (y − ŷ)² / n`. Mean squared error of forecast vs actual.
+- **MSE % of mean income**: `100 · MSE / mean(y_test)²`. Relative cost of error,
+  understandable by non-technical stakeholders (Thomas, Ana).
+- **PSI (Population Stability Index)**: `Σ (p_obs − p_exp) · ln(p_obs / p_exp)`
+  over decile buckets. Detects distribution shift between train and test — for
+  TrackFlow, the LA/ZGZ volume-mix change signal.
+- **Gini (as 2·AUC−1)**: probability that, for two different months, the model
+  ranks them correctly (pairwise concordance). High Gini ⇒ Thomas can distinguish
+  a normal low season (Feb) from an atypical drop. Low MSE alone does not imply
+  high Gini (mean-compressed predictions rank poorly).
+- **K2 Score**: `1 − Var(y − ŷ) / Var(y)`. Fraction of target variance explained
+  by the model (R²-style, without requiring zero-mean residuals on test).
+- **Why MSE is not enough**: MSE is an average of squared errors — it says
+  nothing about ordering quality (Gini), distribution shift (PSI) or variance
+  explained (K2). Report all four.
+
+---
+
 _Extend this file as you add metrics for your milestone._
