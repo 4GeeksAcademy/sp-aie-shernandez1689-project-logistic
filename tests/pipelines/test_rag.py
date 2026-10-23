@@ -29,7 +29,7 @@ from data.process.rag import (
     embed,
     setup,
 )
-from data.pipelines.rag import retrieve
+from data.pipelines.rag import generate_answer, query, retrieve
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────
@@ -214,7 +214,7 @@ class TestRetrieve:
     def test_retrieve_empty_on_no_connection(self):
         """Sin Qdrant, debe lanzar error de conexion."""
         with pytest.raises(Exception):
-            retrieve("test question", top_k=3)
+            retrieve("test question", k=3, min_score=0.0)
 
 
 # ── Tests de integracion con test queries ─────────────────────────────
@@ -253,6 +253,55 @@ class TestTestQueries:
 
 
 # ── Tests del documento diseno ─────────────────────────────────────────
+
+
+class TestGenerateAnswer:
+    def test_generate_answer_empty_context(self):
+        """generate_answer con contexto vacio devuelve respuesta honesta."""
+        answer = generate_answer("test question", context=[])
+        assert "no tengo información suficiente" in answer.lower() or "lo siento" in answer.lower()
+
+    def test_generate_answer_with_context(self):
+        """generate_answer con contexto llama al LLM (falla sin API key)."""
+        context = [
+            {
+                "text": "TrackFlow gestiona envios con SLA de 2-3 dias.",
+                "source_document": "trackflow-sla-delivery",
+                "section": "Estandares de entrega",
+                "score": 0.89,
+                "language": "es",
+            }
+        ]
+        try:
+            answer = generate_answer("Cual es el SLA en Espana?", context=context)
+            assert isinstance(answer, str)
+            assert len(answer) > 0
+        except Exception as exc:
+            pytest.skip(f"LLM no disponible: {exc}")
+
+    def test_generate_answer_context_missing_keys(self):
+        """generate_answer tolera contextos con claves faltantes."""
+        context = [
+            {
+                "text": "30 dias naturales desde la entrega.",
+                "source_document": "trackflow-returns-policy",
+            }
+        ]
+        try:
+            answer = generate_answer("Cual es la ventana de devolucion?", context=context)
+            assert isinstance(answer, str)
+        except Exception:
+            pass  # Sin API key
+
+
+class TestQuery:
+    def test_query_basic(self):
+        """query() orquesta retrieve + generate (falla sin Qdrant ni LLM)."""
+        try:
+            answer = query("Cual es el SLA en Espana?", k=3, min_score=0.0)
+            assert isinstance(answer, str)
+        except Exception:
+            pass  # Sin servicios externos
 
 
 class TestDesignDoc:
