@@ -16,6 +16,9 @@ from routes.telemetry import router as telemetry_router
 # Router de reporting — separado de telemetry (Brifing-pipeline.md §6-§7).
 from services.reporting import router as reporting_router  # noqa: E402
 
+# RAG router — base de conocimiento de TrackFlow.
+from routes.rag import router as rag_router  # noqa: E402
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -43,6 +46,10 @@ app.include_router(tasks_router)
 #  GET  /reporting/pipeline-runs/latest                  — metadata última corrida
 #  POST /reporting/pipeline-runs                         — disparo manual
 app.include_router(reporting_router)
+
+# Endpoint RAG — base de conocimiento.
+#  POST /api/rag/query  — responder pregunta con contexto recuperado
+app.include_router(rag_router)
 
 
 @app.exception_handler(RequestValidationError)

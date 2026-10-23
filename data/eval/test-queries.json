@@ -1,0 +1,62 @@
+[
+  {
+    "id": 1,
+    "question": "¿Cuál es el SLA de entrega estándar para España peninsular?",
+    "expected_source": "trackflow-sla-delivery",
+    "expected_section": "Estándares de entrega"
+  },
+  {
+    "id": 2,
+    "question": "¿Qué plazo de devolución ofrece TrackFlow?",
+    "expected_source": "trackflow-returns-policy",
+    "expected_section": "Ventana de devolución"
+  },
+  {
+    "id": 3,
+    "question": "¿Qué transportista cubre mejor Aragón rural?",
+    "expected_source": "trackflow-carrier-coverage",
+    "expected_section": "Aragón rural"
+  },
+  {
+    "id": 4,
+    "question": "¿Cuánto cuesta el almacenaje de un palet estándar por día?",
+    "expected_source": "trackflow-storage-pricing",
+    "expected_section": "Tarifas base"
+  },
+  {
+    "id": 5,
+    "question": "¿Se pueden devolver productos internacionalmente de forma automática?",
+    "expected_source": "trackflow-returns-policy",
+    "expected_section": "Devoluciones internacionales"
+  },
+  {
+    "id": 6,
+    "question": "¿Qué sucede con los SLAs durante Black Friday?",
+    "expected_source": "trackflow-sla-delivery",
+    "expected_section": "Excepciones por alta demanda"
+  },
+  {
+    "id": 7,
+    "question": "¿Hay descuentos por volumen en almacenamiento?",
+    "expected_source": "trackflow-storage-pricing",
+    "expected_section": "Descuentos por volumen"
+  },
+  {
+    "id": 8,
+    "question": "¿Qué transportistas están disponibles para envíos en Estados Unidos?",
+    "expected_source": "trackflow-carrier-coverage",
+    "expected_section": "Estados Unidos"
+  },
+  {
+    "id": 9,
+    "question": "¿Cuánto tiempo tarda un reembolso después de una devolución en España?",
+    "expected_source": "trackflow-returns-policy",
+    "expected_section": "Devoluciones nacionales"
+  },
+  {
+    "id": 10,
+    "question": "Durante el pico de demanda del Black Friday, ¿siguen aplicando las penalizaciones por incumplimiento de SLA?",
+    "expected_source": "trackflow-sla-delivery",
+    "expected_section": "Penalizaciones por incumplimiento"
+  }
+]
