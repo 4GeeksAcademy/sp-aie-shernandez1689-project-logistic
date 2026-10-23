@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "thread_id": "eval_policy_discount",
+  "started_at": "2026-10-23T19:21:23+00:00",
+  "completed_at": "2026-10-23T19:21:23+00:00",
+  "question": "¿Qué aprobación requiere un descuento fuera de los rangos documentados?",
+  "steps": [
+    {
+      "seq": 1,
+      "node": "validate",
+      "started_at": "2026-10-23T19:21:23+00:00",
+      "output": {
+        "question": "¿Qué aprobación requiere un descuento fuera de los rangos documentados?"
+      }
+    },
+    {
+      "seq": 2,
+      "node": "retrieve",
+      "started_at": "2026-10-23T19:21:23+00:00",
+      "output": {
+        "context": [
+          {
+            "text": "Cualquier descuento fuera de los rangos anteriores requiere aprobación\nde Miguel Torres (Dirección Comercial).",
+            "source_document": "trackflow-storage-pricing",
+            "section": "Descuentos por volumen",
+            "score": 0.87,
+            "language": "es"
+          }
+        ],
+        "n_hits": 1,
+        "sources": [
+          "trackflow-storage-pricing"
+        ]
+      }
+    },
+    {
+      "seq": 3,
+      "node": "generate",
+      "started_at": "2026-10-23T19:21:23+00:00",
+      "output": {
+        "answer": "Cualquier descuento fuera de los rangos documentados requiere aprobación de Miguel Torres (Dirección Comercial). [Fuente: trackflow-storage-pricing / Descuentos por volumen]"
+      }
+    }
+  ],
+  "final_state": {
+    "question": "¿Qué aprobación requiere un descuento fuera de los rangos documentados?",
+    "context": [
+      {
+        "text": "Cualquier descuento fuera de los rangos anteriores requiere aprobación\nde Miguel Torres (Dirección Comercial).",
+        "source_document": "trackflow-storage-pricing",
+        "section": "Descuentos por volumen",
+        "score": 0.87,
+        "language": "es"
+      }
+    ],
+    "answer": "Cualquier descuento fuera de los rangos documentados requiere aprobación de Miguel Torres (Dirección Comercial). [Fuente: trackflow-storage-pricing / Descuentos por volumen]"
+  }
+}
