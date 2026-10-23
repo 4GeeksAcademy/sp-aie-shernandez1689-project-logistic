@@ -1,0 +1,6 @@
+id,timestamp,service,event_type,level,value,message,tags
+80230d1c-f1a1-48df-8c80-448a0df0faee,2026-10-20T08:00:58.120579+00:00,backoffice,inbound_order_created,info,150,Inbound order,"{'quantity': 50, 'client_id': 'fashion-co', 'warehouse': 'los_angeles'}"
+da6190a8-114c-47b1-b31a-0519518dc09f,2026-10-20T09:00:58.120579+00:00,backoffice,outbound_order_created,info,,Outbound order,"{'quantity': 20, 'client_id': 'urban-thread', 'warehouse': 'zaragoza'}"
+66e8c905-c99d-45f7-9eea-db2a1f2e2747,2026-10-20T10:00:58.120579+00:00,backoffice,stock_threshold_triggered,warn,,Stock alert,"{'client_id': 'fashion-co', 'warehouse': 'los_angeles'}"
+71a6dbb7-5ed7-49f1-ba9f-7b62dc3d8047,2026-10-20T11:00:58.120579+00:00,backoffice,inventory_discrepancy_detected,warn,,Discrepancy,"{'client_id': 'urban-thread', 'warehouse': 'zaragoza'}"
+9c5f8efd-c5ed-4ace-bd86-48a6a03aa755,2026-10-20T12:00:58.120579+00:00,api,user_login,info,,Login event,{'user': 'test'}
