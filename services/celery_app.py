@@ -44,6 +44,9 @@ celery_app.conf.update(
     enable_utc=True,
     # TTL por defecto para resultados (1 hora)
     result_expires=3600,
+    # Transicionar a STARTED cuando el worker empieza a ejecutar
+    # (necesario para Flower y GET /tasks/{task_id} → status="started")
+    task_track_started=True,
     # Tareas importadas automáticamente
     include=["services.celery_tasks"],
 )
