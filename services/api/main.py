@@ -19,6 +19,10 @@ from services.reporting import router as reporting_router  # noqa: E402
 # RAG router — base de conocimiento de TrackFlow.
 from routes.rag import router as rag_router  # noqa: E402
 
+# Knowledge query endpoint — endpoint público mínimo (Fase 3).
+#  POST /knowledge/query  — pregunta → respuesta generada, sin crudos Qdrant.
+from routes.knowledge import router as knowledge_router  # noqa: E402
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -50,6 +54,10 @@ app.include_router(reporting_router)
 # Endpoint RAG — base de conocimiento.
 #  POST /api/rag/query  — responder pregunta con contexto recuperado
 app.include_router(rag_router)
+
+# Endpoint Knowledge — capa pública simplificada.
+#  POST /knowledge/query  — pregunta -> solo respuesta generada
+app.include_router(knowledge_router)
 
 
 @app.exception_handler(RequestValidationError)
