@@ -36,6 +36,7 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY}
       EMAIL_FROM: ${EMAIL_FROM}
       RESET_PASSWORD_URL: ${RESET_PASSWORD_URL:?Define RESET_PASSWORD_URL in .env}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "${BACKEND_PORT:?Define BACKEND_PORT in .env}:8000"
     volumes:
@@ -47,6 +48,56 @@ services:
   # ── Scheduler nocturno (worker independiente) ────────────────────
   # NO comparte el hilo principal de la API. Corre el pipeline
   # semanal via cron del SO. Ver infra/crontab para la expresión.
+  # ── Redis (broker para Celery) ────────────────────────────────
+  # Política noeviction: cuando la memoria se llena, Redis rechaza
+  # escrituras en vez de desalojar claves. Es la elección correcta
+  # para un broker de tareas donde perder mensajes no es aceptable.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    restart: unless-stopped
+    networks:
+      - development
+
+  # ── Flower (monitor Celery) ───────────────────────────────────
+  # Interfaz web para monitorizar workers, colas y tareas.
+  # Accesible en http://localhost:5555
+  flower:
+    image: mher/flower:2.0
+    command:
+      - --broker=${REDIS_URL:-redis://redis:6379/0}
+      - --port=5555
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - development
+
+  # ── Worker Celery (proceso independiente) ────────────────────
+  # NO comparte el hilo principal de la API. Corre tareas
+  # asíncronas (generate_telemetry_report, ping, etc.) como
+  # worker independiente. Desacoplado del ciclo de vida de
+  # FastAPI.
+  # Para escalar: docker compose up -d worker --scale worker=4
+  worker:
+    build:
+      context: .
+      dockerfile: infra/worker.Dockerfile
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - development
+
   scheduler:
     build:
       context: .
@@ -54,6 +105,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       TARGET_DATE: ${TARGET_DATE:-}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     restart: unless-stopped
     networks:
       - development

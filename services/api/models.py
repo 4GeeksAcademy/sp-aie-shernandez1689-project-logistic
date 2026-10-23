@@ -6,7 +6,7 @@ from typing import Any, ClassVar, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, PositiveFloat, field_validator, model_validator
-from sqlalchemy import Column, DateTime, Index, Numeric, Text, text
+from sqlalchemy import Column, DateTime, Index, Integer, Numeric, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlmodel import Field as SQLField, SQLModel
 
@@ -309,5 +309,74 @@ class TelemetryEventRecord(SQLModel, table=True):
             nullable=False,
             server_default=text("'{}'::jsonb"),
             comment="properties del envelope (solo claves del allowlist)",
+        ),
+    )
+
+
+# --- Celery Dead Letter Queue ----------------------------------------------
+
+
+class CeleryTaskFailure(SQLModel, table=True):
+    """Registro de tareas de Celery que agotaron todos los reintentos.
+
+    Cada fila representa una tarea que falló definitivamente tras superar
+    ``max_retries``. Se inserta desde el hook ``on_failure`` de la clase base
+    ``DatabaseTask``.
+
+    Invariantes:
+    - Solo escritura (INSERT). Nunca UPDATE ni DELETE.
+    - ``failed_at`` se genera en la aplicación (UTC).
+    - ``task_name`` + ``task_id`` identifican unívocamente el fallo.
+    """
+
+    __tablename__ = "celery_task_failures"  # type: ignore
+
+    id: int | None = SQLField(
+        default=None,
+        primary_key=True,
+        sa_column_kwargs={"comment": "Identificador autoincremental"},
+    )
+    task_id: str = SQLField(
+        sa_column=Column(
+            Text,
+            nullable=False,
+            comment="ID único de la tarea Celery (UUID)",
+        ),
+    )
+    task_name: str = SQLField(
+        sa_column=Column(
+            Text,
+            nullable=False,
+            comment="Nombre registrado de la tarea (ej. generate_telemetry_report)",
+        ),
+    )
+    attempt: int = SQLField(
+        sa_column=Column(
+            Integer,
+            nullable=False,
+            comment="Número de intento en el que falló (max_retries + 1)",
+        ),
+    )
+    error: str = SQLField(
+        sa_column=Column(
+            Text,
+            nullable=False,
+            comment="Mensaje de la excepción que causó el fallo definitivo",
+        ),
+    )
+    traceback: str | None = SQLField(
+        default=None,
+        sa_column=Column(
+            Text,
+            nullable=True,
+            comment="Traceback completo de la excepción, si está disponible",
+        ),
+    )
+    failed_at: datetime = SQLField(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=False,
+            comment="Timestamp UTC del fallo definitivo",
         ),
     )
