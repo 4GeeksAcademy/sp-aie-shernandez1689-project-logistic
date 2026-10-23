@@ -79,6 +79,25 @@ services:
     networks:
       - development
 
+  # ── Worker Celery (proceso independiente) ────────────────────
+  # NO comparte el hilo principal de la API. Corre tareas
+  # asíncronas (generate_telemetry_report, ping, etc.) como
+  # worker independiente. Desacoplado del ciclo de vida de
+  # FastAPI.
+  # Para escalar: docker compose up -d worker --scale worker=4
+  worker:
+    build:
+      context: .
+      dockerfile: infra/worker.Dockerfile
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - development
+
   scheduler:
     build:
       context: .
