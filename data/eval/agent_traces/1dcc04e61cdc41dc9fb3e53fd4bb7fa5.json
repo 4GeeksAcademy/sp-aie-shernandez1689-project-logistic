@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "thread_id": "1dcc04e61cdc41dc9fb3e53fd4bb7fa5",
+  "started_at": "2026-10-23T19:34:46+00:00",
+  "completed_at": null,
+  "question": "¿Cuál es el SLA?",
+  "steps": [
+    {
+      "seq": 1,
+      "node": "validate",
+      "started_at": "2026-10-23T19:34:46+00:00",
+      "output": {
+        "question": "¿Cuál es el SLA?"
+      }
+    }
+  ],
+  "final_state": {}
+}

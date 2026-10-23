@@ -23,6 +23,10 @@ from routes.rag import router as rag_router  # noqa: E402
 #  POST /knowledge/query  — pregunta → respuesta generada, sin crudos Qdrant.
 from routes.knowledge import router as knowledge_router  # noqa: E402
 
+# Agent endpoint — grafo LangGraph (services/rag_agent/graph.py).
+#  POST /agent/query — invoca el grafo compilado (sin lógica de negocio).
+from routes.agent import router as agent_router  # noqa: E402
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -58,6 +62,11 @@ app.include_router(rag_router)
 # Endpoint Knowledge — capa pública simplificada.
 #  POST /knowledge/query  — pregunta -> solo respuesta generada
 app.include_router(knowledge_router)
+
+# Endpoint Agente — grafo LangGraph sobre el mismo knowledge base.
+#  POST /agent/query      — pregunta -> grafo (retrieve condicional + generate)
+#  GET  /agent/health
+app.include_router(agent_router)
 
 
 @app.exception_handler(RequestValidationError)

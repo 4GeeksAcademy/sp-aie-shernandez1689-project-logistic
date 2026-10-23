@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "thread_id": "9a2eb796388a4c01927594da98c746bc",
+  "started_at": "2026-10-23T19:34:20+00:00",
+  "completed_at": "2026-10-23T19:34:20+00:00",
+  "question": "   ",
+  "steps": [
+    {
+      "seq": 1,
+      "node": "validate",
+      "started_at": "2026-10-23T19:34:20+00:00",
+      "output": {
+        "error": "La pregunta está vacía."
+      }
+    },
+    {
+      "seq": 2,
+      "node": "error",
+      "started_at": "2026-10-23T19:34:20+00:00",
+      "output": {
+        "answer": "Error: La pregunta está vacía."
+      }
+    }
+  ],
+  "final_state": {
+    "question": "   ",
+    "answer": "Error: La pregunta está vacía.",
+    "error": "La pregunta está vacía."
+  }
+}
