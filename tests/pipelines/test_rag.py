@@ -14,6 +14,8 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -207,10 +209,164 @@ class TestEmbed:
             pass  # Sin API key
 
 
-# ── Tests de retrieve ──────────────────────────────────────────────────
+# ── Tests de retrieve (con Qdrant simulado) ──────────────────────────
 
 
 class TestRetrieve:
+    """Pruebas de retrieve() con cliente Qdrant simulado en memoria.
+    
+    Ninguna prueba conecta con Qdrant real. Se simulan los ScoredPoint
+    que devuelve el cliente y se verifica el filtrado por min_score
+    y el límite de resultados.
+    """
+
+    # ── helpers ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _fake_scored_point(
+        score: float,
+        text: str = "",
+        source_document: str = "doc",
+        section: str = "General",
+        language: str = "es",
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            score=score,
+            payload={
+                "text": text,
+                "source_document": source_document,
+                "section": section,
+                "language": language,
+            },
+        )
+
+    # ── tests ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _search_with_threshold(all_points, score_threshold, limit):
+        """Simula el filtro server-side de Qdrant: solo retorna puntos
+        con score >= score_threshold, hasta un máximo de `limit`."""
+        filtered = [p for p in all_points if p.score >= score_threshold]
+        return filtered[:limit]
+
+    def test_retrieve_excludes_below_min_score(self):
+        """Resultados por debajo de min_score son excluidos."""
+        all_points = [
+            self._fake_scored_point(0.32, "bajo", "doc1"),
+            self._fake_scored_point(0.78, "alto", "doc2"),
+        ]
+        mock_client = MagicMock()
+        mock_client.search.side_effect = lambda **kw: self._search_with_threshold(
+            all_points, kw.get("score_threshold", 0.0), kw.get("limit", 5)
+        )
+
+        with (
+            patch("data.pipelines.rag._get_qdrant", return_value=mock_client),
+            patch("data.pipelines.rag.embed", return_value=[0.1] * 8),
+        ):
+            results = retrieve("test", min_score=0.5)
+
+        assert len(results) == 1
+        assert results[0]["text"] == "alto"
+        assert results[0]["score"] == 0.78
+
+    def test_retrieve_returns_fewer_than_k(self):
+        """Pueden devolverse menos de k resultados si no hay suficientes."""
+        all_points = [self._fake_scored_point(0.85, "unico", "doc1")]
+        mock_client = MagicMock()
+        mock_client.search.side_effect = lambda **kw: self._search_with_threshold(
+            all_points, kw.get("score_threshold", 0.0), kw.get("limit", 5)
+        )
+
+        with (
+            patch("data.pipelines.rag._get_qdrant", return_value=mock_client),
+            patch("data.pipelines.rag.embed", return_value=[0.1] * 8),
+        ):
+            results = retrieve("test", k=5, min_score=0.5)
+
+        assert len(results) == 1
+        assert results[0]["score"] == 0.85
+
+    def test_retrieve_all_below_threshold_returns_empty(self):
+        """Todos los resultados bajo el umbral devuelven lista vacia."""
+        all_points = [
+            self._fake_scored_point(0.12, "bajo1", "doc1"),
+            self._fake_scored_point(0.23, "bajo2", "doc2"),
+            self._fake_scored_point(0.34, "bajo3", "doc3"),
+        ]
+        mock_client = MagicMock()
+        mock_client.search.side_effect = lambda **kw: self._search_with_threshold(
+            all_points, kw.get("score_threshold", 0.0), kw.get("limit", 5)
+        )
+
+        with (
+            patch("data.pipelines.rag._get_qdrant", return_value=mock_client),
+            patch("data.pipelines.rag.embed", return_value=[0.1] * 8),
+        ):
+            results = retrieve("test", min_score=0.5)
+
+        assert results == []
+
+    def test_retrieve_all_above_threshold_returns_all(self):
+        """Todos los resultados sobre el umbral se retornan."""
+        all_points = [
+            self._fake_scored_point(0.91, "a", "doc1"),
+            self._fake_scored_point(0.82, "b", "doc2"),
+        ]
+        mock_client = MagicMock()
+        mock_client.search.side_effect = lambda **kw: self._search_with_threshold(
+            all_points, kw.get("score_threshold", 0.0), kw.get("limit", 5)
+        )
+
+        with (
+            patch("data.pipelines.rag._get_qdrant", return_value=mock_client),
+            patch("data.pipelines.rag.embed", return_value=[0.1] * 8),
+        ):
+            results = retrieve("test", k=5, min_score=0.5)
+
+        assert len(results) == 2
+
+    def test_retrieve_passes_correct_params(self):
+        """Verifica que search() recibe los parametros correctos."""
+        mock_client = MagicMock()
+        mock_client.search.return_value = []
+
+        with (
+            patch("data.pipelines.rag._get_qdrant", return_value=mock_client),
+            patch("data.pipelines.rag.embed", return_value=[0.2] * 8),
+        ):
+            retrieve("mi consulta", k=3, min_score=0.6)
+
+        mock_client.search.assert_called_once_with(
+            collection_name=COLLECTION_NAME,
+            query_vector=[0.2] * 8,
+            limit=3,
+            score_threshold=0.6,
+        )
+
+    def test_retrieve_returns_correct_keys(self):
+        """Cada resultado contiene las claves esperadas."""
+        mock_client = MagicMock()
+        mock_client.search.return_value = [
+            self._fake_scored_point(
+                0.95,
+                text="TrackFlow gestiona envios con SLA de 2-3 dias.",
+                source_document="trackflow-sla-delivery",
+                section="Estandares de entrega",
+                language="es",
+            ),
+        ]
+
+        with (
+            patch("data.pipelines.rag._get_qdrant", return_value=mock_client),
+            patch("data.pipelines.rag.embed", return_value=[0.1] * 8),
+        ):
+            results = retrieve("test", min_score=0.0)
+
+        expected_keys = {"text", "source_document", "section", "score", "language"}
+        assert expected_keys.issubset(results[0].keys())
+        assert results[0]["source_document"] == "trackflow-sla-delivery"
+
     def test_retrieve_empty_on_no_connection(self):
         """Sin Qdrant, debe lanzar error de conexion."""
         with pytest.raises(Exception):
@@ -294,14 +450,102 @@ class TestGenerateAnswer:
             pass  # Sin API key
 
 
-class TestQuery:
-    def test_query_basic(self):
-        """query() orquesta retrieve + generate (falla sin Qdrant ni LLM)."""
-        try:
-            answer = query("Cual es el SLA en Espana?", k=3, min_score=0.0)
-            assert isinstance(answer, str)
-        except Exception:
-            pass  # Sin servicios externos
+class TestQueryMocked:
+    """Pruebas de query() con retrieve() y generate_answer() simulados.
+    
+    query() es el orquestador: retrieve() → generate_answer().
+    Se simulan ambas funciones para verificar que:
+    - Devuelve la salida del modelo (no texto crudo de chunks).
+    - Pasa los parámetros correctos a retrieve().
+    - Pasa el contexto recuperado a generate_answer().
+    """
+    
+    def test_query_returns_model_output(self):
+        """query() devuelve la salida del modelo, no texto crudo."""
+        expected = "El SLA estándar en España peninsular es de 2-3 días laborables."
+        context = [
+            {
+                "text": "Estandar: 2-3 dias laborables",
+                "source_document": "trackflow-sla-delivery",
+                "section": "Espana peninsular",
+                "score": 0.89,
+                "language": "es",
+            }
+        ]
+
+        with (
+            patch("data.pipelines.rag.retrieve", return_value=context),
+            patch("data.pipelines.rag.generate_answer", return_value=expected),
+        ):
+            answer = query("Cual es el SLA en Espana?")
+
+        assert answer == expected
+        assert "2-3 dias" not in answer  # no es texto crudo — es la respuesta del modelo
+
+    def test_query_does_not_pass_raw_chunks_as_answer(self):
+        """query() nunca devuelve texto de chunks sin pasar por generate_answer().
+        Si generate_answer() devuelve algo, eso es lo que se retorna."""
+        chunk_text = "TrackFlow gestiona envios con SLA de 2-3 dias."
+        context = [
+            {
+                "text": chunk_text,
+                "source_document": "trackflow-sla-delivery",
+                "section": "General",
+                "score": 0.95,
+                "language": "es",
+            }
+        ]
+
+        with (
+            patch("data.pipelines.rag.retrieve", return_value=context),
+            patch("data.pipelines.rag.generate_answer", return_value="Respuesta del LLM: 2-3 días."),
+        ):
+            answer = query("test")
+
+        # La respuesta es lo que generate_answer devolvió, no el texto crudo
+        assert answer == "Respuesta del LLM: 2-3 días."
+        assert answer != chunk_text
+
+    def test_query_returns_empty_context_message(self):
+        """query() con retrieve() vacio devuelve el mensaje de generate_answer()."""
+        with (
+            patch("data.pipelines.rag.retrieve", return_value=[]),
+            patch("data.pipelines.rag.generate_answer", return_value="Lo siento, no tengo información suficiente."),
+        ):
+            answer = query("pregunta sin contexto")
+
+        assert "Lo siento" in answer
+        assert "información suficiente" in answer
+
+    def test_query_passes_params_to_retrieve(self):
+        """query() transfiere k y min_score a retrieve()."""
+        with (
+            patch("data.pipelines.rag.retrieve", return_value=[]) as mock_retrieve,
+            patch("data.pipelines.rag.generate_answer", return_value="ok"),
+        ):
+            query("mi pregunta", k=2, min_score=0.7)
+
+        mock_retrieve.assert_called_once_with(query="mi pregunta", k=2, min_score=0.7)
+
+    def test_query_passes_context_to_generate_answer(self):
+        """query() pasa el contexto recuperado a generate_answer()."""
+        context = [
+            {
+                "text": "texto chunk",
+                "source_document": "doc",
+                "section": "Sec",
+                "score": 0.9,
+                "language": "es",
+            }
+        ]
+
+        with (
+            patch("data.pipelines.rag.retrieve", return_value=context),
+            patch("data.pipelines.rag.generate_answer") as mock_generate,
+        ):
+            query("test")
+
+        mock_generate.assert_called_once_with(question="test", context=context)
 
 
 class TestDesignDoc:
