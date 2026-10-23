@@ -1,0 +1,1 @@
+"""Agente RAG basado en LangGraph para TrackFlow."""
