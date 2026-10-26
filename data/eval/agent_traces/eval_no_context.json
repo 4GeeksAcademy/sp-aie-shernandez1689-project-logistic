@@ -1,14 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "thread_id": "eval_no_context",
-  "started_at": "2026-10-26T18:59:34+00:00",
-  "completed_at": "2026-10-26T18:59:34+00:00",
+  "started_at": "2026-10-26T19:51:33+00:00",
+  "completed_at": "2026-10-26T19:51:33+00:00",
   "question": "¿Cuánto cuesta el frío interplanetario?",
   "steps": [
     {
       "seq": 1,
       "node": "validate",
-      "started_at": "2026-10-26T18:59:34+00:00",
+      "started_at": "2026-10-26T19:51:33+00:00",
       "output": {
         "question": "¿Cuánto cuesta el frío interplanetario?"
       }
@@ -16,16 +16,17 @@
     {
       "seq": 2,
       "node": "intent",
-      "started_at": "2026-10-26T18:59:34+00:00",
+      "started_at": "2026-10-26T19:51:33+00:00",
       "output": {
         "incident_query": null,
-        "inventory_query": null
+        "inventory_query": null,
+        "use_rag": true
       }
     },
     {
       "seq": 3,
       "node": "retrieve",
-      "started_at": "2026-10-26T18:59:34+00:00",
+      "started_at": "2026-10-26T19:51:33+00:00",
       "output": {
         "context": [],
         "n_hits": 0,
@@ -35,7 +36,7 @@
     {
       "seq": 4,
       "node": "no_context",
-      "started_at": "2026-10-26T18:59:34+00:00",
+      "started_at": "2026-10-26T19:51:33+00:00",
       "output": {
         "answer": "Lo siento, no tengo información sobre eso en mi base de conocimiento. Consulta con el equipo comercial de TrackFlow para datos actualizados."
       }
@@ -47,7 +48,16 @@
     "answer": "Lo siento, no tengo información sobre eso en mi base de conocimiento. Consulta con el equipo comercial de TrackFlow para datos actualizados.",
     "incident_query": null,
     "inventory_query": null,
+    "use_rag": true,
     "tool_answers": [],
     "tool_context": []
+  },
+  "routing": {
+    "decision": "rag",
+    "used_rag": true,
+    "tools": [],
+    "order": [
+      "rag:retrieve"
+    ]
   }
 }

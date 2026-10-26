@@ -24,18 +24,18 @@ Nodos y aristas
 
   - Solo RAG -> retrieve -> (context?) -> generate -> finalize -> END
                                    -> no_context -> finalize
-  - Solo tool -> tool(s) -> retrieve -> (context?) -> generate (tool-only
-    si no hay KB, RAG+tool si sí) -> finalize -> END
+    - Solo tool -> tool(s) -> generate -> finalize -> END
   - RAG + tool -> tool(s) -> retrieve -> generate (compone tool+context)
     -> finalize -> END
 
-El nodo ``intent`` (arista condicional post-validate) detecta de forma
-conservadora la intención de ticket/incidencia y/o de stock/inventario de
-forma INDEPENDIENTE: puede decidir 0, 1 o 2 tools, y cada tool hace UNA sola
-cosa (tickets O stock, nunca ambas). ``retrieve`` corre SIEMPRE tras las
 tools para comprobar si la knowledge base aporta contexto; el resultado de
-las tools y el contexto del KB se componen en la respuesta final (generate).
-El usuario nunca indica qué fuente usar: lo decide el grafo.
+El nodo ``intent`` detecta la intención de ticket/incidencia y/o de
+stock/inventario de forma independiente: puede decidir 0, 1 o 2 tools, y
+cada tool hace UNA sola cosa. Las consultas operativas van solo a las tools;
+las preguntas documentales van solo al RAG; una pregunta que pide ambas
+fuentes ejecuta las tools y después ``retrieve``. El trace registra las
+fuentes realmente ejecutadas y su orden. El usuario nunca indica qué fuente
+usar: lo decide el grafo.
 
 Si una tool no puede confirmar el dato (timeout, fallo o inexistencia), el nodo
 produce una respuesta honesta sin inventar un estado ni una cifra.
@@ -86,6 +86,16 @@ _INCIDENT_INTENT_RE = re.compile(
 # preguntas RAG de la knowledge base (precios/almacenamiento).
 _INVENTORY_INTENT_RE = re.compile(
     r"inventario|inventory|stock|sku",
+    re.IGNORECASE,
+)
+
+# Señales documentales/de negocio. Si una pregunta combina estos términos con
+# una consulta operacional, se consultan ambas fuentes; una consulta de estado
+# o stock aislada se resuelve solo con su tool.
+_RAG_INTENT_RE = re.compile(
+    r"pol[ií]tica|aprobaci[oó]n|descuento|devoluci[oó]n|devoluciones|reembolso|"
+    r"contrato|tarifa|precio|sla|cobertura|transportista|documentad[oa]s?|"
+    r"base de conocimiento|procedimiento|condiciones",
     re.IGNORECASE,
 )
 
@@ -146,6 +156,7 @@ class AgentState(TypedDict, total=False):
     # Consultas decididas por intent (independientes: puede haber 0, 1 o 2).
     incident_query: dict[str, Any] | None
     inventory_query: dict[str, Any] | None
+    use_rag: bool
     # Resultados de las tools (solo lectura), guardados JSON-serializables.
     incident_result: dict[str, Any] | None
     inventory_result: dict[str, Any] | None
@@ -248,7 +259,15 @@ def intent_node(state: AgentState) -> dict[str, Any]:
             # Sin SKU concreto: el agente lista/consulta stock por filtro.
             inventory_query = {"sku_id": None}
 
-    out = {"incident_query": incident_query, "inventory_query": inventory_query}
+    has_tool_intent = incident_query is not None or inventory_query is not None
+    # Tool-only para hechos operacionales concretos; RAG para preguntas
+    # documentales, y ambos si la pregunta mezcla las dos intenciones.
+    use_rag = not has_tool_intent or bool(_RAG_INTENT_RE.search(question))
+    out = {
+        "incident_query": incident_query,
+        "inventory_query": inventory_query,
+        "use_rag": use_rag,
+    }
     tracing.add_step("intent", out)
     return out
 
@@ -391,11 +410,9 @@ def route_after_intent(state: AgentState) -> str:
     """Enruta a la/s tool/s y/o al RAG de forma automática.
 
     Cada tool detectada corre (incident_lookup -> inventory_lookup, una
-    sola cosa cada una), y SIEMPRE se continúa después hacia retrieve para
-    comprobar si el company-knowledge-base aporta contexto: si lo aporta,
-    generate compone tool + KB; si no, la respuesta será el resumen honesto
-    de la tool. Una pregunta sin intención de tool va directa a retrieve
-    (RAG). No hay ningún flag que el usuario deba indicar.
+    sola cosa cada una). Hechos operacionales aislados se resuelven solo con
+    tool; preguntas documentales con RAG; preguntas mixtas consultan ambas.
+    No hay ningún flag que el usuario deba indicar.
     """
     if state.get("incident_query") is not None:
         return "incident_lookup"
@@ -405,15 +422,15 @@ def route_after_intent(state: AgentState) -> str:
 
 
 def route_after_incident_lookup(state: AgentState) -> str:
-    """Tras consultar el ticket, enruta a inventario si también se pidió."""
+    """Tras el ticket, consulta inventario o sigue la decisión de fuentes."""
     if state.get("inventory_query") is not None:
         return "inventory_lookup"
-    return "retrieve"
+    return "retrieve" if state.get("use_rag") else "generate"
 
 
 def route_after_inventory_lookup(state: AgentState) -> str:
-    """Tras la(s) tool(s), se comprueba siempre la knowledge base."""
-    return "retrieve"
+    """Tras las tools, consulta KB solo si la pregunta también lo requiere."""
+    return "retrieve" if state.get("use_rag") else "generate"
 
 
 def route_after_retrieve(state: AgentState) -> str:
@@ -447,11 +464,9 @@ _builder.add_conditional_edges(
 _builder.add_conditional_edges(
     "incident_lookup",
     route_after_incident_lookup,
-    ["inventory_lookup", "retrieve"],
+    ["inventory_lookup", "retrieve", "generate"],
 )
-_builder.add_conditional_edges(
-    "inventory_lookup", route_after_inventory_lookup, ["retrieve"]
-)
+_builder.add_conditional_edges("inventory_lookup", route_after_inventory_lookup, ["retrieve", "generate"])
 _builder.add_conditional_edges(
     "retrieve", route_after_retrieve, ["generate", "no_context"]
 )

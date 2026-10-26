@@ -14,9 +14,10 @@ El enrutamiento es **automático** (el usuario nunca indica qué fuente usar):
 el nodo `intent` decide a partir de la pregunta si hace falta el RAG, una
 tool, o ambos — y puede correr **las dos tools** si la pregunta menciona un
 ticket **y** un SKU. Cada tool hace **una sola cosa** (tickets **o** stock,
-nunca ambas). `retrieve` corre **siempre** para comprobar si el KB aporta
-contexto, y `generate` compone la respuesta final (resumen de la tool si no
-hay KB, o RAG+tool en una única respuesta si sí lo hay).
+nunca ambas). Las consultas operativas se resuelven solo con la tool; las
+documentales solo con el RAG; y las preguntas mixtas ejecutan tools y luego
+`retrieve` para que `generate` componga una respuesta basada en ambas fuentes.
+El trace registra la decisión y el orden real de las fuentes utilizadas.
 
 - Código: `services/rag_agent/tools/`
 - Usado por: `services/rag_agent/graph.py` (nodos `incident_lookup` e
@@ -137,9 +138,10 @@ result = lookup_incidents({"status": "open"}, timeout=5.0)
 En el grafo, la consulta se dispara automáticamente cuando la intención detecta
 un ticket/incidencia (nodo `intent` → arista condicional → `incident_lookup`).
 Puede correr junto a `inventory_lookup` (y/o junto al RAG): el enrutamiento
-decide de forma automática, y `retrieve` comprueba siempre el KB para componer
-la respuesta. La tool hace **una sola cosa** (tickets); nunca consulta
-inventario.
+decide de forma automática. Si la pregunta es operacional, la tool responde
+sin ejecutar `retrieve`; si también pide conocimiento documental, `retrieve`
+se ejecuta después de las tools. La tool hace **una sola cosa** (tickets);
+nunca consulta inventario.
 
 ---
 
@@ -276,8 +278,9 @@ result = lookup_inventory({"sku": "CLT-SNK-W-42"}, timeout=5.0)
 En el grafo, la consulta se dispara automáticamente cuando la intención detecta
 stock/inventario/SKU (nodo `intent` → arista condicional → `inventory_lookup`).
 Puede correr junto a `incident_lookup` (y/o junto al RAG): el enrutamiento
-decide de forma automática, y `retrieve` comprueba siempre el KB. La tool hace
-**una sola cosa** (stock); nunca consulta tickets.
+decide de forma automática. Las consultas operacionales usan solo la tool;
+las preguntas mixtas ejecutan además `retrieve` después de las tools. La tool
+hace **una sola cosa** (stock); nunca consulta tickets.
 
 ---
 

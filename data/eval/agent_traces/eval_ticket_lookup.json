@@ -1,14 +1,14 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "thread_id": "eval_ticket_lookup",
-  "started_at": "2026-10-26T18:59:34+00:00",
-  "completed_at": "2026-10-26T18:59:34+00:00",
+  "started_at": "2026-10-26T19:51:33+00:00",
+  "completed_at": "2026-10-26T19:51:33+00:00",
   "question": "¿cuál es el estado del ticket 4bccd74e-f1ee-4883-8985-cf73ca332b8c?",
   "steps": [
     {
       "seq": 1,
       "node": "validate",
-      "started_at": "2026-10-26T18:59:34+00:00",
+      "started_at": "2026-10-26T19:51:33+00:00",
       "output": {
         "question": "¿cuál es el estado del ticket 4bccd74e-f1ee-4883-8985-cf73ca332b8c?"
       }
@@ -16,18 +16,19 @@
     {
       "seq": 2,
       "node": "intent",
-      "started_at": "2026-10-26T18:59:34+00:00",
+      "started_at": "2026-10-26T19:51:33+00:00",
       "output": {
         "incident_query": {
           "ticket_id": "4bccd74e-f1ee-4883-8985-cf73ca332b8c"
         },
-        "inventory_query": null
+        "inventory_query": null,
+        "use_rag": false
       }
     },
     {
       "seq": 3,
       "node": "incident_lookup",
-      "started_at": "2026-10-26T18:59:34+00:00",
+      "started_at": "2026-10-26T19:51:33+00:00",
       "output": {
         "incident_result": {
           "ticket_id": "4bccd74e-f1ee-4883-8985-cf73ca332b8c",
@@ -37,8 +38,8 @@
           "branch": "la_warehouse",
           "title": "Paquete perdido en LA Warehouse",
           "description": "El paquete #12345 no aparece en el inventario del almacén de LA.",
-          "created_at": "2026-10-26T18:59:34.830292Z",
-          "updated_at": "2026-10-26T18:59:34.830296Z",
+          "created_at": "2026-10-26T19:51:33.922858Z",
+          "updated_at": "2026-10-26T19:51:33.922861Z",
           "resolved": true,
           "error": null,
           "matched_filters": []
@@ -57,18 +58,8 @@
     },
     {
       "seq": 4,
-      "node": "retrieve",
-      "started_at": "2026-10-26T18:59:34+00:00",
-      "output": {
-        "context": [],
-        "n_hits": 0,
-        "sources": []
-      }
-    },
-    {
-      "seq": 5,
       "node": "generate",
-      "started_at": "2026-10-26T18:59:34+00:00",
+      "started_at": "2026-10-26T19:51:33+00:00",
       "output": {
         "answer": "El ticket 4bccd74e-f1ee-4883-8985-cf73ca332b8c está open (origen: branch, sucursal: la_warehouse)."
       }
@@ -76,12 +67,12 @@
   ],
   "final_state": {
     "question": "¿cuál es el estado del ticket 4bccd74e-f1ee-4883-8985-cf73ca332b8c?",
-    "context": [],
     "answer": "El ticket 4bccd74e-f1ee-4883-8985-cf73ca332b8c está open (origen: branch, sucursal: la_warehouse).",
     "incident_query": {
       "ticket_id": "4bccd74e-f1ee-4883-8985-cf73ca332b8c"
     },
     "inventory_query": null,
+    "use_rag": false,
     "incident_result": {
       "ticket_id": "4bccd74e-f1ee-4883-8985-cf73ca332b8c",
       "status": "open",
@@ -90,8 +81,8 @@
       "branch": "la_warehouse",
       "title": "Paquete perdido en LA Warehouse",
       "description": "El paquete #12345 no aparece en el inventario del almacén de LA.",
-      "created_at": "2026-10-26T18:59:34.830292Z",
-      "updated_at": "2026-10-26T18:59:34.830296Z",
+      "created_at": "2026-10-26T19:51:33.922858Z",
+      "updated_at": "2026-10-26T19:51:33.922861Z",
       "resolved": true,
       "error": null,
       "matched_filters": []
@@ -105,6 +96,16 @@
         "source_document": "incident_lookup",
         "section": "consulta de ticket"
       }
+    ]
+  },
+  "routing": {
+    "decision": "tool",
+    "used_rag": false,
+    "tools": [
+      "incident_lookup"
+    ],
+    "order": [
+      "tool:incident_lookup"
     ]
   }
 }
