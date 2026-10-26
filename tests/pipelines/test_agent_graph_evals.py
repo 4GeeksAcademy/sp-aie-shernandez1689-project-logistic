@@ -8,9 +8,11 @@ data/eval/agent_traces/ (generados con
 con Qdrant/LLM mockeados, igual que test_rag.py).
 
 Evals:
-- Orden del trace: retrieve corre ANTES que generate.
+- Orden del trace: intent -> retrieve corre ANTES que generate.
 - Pregunta vacía: rama error, retrieve nunca corre.
 - Sin contexto: no_context (honestidad), generate nunca corre.
+- Ticket: la tool incident_lookup se usa EN LUGAR del RAG (retrieve
+  nunca corre) y lee el gestor real de incidencias.
 - Anclaje: la respuesta sigue anclada en el company-knowledge-base
   (política de descuentos -> Miguel Torres, fuente trackflow-storage-pricing).
 
@@ -29,6 +31,7 @@ from services.rag_agent.tracing import TRACES_DIR
 
 KB_DIR = Path(__file__).resolve().parents[2] / "docs" / "company-knowledge-base"
 KIND_TOPIC = "trackflow-storage-pricing.es.md"
+EVAL_TICKET_ID = "4bccd74e-f1ee-4883-8985-cf73ca332b8c"
 
 
 def _load(thread_id: str) -> dict:
@@ -57,6 +60,8 @@ def test_retrieve_runs_before_generate():
     assert order.index("retrieve") < order.index("generate"), (
         f"retrieve debe ir antes de generate, got: {order}"
     )
+    # intent clasifica la pregunta antes de decidir herramienta/RAG.
+    assert order.index("intent") < order.index("retrieve"), order
     # validate abre siempre la corrida
     assert order[0] == "validate"
 
@@ -85,6 +90,30 @@ def test_empty_context_routes_to_no_context_not_generate():
     assert "no tengo información" in answer, answer
 
 
+# ── Tool de tickets: se usa EN LUGAR del RAG ─────────────────────────────
+
+
+def test_ticket_question_uses_incident_lookup_instead_of_rag():
+    """Eval 4: consulta de ticket -> intent -> incident_lookup (tool real),
+    retrieve NUNCA se ejecuta (la tool es alternativa al RAG). La respuesta
+    confirma el estado real del gestor y el resultado queda en el estado."""
+    trace = _load("eval_ticket_lookup")
+    order = _node_order(trace)
+    assert "intent" in order
+    assert "incident_lookup" in order
+    assert order.index("intent") < order.index("incident_lookup"), order
+    assert "retrieve" not in order, f"retrieve no debe correr: {order}"
+    assert "generate" not in order
+
+    answer = trace["final_state"]["answer"]
+    assert EVAL_TICKET_ID in answer
+    assert "open" in answer  # estado real del gestor (seed)
+    incident_result = trace["final_state"].get("incident_result")
+    assert incident_result is not None
+    assert incident_result["resolved"] is True
+    assert incident_result["ticket_id"] == EVAL_TICKET_ID
+
+
 # ── Anclaje en la base de conocimiento (criterio de aceptación) ─────────
 
 
@@ -97,11 +126,14 @@ def test_response_anchored_to_knowledge_base():
     assert "Miguel Torres" in answer, f"respuesta sin ancla del BRIEFING: {answer}"
 
     # el chunk recuperado proviene del documento real del KB
-    sources = trace["steps"][1]["output"]["sources"]
+    retrieve_step = next(
+        s for s in trace["steps"] if s["node"] == "retrieve"
+    )
+    sources = retrieve_step["output"]["sources"]
     assert "trackflow-storage-pricing" in sources, sources
     # el chunk es contenido real del archivo (no inventado)
     kb_text = (KB_DIR / KIND_TOPIC).read_text(encoding="utf-8")
-    ctx_text = trace["steps"][1]["output"]["context"][0]["text"]
+    ctx_text = retrieve_step["output"]["context"][0]["text"]
     assert ctx_text.strip() in kb_text, "el chunk no pertenece al KB real"
 
 
@@ -111,7 +143,12 @@ def test_response_anchored_to_knowledge_base():
 def test_trace_schema_is_consultable():
     """Eval 5: todo trace tiene schema, pasos ordenados y estado final —
     consultable después de la corrida, no solo impreso en consola."""
-    for tid in ("eval_policy_discount", "eval_empty_question", "eval_no_context"):
+    for tid in (
+        "eval_policy_discount",
+        "eval_empty_question",
+        "eval_no_context",
+        "eval_ticket_lookup",
+    ):
         trace = _load(tid)
         assert trace["schema_version"] == 1
         assert trace["thread_id"] == tid

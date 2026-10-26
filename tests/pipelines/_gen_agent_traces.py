@@ -11,6 +11,8 @@ Escenarios:
      del company-knowledge-base real (trackflow-storage-pricing.es.md).
   2. eval_empty_question  — pregunta vacía -> rama error, sin retrieve.
   3. eval_no_context      — retrieve sin hits -> no_context, sin generate.
+  4. eval_ticket_lookup   — pregunta de ticket -> tool incident_lookup
+     (lee el gestor de incidencias real) EN LUGAR del RAG.
 
 Ejecución: uv run python tests/pipelines/_gen_agent_traces.py
 """
@@ -26,6 +28,10 @@ from services.rag_agent import tracing
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KB_DOC = REPO_ROOT / "docs" / "company-knowledge-base" / "trackflow-storage-pricing.es.md"
+
+# Id de un incidente real del gestor (seed de services/api/data/tinydb.json):
+# es un lost_parcel abierto con origen branch (sucursal la_warehouse).
+EVAL_TICKET_ID = "4bccd74e-f1ee-4883-8985-cf73ca332b8c"
 
 
 def _policy_chunk() -> dict:
@@ -95,7 +101,24 @@ def main() -> None:
     )
     assert "no tengo información" in t3["final_state"]["answer"].lower()
 
-    for tid in ("eval_policy_discount", "eval_empty_question", "eval_no_context"):
+    # 4. Consulta de ticket: la tool incident_lookup lee el gestor real
+    #    en-proceso. retrieve/generate están mockeados; si el grafo llamara
+    #    al RAG aquí, fallaría al no haber context — por eso scoped como es.
+    t4 = _run(
+        f"¿cuál es el estado del ticket {EVAL_TICKET_ID}?",
+        "eval_ticket_lookup",
+        hits=[],  # el RAG no debe tocarse: la tool va en su lugar
+        llm_answer=None,
+    )
+    assert "4bccd74e" in t4["final_state"]["answer"]
+    assert t4["final_state"]["incident_result"]["resolved"] is True
+
+    for tid in (
+        "eval_policy_discount",
+        "eval_empty_question",
+        "eval_no_context",
+        "eval_ticket_lookup",
+    ):
         path = tracing.TRACES_DIR / f"{tid}.json"
         steps = [s["node"] for s in json.loads(path.read_text())["steps"]]
         print(f"{tid}: {' -> '.join(steps)}  [{path}]")

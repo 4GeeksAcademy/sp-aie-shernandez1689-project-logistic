@@ -1,22 +1,30 @@
 {
   "schema_version": 1,
   "thread_id": "eval_policy_discount",
-  "started_at": "2026-10-23T19:21:23+00:00",
-  "completed_at": "2026-10-23T19:21:23+00:00",
+  "started_at": "2026-10-26T17:18:05+00:00",
+  "completed_at": "2026-10-26T17:18:05+00:00",
   "question": "¿Qué aprobación requiere un descuento fuera de los rangos documentados?",
   "steps": [
     {
       "seq": 1,
       "node": "validate",
-      "started_at": "2026-10-23T19:21:23+00:00",
+      "started_at": "2026-10-26T17:18:05+00:00",
       "output": {
         "question": "¿Qué aprobación requiere un descuento fuera de los rangos documentados?"
       }
     },
     {
       "seq": 2,
+      "node": "intent",
+      "started_at": "2026-10-26T17:18:05+00:00",
+      "output": {
+        "incident_query": null
+      }
+    },
+    {
+      "seq": 3,
       "node": "retrieve",
-      "started_at": "2026-10-23T19:21:23+00:00",
+      "started_at": "2026-10-26T17:18:05+00:00",
       "output": {
         "context": [
           {
@@ -34,9 +42,9 @@
       }
     },
     {
-      "seq": 3,
+      "seq": 4,
       "node": "generate",
-      "started_at": "2026-10-23T19:21:23+00:00",
+      "started_at": "2026-10-26T17:18:05+00:00",
       "output": {
         "answer": "Cualquier descuento fuera de los rangos documentados requiere aprobación de Miguel Torres (Dirección Comercial). [Fuente: trackflow-storage-pricing / Descuentos por volumen]"
       }
@@ -53,6 +61,7 @@
         "language": "es"
       }
     ],
-    "answer": "Cualquier descuento fuera de los rangos documentados requiere aprobación de Miguel Torres (Dirección Comercial). [Fuente: trackflow-storage-pricing / Descuentos por volumen]"
+    "answer": "Cualquier descuento fuera de los rangos documentados requiere aprobación de Miguel Torres (Dirección Comercial). [Fuente: trackflow-storage-pricing / Descuentos por volumen]",
+    "incident_query": null
   }
 }
