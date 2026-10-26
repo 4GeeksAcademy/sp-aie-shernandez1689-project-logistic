@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "thread_id": "eval_no_context",
+  "started_at": "2026-10-23T19:21:23+00:00",
+  "completed_at": "2026-10-23T19:21:23+00:00",
+  "question": "¿Cuánto cuesta el frío interplanetario?",
+  "steps": [
+    {
+      "seq": 1,
+      "node": "validate",
+      "started_at": "2026-10-23T19:21:23+00:00",
+      "output": {
+        "question": "¿Cuánto cuesta el frío interplanetario?"
+      }
+    },
+    {
+      "seq": 2,
+      "node": "retrieve",
+      "started_at": "2026-10-23T19:21:23+00:00",
+      "output": {
+        "context": [],
+        "n_hits": 0,
+        "sources": []
+      }
+    },
+    {
+      "seq": 3,
+      "node": "no_context",
+      "started_at": "2026-10-23T19:21:23+00:00",
+      "output": {
+        "answer": "Lo siento, no tengo información sobre eso en mi base de conocimiento. Consulta con el equipo comercial de TrackFlow para datos actualizados."
+      }
+    }
+  ],
+  "final_state": {
+    "question": "¿Cuánto cuesta el frío interplanetario?",
+    "context": [],
+    "answer": "Lo siento, no tengo información sobre eso en mi base de conocimiento. Consulta con el equipo comercial de TrackFlow para datos actualizados."
+  }
+}

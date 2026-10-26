@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "thread_id": "ckpt-demo",
+  "started_at": "2026-10-23T19:38:54+00:00",
+  "completed_at": null,
+  "question": "pregunta x",
+  "steps": [
+    {
+      "seq": 1,
+      "node": "validate",
+      "started_at": "2026-10-23T19:38:54+00:00",
+      "output": {
+        "question": "pregunta x"
+      }
+    }
+  ],
+  "final_state": {}
+}

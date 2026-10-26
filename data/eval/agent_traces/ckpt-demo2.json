@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "thread_id": "ckpt-demo2",
+  "started_at": "2026-10-23T19:40:13+00:00",
+  "completed_at": "2026-10-23T19:40:13+00:00",
+  "question": "pregunta x",
+  "steps": [
+    {
+      "seq": 1,
+      "node": "validate",
+      "started_at": "2026-10-23T19:40:13+00:00",
+      "output": {
+        "question": "pregunta x"
+      }
+    },
+    {
+      "seq": 2,
+      "node": "retrieve",
+      "started_at": "2026-10-23T19:40:13+00:00",
+      "output": {
+        "context": [
+          {
+            "text": "c",
+            "source_document": "kb",
+            "section": "s",
+            "score": 0.9,
+            "language": "es"
+          }
+        ],
+        "n_hits": 1,
+        "sources": [
+          "kb"
+        ]
+      }
+    },
+    {
+      "seq": 3,
+      "node": "generate",
+      "started_at": "2026-10-23T19:40:13+00:00",
+      "output": {
+        "answer": "Error al generar la respuesta. Por favor, intenta de nuevo más tarde."
+      }
+    }
+  ],
+  "final_state": {
+    "question": "pregunta x",
+    "context": [
+      {
+        "text": "c",
+        "source_document": "kb",
+        "section": "s",
+        "score": 0.9,
+        "language": "es"
+      }
+    ],
+    "answer": "Error al generar la respuesta. Por favor, intenta de nuevo más tarde."
+  }
+}
