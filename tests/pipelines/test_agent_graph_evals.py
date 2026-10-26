@@ -13,6 +13,8 @@ Evals:
 - Sin contexto: no_context (honestidad), generate nunca corre.
 - Ticket: la tool incident_lookup se usa EN LUGAR del RAG (retrieve
   nunca corre) y lee el gestor real de incidencias.
+- Inventario: la tool inventory_lookup se usa EN LUGAR del RAG (retrieve
+  nunca corre) y devuelve el stock real del gestor.
 - Anclaje: la respuesta sigue anclada en el company-knowledge-base
   (política de descuentos -> Miguel Torres, fuente trackflow-storage-pricing).
 
@@ -114,6 +116,31 @@ def test_ticket_question_uses_incident_lookup_instead_of_rag():
     assert incident_result["ticket_id"] == EVAL_TICKET_ID
 
 
+# ── Tool de inventario: se usa EN LUGAR del RAG ─────────────────────────
+
+
+def test_inventory_question_uses_inventory_lookup_instead_of_rag():
+    """Eval 5: consulta de stock -> intent -> inventory_lookup (tool real),
+    retrieve NUNCA se ejecuta (la tool es alternativa al RAG). La respuesta
+    confirma el stock real del gestor y el resultado queda en el estado."""
+    trace = _load("eval_inventory_lookup")
+    order = _node_order(trace)
+    assert "intent" in order
+    assert "inventory_lookup" in order
+    assert order.index("intent") < order.index("inventory_lookup"), order
+    assert "retrieve" not in order, f"retrieve no debe correr: {order}"
+    assert "generate" not in order
+
+    answer = trace["final_state"]["answer"]
+    assert "CLT-SNK-W-42" in answer
+    assert "40" in answer  # current_stock real del gestor (seed)
+    inventory_result = trace["final_state"].get("inventory_result")
+    assert inventory_result is not None
+    assert inventory_result["resolved"] is True
+    assert inventory_result["product"]["sku"] == "CLT-SNK-W-42"
+    assert inventory_result["product"]["current_stock"] == 40
+
+
 # ── Anclaje en la base de conocimiento (criterio de aceptación) ─────────
 
 
@@ -141,13 +168,14 @@ def test_response_anchored_to_knowledge_base():
 
 
 def test_trace_schema_is_consultable():
-    """Eval 5: todo trace tiene schema, pasos ordenados y estado final —
+    """Eval 6: todo trace tiene schema, pasos ordenados y estado final —
     consultable después de la corrida, no solo impreso en consola."""
     for tid in (
         "eval_policy_discount",
         "eval_empty_question",
         "eval_no_context",
         "eval_ticket_lookup",
+        "eval_inventory_lookup",
     ):
         trace = _load(tid)
         assert trace["schema_version"] == 1

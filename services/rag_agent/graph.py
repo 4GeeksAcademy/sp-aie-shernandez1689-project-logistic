@@ -6,6 +6,7 @@ Estado mínimo del grafo
 - context:  chunks recuperados por el nodo retrieve (salida -> entrada).
 - answer:   respuesta final generada o mensaje honesto de fallback.
 - incident_query: petición de consulta de ticket (salida de intent).
+- inventory_query: petición de consulta de inventario (salida de intent).
 
 No se incluye el historial completo de la conversación: el grafo es
 stateless por corrida y cada corrida se inspecciona/retoma vía
@@ -16,16 +17,18 @@ Nodos y aristas
 ---------------
   START -> validate -> (question empty?) -> error -> finalize -> END
                      -> intent  -> (consulta de ticket?) -> incident_lookup -> finalize -> END
+                                 -> (consulta de inventario?) -> inventory_lookup -> finalize -> END
                                  -> retrieve -> (context empty?) -> no_context -> finalize -> END
                                                        -> generate -> finalize -> END
 
 El nodo ``intent`` (arista condicional post-validate) decide si la
-pregunta es una consulta de tickets de soporte: si sí, el agente usa la
-tool ``incident_lookup`` (lectura en-proceso del gestor de incidencias
-real) EN LUGAR DE (no además de) el RAG — las incidencias no viven en el
-company-knowledge-base. Si la tool no puede confirmar el estado de un
-ticket (timeout, fallo o inexistencia), el nodo incident_lookup produce
-una respuesta honesta sin inventar un estado.
+pregunta es una consulta de tickets de soporte o de inventario: si sí,
+el agente usa la tool correspondiente (``incident_lookup`` /
+``inventory_lookup``, lectura en-proceso del gestor real) EN LUGAR DE
+(no además de) el RAG — ni las incidencias ni el stock viven en el
+company-knowledge-base. Si la tool no puede confirmar el dato (timeout,
+fallo o inexistencia), el nodo produce una respuesta honesta sin
+inventar un estado ni una cifra.
 
 Contrato: retrieve_node llama a retrieve() y generate_node llama a
 generate_answer(question, context) con el contexto que retrieve_node
@@ -52,6 +55,11 @@ from services.rag_agent.tools.incident_lookup import (
     IncidentQuery,
     lookup_incidents,
 )
+from services.rag_agent.tools.inventory_lookup import (
+    InventoryLookupResult,
+    InventoryQuery,
+    lookup_inventory,
+)
 
 DEFAULT_K = 5
 
@@ -60,6 +68,17 @@ _INCIDENT_INTENT_RE = re.compile(
     r"ticket|incidencia|incident|estado de .*ticket|status de .*ticket",
     re.IGNORECASE,
 )
+
+# Detección heurística de intención de consulta de inventario (stock).
+# Solo stock/inventario/sku: "producto" es demasiado genérico y robaría
+# preguntas RAG de la knowledge base (precios/almacenamiento).
+_INVENTORY_INTENT_RE = re.compile(
+    r"inventario|inventory|stock|sku",
+    re.IGNORECASE,
+)
+
+# Código SKU del gestor de inventario (p. ej. CLT-SNK-W-42, TEC-EAR-001,...).
+_SKU_TOKEN_RE = re.compile(r"\b[A-Z]{2,6}(?:-[A-Z0-9]{1,6}){1,4}\b")
 
 
 class AgentState(TypedDict, total=False):
@@ -71,6 +90,8 @@ class AgentState(TypedDict, total=False):
     error: str
     incident_query: dict[str, Any] | None
     incident_result: dict[str, Any] | None
+    inventory_query: dict[str, Any] | None
+    inventory_result: dict[str, Any] | None
 
 
 # ── Nodos ───────────────────────────────────────────────────────────────
@@ -120,15 +141,21 @@ def generate_node(state: AgentState) -> dict[str, Any]:
 
 
 def intent_node(state: AgentState) -> dict[str, Any]:
-    """Clasifica la intención: consulta de ticket de soporte o pregunta RAG.
+    """Clasifica la intención: ticket, inventario o pregunta RAG.
 
-    Alimenta el estado con ``incident_query`` solo cuando la pregunta
-    menciona un ticket/incidencia; de lo contrario deja ``None`` y el
-    grafo sigue con retrieve (knowledge base). Es deliberadamente
-    conservador: solo desvía a la tool cuando detecta ticket/incidencia.
+    Alimenta el estado con ``incident_query`` o ``inventory_query`` solo
+    cuando la pregunta menciona un ticket/incidencia o stock/inventario;
+    de lo contrario deja ``None`` y el grafo sigue con retrieve (knowledge
+    base). Es deliberadamente conservador.
+
+    Precedencia: si la pregunta es de ticket, NO se consulta inventario
+    (una sola tool por corrida); la arista condicional decide a partir de
+    qué campo quedó poblado.
     """
     question = (state.get("question") or "").strip()
     incident_query: dict[str, Any] | None = None
+    inventory_query: dict[str, Any] | None = None
+
     if _INCIDENT_INTENT_RE.search(question):
         candidate: str | None = None
         for match in re.finditer(r"[A-Za-z0-9][A-Za-z0-9._:-]{4,63}", question):
@@ -137,7 +164,16 @@ def intent_node(state: AgentState) -> dict[str, Any]:
                 continue
             candidate = token
         incident_query = {"ticket_id": candidate} if candidate else {"status": "open"}
-    out = {"incident_query": incident_query}
+
+    elif _INVENTORY_INTENT_RE.search(question):
+        sku_match = _SKU_TOKEN_RE.search(question)
+        if sku_match:
+            inventory_query = {"sku": sku_match.group(0)}
+        else:
+            # Sin SKU concreto: el agente lista/consulta stock por filtro.
+            inventory_query = {"sku_id": None}
+
+    out = {"incident_query": incident_query, "inventory_query": inventory_query}
     tracing.add_step("intent", out)
     return out
 
@@ -182,6 +218,47 @@ def incident_lookup_node(state: AgentState) -> dict[str, Any]:
     return {"answer": answer, "incident_result": incident_result}
 
 
+def inventory_lookup_node(state: AgentState) -> dict[str, Any]:
+    """Ejecuta la tool de consulta de inventario (solo lectura).
+
+    Lee del gestor de inventario real via lookup_inventory(). Si el
+    resultado no está resuelto (timeout, fallo o producto inexistente),
+    produce una respuesta honesta; nunca inventa una cifra de stock.
+
+    La tool devuelve un InventoryLookupResult (Pydantic); aquí se guarda
+    en el estado como dict JSON-serializable (tracing y checkpointer
+    persisten solo JSON).
+    """
+    query = state.get("inventory_query") or {}
+    try:
+        result = lookup_inventory(query)
+    except Exception as exc:  # la tool ya convierte fallos, por si acaso
+        result = InventoryLookupResult(resolved=False, error=str(exc))
+
+    if result.resolved and result.product:
+        product = result.product
+        answer = (
+            f"El producto {product['sku']} ({product['name']}) tiene "
+            f"{product['current_stock']} unidades en stock "
+            f"(almacén {product['warehouse']}, categoría {product['category']})."
+        )
+    elif result.resolved:
+        answer = result.description or "Consulta de inventario completada."
+    else:
+        answer = (
+            "No pude consultar el stock de ese producto ahora mismo. "
+            + (result.error or "Inténtalo de nuevo más tarde.")
+        )
+
+    inventory_result = result.model_dump(mode="json")
+    out = {
+        "answer": answer,
+        "inventory_result": inventory_result,
+    }
+    tracing.add_step("inventory_lookup", out)
+    return {"answer": answer, "inventory_result": inventory_result}
+
+
 def no_context(state: AgentState) -> dict[str, Any]:
     """Fallback honesto cuando retrieve no devuelve contexto suficiente."""
     out = {
@@ -218,16 +295,19 @@ def route_after_validate(state: AgentState) -> str:
 
 
 def route_after_intent(state: AgentState) -> str:
-    """Decide entre la tool de tickets y el RAG.
+    """Decide entre las tools (tickets/inventario) y el RAG.
 
-    Arista condicional de la tool: solo se usa la consulta de tickets
+    Arista condicional de las tools: solo se usa la consulta de tickets
     (incident_lookup) cuando la pregunta pide explicitamente un
-    ticket/incidencia; en cualquier otro caso el agente sigue con
-    retrieve() sobre el knowledge base. Incident lookup y RAG son
-    alternativas (no se ejecutan ambos).
+    ticket/incidencia, o la de inventario (inventory_lookup) cuando pide
+    stock/sku; en cualquier otro caso el agente sigue con retrieve() sobre
+    el knowledge base. Las tools y el RAG son alternativas (no se ejecutan
+    ambos). Precedencia: incidente > inventario.
     """
     if state.get("incident_query") is not None:
         return "incident_lookup"
+    if state.get("inventory_query") is not None:
+        return "inventory_lookup"
     return "retrieve"
 
 
@@ -241,12 +321,17 @@ def route_after_incident_lookup(state: AgentState) -> str:
     return "finalize"
 
 
+def route_after_inventory_lookup(state: AgentState) -> str:
+    return "finalize"
+
+
 # ── Construcción y compilación (antes de cualquier ejecución) ───────────
 
 _builder = StateGraph(AgentState)
 _builder.add_node("validate", validate)
 _builder.add_node("intent", intent_node)
 _builder.add_node("incident_lookup", incident_lookup_node)
+_builder.add_node("inventory_lookup", inventory_lookup_node)
 _builder.add_node("retrieve", retrieve_node)
 _builder.add_node("generate", generate_node)
 _builder.add_node("no_context", no_context)
@@ -258,12 +343,13 @@ _builder.add_conditional_edges(
     "validate", route_after_validate, ["error", "intent"]
 )
 _builder.add_conditional_edges(
-    "intent", route_after_intent, ["incident_lookup", "retrieve"]
+    "intent", route_after_intent, ["incident_lookup", "inventory_lookup", "retrieve"]
 )
 _builder.add_conditional_edges(
     "retrieve", route_after_retrieve, ["generate", "no_context"]
 )
 _builder.add_edge("incident_lookup", "finalize")
+_builder.add_edge("inventory_lookup", "finalize")
 _builder.add_edge("generate", "finalize")
 _builder.add_edge("no_context", "finalize")
 _builder.add_edge("error", "finalize")

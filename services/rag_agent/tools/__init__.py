@@ -6,4 +6,6 @@ entrada/salida (Pydantic) y una función de consulta pura que el grafo
 
   - incident_lookup: consulta de tickets de soporte/incidencias contra el
     gestor de incidencias real (services/api). Solo lectura.
+  - inventory_lookup: consulta de stock por producto contra el gestor de
+    inventario real (services/user-api). Solo lectura.
 """

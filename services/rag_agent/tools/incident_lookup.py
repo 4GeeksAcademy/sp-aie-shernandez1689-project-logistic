@@ -41,12 +41,13 @@ from __future__ import annotations
 
 import os
 import re
-import signal
 import sys
 from pathlib import Path
 from typing import Any, Callable
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
+
+from services.rag_agent.tools._timeout import run_with_timeout
 
 # ── Identificadores de ticket: formato libre o UUIDv4 ---------------------
 # Se aceptan ambos porque la API asigna uuid4 pero los datos de prueba de
@@ -273,7 +274,7 @@ def lookup_incidents(
         if isinstance(query, dict):
             query = IncidentQuery.model_validate(query)
         timeout_s = timeout if timeout is not None else INCIDENT_TIMEOUT_SECONDS
-        return _run_with_timeout(lambda: _get_reader().read(query), timeout_s)
+        return run_with_timeout(lambda: _get_reader().read(query), timeout_s)
     except ValidationError as exc:
         return _fallback(f"entrada inválida: {exc.errors()[0]['msg']}")
     except TimeoutError:
@@ -285,29 +286,3 @@ def lookup_incidents(
         return _fallback(str(exc))
     except Exception as exc:  # pragma: no cover - defensivo
         return _fallback(f"fallo inesperado consultando incidencias: {exc}")
-
-
-def _run_with_timeout(fn: Callable[[], IncidentLookupResult], timeout: float) -> IncidentLookupResult:
-    """Ejecuta fn con un timeout absoluto (SIGALRM en el hilo principal).
-
-    Si el timeout expira, se lanza TimeoutError. Si no se puede instalar
-    el alarma (p. ej. fuera del hilo principal), se ejecuta sin timeout:
-    la lectura local sobre TinyDB no bloquea, y los tests pueden pedir
-    timeout=0 para forzar la ruta de fallback vía señal.
-    """
-    if timeout is None or timeout <= 0:
-        raise TimeoutError("timeout no positivo")
-    if hasattr(signal, "SIGALRM"):
-        old_handler = signal.signal(signal.SIGALRM, _raise_timeout)
-        # setitimer devuelve (delay_previo, interval_previo); restaurar ambos.
-        previous = signal.setitimer(signal.ITIMER_REAL, timeout)
-        try:
-            return fn()
-        finally:
-            signal.setitimer(signal.ITIMER_REAL, *previous)
-            signal.signal(signal.SIGALRM, old_handler)
-    return fn()
-
-
-def _raise_timeout(signum: int, frame: Any) -> None:  # pragma: no cover
-    raise TimeoutError("timeout en consulta de incidencias")

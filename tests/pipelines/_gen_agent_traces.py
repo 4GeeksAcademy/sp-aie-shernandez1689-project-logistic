@@ -13,25 +13,84 @@ Escenarios:
   3. eval_no_context      — retrieve sin hits -> no_context, sin generate.
   4. eval_ticket_lookup   — pregunta de ticket -> tool incident_lookup
      (lee el gestor de incidencias real) EN LUGAR del RAG.
+  5. eval_inventory_lookup — pregunta de stock -> tool inventory_lookup
+     EN LUGAR del RAG. La tool se mockea igual que Qdrant/LLM (la base del
+     gestor requiere DATABASE_URL, no disponible al generar traces).
 
 Ejecución: uv run python tests/pipelines/_gen_agent_traces.py
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
+import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from services.rag_agent.graph import graph
 from services.rag_agent import tracing
+from services.rag_agent.tools.inventory_lookup import InventoryLookupResult
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KB_DOC = REPO_ROOT / "docs" / "company-knowledge-base" / "trackflow-storage-pricing.es.md"
 
-# Id de un incidente real del gestor (seed de services/api/data/tinydb.json):
-# es un lost_parcel abierto con origen branch (sucursal la_warehouse).
+# Id de incidencia de evaluación: lost_parcel abierto, origen branch (sucursal
+# la_warehouse) — el mismo que usa test_agent_graph_evals.py.
 EVAL_TICKET_ID = "4bccd74e-f1ee-4883-8985-cf73ca332b8c"
+
+# Producto real del seed de services/user-api (seed_inventory.py). La cifra
+# coincide con current_stock = Σentradas − Σsalidas que expone la API.
+EVAL_INVENTORY_PRODUCT = {
+    "id": 1,
+    "name": "Zapatilla blanca clásica - Talla 42",
+    "sku": "CLT-SNK-W-42",
+    "client_name": "PureStep Footwear",
+    "category": "fashion",
+    "warehouse": "LA",
+    "current_stock": 40,
+}
+
+EVAL_TICKET_PAYLOAD = {
+    "id": EVAL_TICKET_ID,
+    "title": "Paquete perdido en LA Warehouse",
+    "description": "El paquete #12345 no aparece en el inventario del almacén de LA.",
+    "category": "lost_parcel",
+    "status": "open",
+    "origin": "branch",
+    "branch": "la_warehouse",
+}
+
+
+@contextlib.contextmanager
+def _seeded_incident_manager(tmp: Path):
+    """Apunta services/api a una TinyDB temporal con la incidencia de eval.
+
+    La tool incident_lookup lee en-proceso el gestor real
+    (``database.get_incidents_table``), que usa ``database.DB_PATH`` en
+    tiempo de llamada. Redirigimos ese path a un archivo temporal y
+    sembramos la incidencia con id fijo, igual que hace create_incident
+    (``Incident(**payload).model_dump(mode="json")``). Así la generación es
+    reproducible y no toca ``services/api/data/tinydb.json``.
+    """
+    api_dir = REPO_ROOT / "services" / "api"
+    if str(api_dir) not in sys.path:
+        sys.path.insert(0, str(api_dir))
+    import database
+    from models import Incident
+
+    original = database.DB_PATH
+    database.DB_PATH = tmp / "tinydb.json"
+    db, table = database.get_incidents_table()
+    try:
+        table.insert(Incident(**EVAL_TICKET_PAYLOAD).model_dump(mode="json"))
+    finally:
+        db.close()
+    try:
+        yield database
+    finally:
+        database.DB_PATH = original
 
 
 def _policy_chunk() -> dict:
@@ -104,20 +163,48 @@ def main() -> None:
     # 4. Consulta de ticket: la tool incident_lookup lee el gestor real
     #    en-proceso. retrieve/generate están mockeados; si el grafo llamara
     #    al RAG aquí, fallaría al no haber context — por eso scoped como es.
-    t4 = _run(
-        f"¿cuál es el estado del ticket {EVAL_TICKET_ID}?",
-        "eval_ticket_lookup",
-        hits=[],  # el RAG no debe tocarse: la tool va en su lugar
-        llm_answer=None,
-    )
+    #    Sembramos la incidencia en una TinyDB temporal (id fijo) para que la
+    #    generación sea reproducible sin tocar services/api/data/tinydb.json.
+    with tempfile.TemporaryDirectory() as tmp:
+        with _seeded_incident_manager(Path(tmp)):
+            from services.rag_agent.tools.incident_lookup import reset_reader
+
+            reset_reader()  # el reader perezoso usa DB_PATH actual
+            t4 = _run(
+                f"¿cuál es el estado del ticket {EVAL_TICKET_ID}?",
+                "eval_ticket_lookup",
+                hits=[],  # el RAG no debe tocarse: la tool va en su lugar
+                llm_answer=None,
+            )
     assert "4bccd74e" in t4["final_state"]["answer"]
     assert t4["final_state"]["incident_result"]["resolved"] is True
+
+    # 5. Consulta de stock: la tool inventory_lookup se usa EN LUGAR del
+    #    RAG. Se mockea lookup_inventory igual que se mockea Qdrant/LLM:
+    #    el gestor real requiere DATABASE_URL (no configurada al generar
+    #    traces). El resultado reproduce el SKUResponse real del seed.
+    fake_inventory = InventoryLookupResult(product=EVAL_INVENTORY_PRODUCT, resolved=True)
+    with patch(
+        "services.rag_agent.graph.lookup_inventory",
+        return_value=fake_inventory,
+    ):
+        t5 = _run(
+            "¿Cuánto stock hay del producto CLT-SNK-W-42?",
+            "eval_inventory_lookup",
+            hits=[],  # el RAG no debe tocarse: la tool va en su lugar
+            llm_answer=None,
+        )
+    assert "CLT-SNK-W-42" in t5["final_state"]["answer"]
+    assert "40" in t5["final_state"]["answer"]
+    inv_result = t5["final_state"]["inventory_result"]
+    assert inv_result is not None and inv_result["resolved"] is True
 
     for tid in (
         "eval_policy_discount",
         "eval_empty_question",
         "eval_no_context",
         "eval_ticket_lookup",
+        "eval_inventory_lookup",
     ):
         path = tracing.TRACES_DIR / f"{tid}.json"
         steps = [s["node"] for s in json.loads(path.read_text())["steps"]]

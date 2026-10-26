@@ -10,3 +10,4 @@ Esta carpeta agrupa **herramientas reutilizables** que pueden usar los agentes d
 | Herramienta | Ubicación | Descripción |
 |-------------|-----------|-------------|
 | `incident_lookup` | [`services/rag_agent/tools/`](../../services/rag_agent/tools/README.es.md) | Consulta de tickets de soporte de solo lectura contra el gestor de incidencias real (en-proceso, contrato tipado, timeout + fallback honesto). La usa el grafo del agente RAG. |
+| `inventory_lookup` | [`services/rag_agent/tools/`](../../services/rag_agent/tools/README.es.md) | Consulta de stock por producto (SKU) de solo lectura contra el gestor de inventario real (`services/user-api`, SQLModel/PostgreSQL). El mismo contrato tipado que `incident_lookup`: transporte en-proceso (sin HTTP), timeout + fallback honesto, sin datos simulados. La usa el grafo del agente RAG. |

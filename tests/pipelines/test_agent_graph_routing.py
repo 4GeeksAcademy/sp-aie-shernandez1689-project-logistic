@@ -29,6 +29,7 @@ from models import Incident
 from services.rag_agent import tracing
 from services.rag_agent.graph import graph
 from services.rag_agent.tools.incident_lookup import reset_reader
+from services.rag_agent.tools.inventory_lookup import InventoryLookupResult
 
 SEED = [
     {
@@ -130,6 +131,19 @@ class _FakeRAG:
 
 def _fake_rag(*, context: list | None = None, answer: str = "respuesta RAG"):
     return _FakeRAG(context=context, answer=answer)
+
+
+def _fake_inventory(*, product: dict | None = None, description: str | None = None) -> InventoryLookupResult:
+    """Devuelve un InventoryLookupResult para mockear lookup_inventory.
+
+    El routing del grafo NO depende de la base de inventario (no se abre
+    DATABASE_URL en tests): se sustituye la tool por este resultado.
+    """
+    return InventoryLookupResult(
+        product=product,
+        description=description,
+        resolved=product is not None or description is not None,
+    )
 
 
 # ── La tool se usa EN LUGAR del RAG ─────────────────────────────────────
@@ -255,3 +269,186 @@ def test_trace_schema_holds_for_incident_run(live_graph, incident_table):
     assert incident_result is not None
     assert incident_result["ticket_id"] == real_id
     assert incident_result["resolved"] is True
+
+
+# ── La tool de inventario se usa EN LUGAR del RAG ───────────────────────
+
+
+def test_inventory_question_uses_inventory_lookup_instead_of_rag(live_graph):
+    """Pregunta de stock -> intent -> inventory_lookup; retrieve NUNCA corre."""
+    product = {
+        "id": 1,
+        "name": "Zapatilla blanca clásica - Talla 42",
+        "sku": "CLT-SNK-W-42",
+        "client_name": "PureStep Footwear",
+        "category": "fashion",
+        "warehouse": "LA",
+        "current_stock": 40,
+    }
+    fake_result = _fake_inventory(product=product)
+
+    with _fake_rag() as (mock_retrieve, mock_generate):
+        with patch(
+            "services.rag_agent.graph.lookup_inventory",
+            return_value=fake_result,
+        ) as mock_inventory:
+            trace = _run_thread(
+                "test_inventory_lookup",
+                "¿Cuánto stock hay del producto CLT-SNK-W-42?",
+            )
+
+    order = _node_order(trace)
+    assert "intent" in order
+    assert "inventory_lookup" in order
+    assert order.index("intent") < order.index("inventory_lookup")
+    assert "incident_lookup" not in order, f"no debe usar la tool de tickets: {order}"
+    assert "retrieve" not in order, f"retrieve no debe correr: {order}"
+    assert "generate" not in order
+    mock_retrieve.assert_not_called()
+    mock_generate.assert_not_called()
+    mock_inventory.assert_called_once()
+    # Se ejecutó con el SKU extraído por intent (no un filtro genérico).
+    assert mock_inventory.call_args[0][0] == {"sku": "CLT-SNK-W-42"}
+
+    answer = trace["final_state"]["answer"]
+    assert "CLT-SNK-W-42" in answer
+    assert "40" in answer
+
+
+def test_inventory_question_without_sku_runs_tool_anyway(live_graph):
+    """Pregunta de stock sin SKU -> inventory_lookup con consulta genérica."""
+    fake_result = _fake_inventory(description="3 productos registrados")
+    with _fake_rag() as (mock_retrieve, _):
+        with patch(
+            "services.rag_agent.graph.lookup_inventory",
+            return_value=fake_result,
+        ) as mock_inventory:
+            trace = _run_thread(
+                "test_inventory_no_sku",
+                "¿Qué stock hay en el almacén de Zaragoza?",
+            )
+
+    order = _node_order(trace)
+    assert "inventory_lookup" in order
+    assert "retrieve" not in order
+    mock_retrieve.assert_not_called()
+    assert mock_inventory.call_args[0][0] == {"sku_id": None}
+    answer = trace["final_state"]["answer"]
+    assert "3 productos" in answer
+
+
+def test_inventory_fallback_is_honest_without_rag(live_graph):
+    """Fallo en inventario -> respuesta honesta; retrieve NUNCA corre."""
+    fake_result = InventoryLookupResult(
+        resolved=False,
+        error="el producto 'ZZZ-NOPE-99' no existe",
+    )
+    with _fake_rag() as (mock_retrieve, mock_generate):
+        with patch(
+            "services.rag_agent.graph.lookup_inventory",
+            return_value=fake_result,
+        ) as mock_inventory:
+            trace = _run_thread(
+                "test_inventory_fallback",
+                "¿stock del producto ZZZ-NOPE-99?",
+            )
+
+    order = _node_order(trace)
+    assert "inventory_lookup" in order
+    assert "retrieve" not in order
+    mock_retrieve.assert_not_called()
+    mock_generate.assert_not_called()
+    mock_inventory.assert_called_once()
+    answer = trace["final_state"]["answer"]
+    assert "No pude consultar el stock" in answer
+    assert "no existe" in answer
+
+
+def test_inventory_result_is_consultable_in_trace(live_graph):
+    """El trace final conserva inventory_result (schema consultable)."""
+    product = {
+        "id": 2,
+        "name": "Auriculares inalámbricos Pro",
+        "sku": "TEC-EAR-001",
+        "client_name": "SoundWave Electronics",
+        "category": "electronics",
+        "warehouse": "LA",
+        "current_stock": 30,
+    }
+    fake_result = _fake_inventory(product=product)
+    with _fake_rag():
+        with patch(
+            "services.rag_agent.graph.lookup_inventory",
+            return_value=fake_result,
+        ):
+            trace = _run_thread("test_inventory_schema", "¿stock de TEC-EAR-001?")
+
+    assert trace["schema_version"] == 1
+    inventory_result = trace["final_state"].get("inventory_result")
+    assert inventory_result is not None
+    assert inventory_result["resolved"] is True
+    assert inventory_result["product"]["sku"] == "TEC-EAR-001"
+    assert inventory_result["product"]["current_stock"] == 30
+
+
+# ── El RAG se usa cuando NO hay intención de inventario ─────────────────
+
+
+def test_rag_question_does_not_run_inventory_lookup(live_graph):
+    """Pregunta normal -> retrieve/generate; inventory_lookup NO corre."""
+    context = [{"text": "Snippet de política.", "source_document": "kb", "score": 0.9}]
+    with _fake_rag(context=context, answer="Los descuentos los aprueba Miguel Torres.") as (
+        mock_retrieve,
+        _,
+    ):
+        with patch(
+            "services.rag_agent.graph.lookup_inventory",
+            return_value=_fake_inventory(product={}),
+        ) as mock_inventory:
+            trace = _run_thread(
+                "test_rag_no_inventory",
+                "¿Quién aprueba los descuentos fuera de rango?",
+            )
+
+    order = _node_order(trace)
+    assert "inventory_lookup" not in order, f"no debe usar la tool: {order}"
+    assert "retrieve" in order and "generate" in order
+    mock_retrieve.assert_called_once()
+    mock_inventory.assert_not_called()
+
+
+# ── Precedencia: ticket > inventario (una sola tool por corrida) ────────
+
+
+def test_ticket_question_takes_precedence_over_inventory(live_graph, incident_table):
+    """Pregunta de ticket que menciona stock -> incident_lookup (no inventario).
+
+    El elif de intent_node da prioridad a ticket/incidencia: incluso si la
+    frase contiene "stock"/"sku", una sola tool corre por corrida y debe ser
+    la de incidencias.
+    """
+    db, table = incident_table.get_incidents_table()
+    try:
+        real_id = table.all()[0]["id"]
+    finally:
+        db.close()
+
+    with _fake_rag() as (mock_retrieve, _):
+        with patch(
+            "services.rag_agent.graph.lookup_inventory",
+            return_value=_fake_inventory(product={}),
+        ) as mock_inventory:
+            trace = _run_thread(
+                "test_ticket_precedence",
+                # El id es el último token largo: intent lo usa como ticket_id.
+                f"problema de stock del ticket {real_id}",
+            )
+
+    order = _node_order(trace)
+    assert "incident_lookup" in order
+    assert "inventory_lookup" not in order, f"solo una tool por corrida: {order}"
+    mock_retrieve.assert_not_called()
+    mock_inventory.assert_not_called()
+    answer = trace["final_state"]["answer"]
+    assert real_id in answer
+    assert "open" in answer

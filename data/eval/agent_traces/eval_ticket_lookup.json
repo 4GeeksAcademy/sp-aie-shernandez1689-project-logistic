@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "thread_id": "eval_ticket_lookup",
-  "started_at": "2026-10-26T17:18:05+00:00",
-  "completed_at": "2026-10-26T17:18:05+00:00",
+  "started_at": "2026-10-26T18:21:14+00:00",
+  "completed_at": "2026-10-26T18:21:14+00:00",
   "question": "¿cuál es el estado del ticket 4bccd74e-f1ee-4883-8985-cf73ca332b8c?",
   "steps": [
     {
       "seq": 1,
       "node": "validate",
-      "started_at": "2026-10-26T17:18:05+00:00",
+      "started_at": "2026-10-26T18:21:14+00:00",
       "output": {
         "question": "¿cuál es el estado del ticket 4bccd74e-f1ee-4883-8985-cf73ca332b8c?"
       }
@@ -16,17 +16,18 @@
     {
       "seq": 2,
       "node": "intent",
-      "started_at": "2026-10-26T17:18:05+00:00",
+      "started_at": "2026-10-26T18:21:14+00:00",
       "output": {
         "incident_query": {
           "ticket_id": "4bccd74e-f1ee-4883-8985-cf73ca332b8c"
-        }
+        },
+        "inventory_query": null
       }
     },
     {
       "seq": 3,
       "node": "incident_lookup",
-      "started_at": "2026-10-26T17:18:05+00:00",
+      "started_at": "2026-10-26T18:21:14+00:00",
       "output": {
         "answer": "El ticket 4bccd74e-f1ee-4883-8985-cf73ca332b8c está open (origen: branch, sucursal: la_warehouse).",
         "incident_result": {
@@ -37,8 +38,8 @@
           "branch": "la_warehouse",
           "title": "Paquete perdido en LA Warehouse",
           "description": "El paquete #12345 no aparece en el inventario del almacén de LA.",
-          "created_at": "2026-10-26T16:00:15.310378+00:00",
-          "updated_at": "2026-10-26T16:00:15.310392+00:00",
+          "created_at": "2026-10-26T18:21:14.127927Z",
+          "updated_at": "2026-10-26T18:21:14.127932Z",
           "resolved": true,
           "error": null,
           "matched_filters": []
@@ -60,11 +61,12 @@
       "branch": "la_warehouse",
       "title": "Paquete perdido en LA Warehouse",
       "description": "El paquete #12345 no aparece en el inventario del almacén de LA.",
-      "created_at": "2026-10-26T16:00:15.310378+00:00",
-      "updated_at": "2026-10-26T16:00:15.310392+00:00",
+      "created_at": "2026-10-26T18:21:14.127927Z",
+      "updated_at": "2026-10-26T18:21:14.127932Z",
       "resolved": true,
       "error": null,
       "matched_filters": []
-    }
+    },
+    "inventory_query": null
   }
 }
