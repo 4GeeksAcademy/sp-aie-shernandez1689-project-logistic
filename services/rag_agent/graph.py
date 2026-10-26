@@ -7,6 +7,8 @@ Estado mínimo del grafo
 - answer:   respuesta final generada o mensaje honesto de fallback.
 - incident_query: petición de consulta de ticket (salida de intent).
 - inventory_query: petición de consulta de inventario (salida de intent).
+- tool_answers / tool_context: resúmenes de las tools para componer la
+  respuesta final (acumulados con reductor si corren dos tools).
 
 No se incluye el historial completo de la conversación: el grafo es
 stateless por corrida y cada corrida se inspecciona/retoma vía
@@ -15,24 +17,33 @@ el estado.
 
 Nodos y aristas
 ---------------
-  START -> validate -> (question empty?) -> error -> finalize -> END
-                     -> intent  -> (consulta de ticket?) -> incident_lookup -> finalize -> END
-                                 -> (consulta de inventario?) -> inventory_lookup -> finalize -> END
-                                 -> retrieve -> (context empty?) -> no_context -> finalize -> END
-                                                       -> generate -> finalize -> END
+  START -> validate -> (pregunta vacía?) -> error -> finalize -> END
 
-El nodo ``intent`` (arista condicional post-validate) decide si la
-pregunta es una consulta de tickets de soporte o de inventario: si sí,
-el agente usa la tool correspondiente (``incident_lookup`` /
-``inventory_lookup``, lectura en-proceso del gestor real) EN LUGAR DE
-(no además de) el RAG — ni las incidencias ni el stock viven en el
-company-knowledge-base. Si la tool no puede confirmar el dato (timeout,
-fallo o inexistencia), el nodo produce una respuesta honesta sin
-inventar un estado ni una cifra.
+  intent  decide de forma AUTOMÁTICA (sin que el usuario indique la fuente)
+  si la pregunta necesita el RAG, una tool o ambos:
+
+  - Solo RAG -> retrieve -> (context?) -> generate -> finalize -> END
+                                   -> no_context -> finalize
+  - Solo tool -> tool(s) -> retrieve -> (context?) -> generate (tool-only
+    si no hay KB, RAG+tool si sí) -> finalize -> END
+  - RAG + tool -> tool(s) -> retrieve -> generate (compone tool+context)
+    -> finalize -> END
+
+El nodo ``intent`` (arista condicional post-validate) detecta de forma
+conservadora la intención de ticket/incidencia y/o de stock/inventario de
+forma INDEPENDIENTE: puede decidir 0, 1 o 2 tools, y cada tool hace UNA sola
+cosa (tickets O stock, nunca ambas). ``retrieve`` corre SIEMPRE tras las
+tools para comprobar si la knowledge base aporta contexto; el resultado de
+las tools y el contexto del KB se componen en la respuesta final (generate).
+El usuario nunca indica qué fuente usar: lo decide el grafo.
+
+Si una tool no puede confirmar el dato (timeout, fallo o inexistencia), el nodo
+produce una respuesta honesta sin inventar un estado ni una cifra.
 
 Contrato: retrieve_node llama a retrieve() y generate_node llama a
 generate_answer(question, context) con el contexto que retrieve_node
-produjo. Nunca se usa query() (evitaría doble recuperación).
+produjo y, si hubo consulta de tool, con un contexto extra que resume el
+resultado de la tool. Nunca se usa query() (evitaría doble recuperación).
 
 El grafo se compila al importar el módulo: un error estructural (nodo
 sin conexión, estado mal tipado) falla de forma clara antes de cualquier
@@ -41,8 +52,9 @@ ejecución.
 
 from __future__ import annotations
 
+import operator
 import re
-from typing import Any, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.config import get_config
@@ -80,6 +92,49 @@ _INVENTORY_INTENT_RE = re.compile(
 # Código SKU del gestor de inventario (p. ej. CLT-SNK-W-42, TEC-EAR-001,...).
 _SKU_TOKEN_RE = re.compile(r"\b[A-Z]{2,6}(?:-[A-Z0-9]{1,6}){1,4}\b")
 
+# Token con forma de UUID (para extractar el id de ticket de forma fiable).
+_UUID_TOKEN_RE = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_ticket_id(question: str) -> str | None:
+    """Extrae el id de ticket de la pregunta de forma robusta.
+
+    Prioridades (deliberadamente conservadoras, sin inventar ids):
+    1. El token que sigue inmediatamente a ``ticket``/``incidencia``/
+       ``incidente`` (p. ej. "ticket 9e8dec71-...") y que no parezca un SKU.
+    2. Un token con forma de UUID (hex con guiones): no confundible con un SKU
+       ni con una palabra normal, así "stock del ticket X del producto SKU-Y"
+       queda desambiguado.
+    3. Fallback: el último token "largo" que no sea una keyword ni un SKU.
+    """
+    keyword = re.search(
+        r"\b(?:ticket|incidencia|incident(?:e|es)?)\s+"
+        r"([A-Za-z0-9][A-Za-z0-9._:-]{4,63})\b",
+        question,
+        re.IGNORECASE,
+    )
+    if keyword:
+        token = keyword.group(1)
+        if not _SKU_TOKEN_RE.fullmatch(token):
+            return token
+
+    uuid = _UUID_TOKEN_RE.search(question)
+    if uuid:
+        return uuid.group(0)
+
+    candidate: str | None = None
+    for match in re.finditer(r"[A-Za-z0-9][A-Za-z0-9._:-]{4,63}", question):
+        token = match.group(0)
+        if token.lower() in {"ticket", "incidencia", "incident"}:
+            continue
+        if _SKU_TOKEN_RE.fullmatch(token):
+            continue  # parece un código de producto, no un ticket
+        candidate = token
+    return candidate
+
 
 class AgentState(TypedDict, total=False):
     """Información mínima que un nodo necesita para decidir el siguiente paso."""
@@ -88,10 +143,16 @@ class AgentState(TypedDict, total=False):
     context: list[dict[str, Any]]
     answer: str
     error: str
+    # Consultas decididas por intent (independientes: puede haber 0, 1 o 2).
     incident_query: dict[str, Any] | None
-    incident_result: dict[str, Any] | None
     inventory_query: dict[str, Any] | None
+    # Resultados de las tools (solo lectura), guardados JSON-serializables.
+    incident_result: dict[str, Any] | None
     inventory_result: dict[str, Any] | None
+    # Resúmenes de las tools para componer la respuesta final con el KB.
+    # Reductores de lista: si corren dos tools, ambas aportan al acumulado.
+    tool_answers: Annotated[list[str], operator.add]
+    tool_context: Annotated[list[dict[str, Any]], operator.add]
 
 
 # ── Nodos ───────────────────────────────────────────────────────────────
@@ -131,41 +192,55 @@ def retrieve_node(state: AgentState) -> dict[str, Any]:
 
 
 def generate_node(state: AgentState) -> dict[str, Any]:
-    """Genera la respuesta final a partir del contexto ya recuperado."""
-    answer = generate_answer(
-        question=state["question"],
-        context=state["context"],
-    )
+    """Genera la respuesta final componiendo las fuentes disponibles.
+
+    Decide de forma automática qué hay que componer según lo que corrió:
+    - Tool(s) sin contexto KB   -> usa el resumen de la tool (sin LLM).
+    - KB (con o sin tool)       -> LLC compone tool(s) + contexto KB en una
+      única respuesta ("RAG y/o tool" según lo que haya aportado).
+    """
+    tool_context = state.get("tool_context") or []
+    kb_context = state.get("context") or []
+    tool_answers = state.get("tool_answers") or []
+
+    if tool_answers and not kb_context:
+        # Tool-only: no hay KB para anclar; la respuesta ES el resumen honesto
+        # de la tool (no se inventa contexto).
+        answer = "\n".join(tool_answers)
+    else:
+        # RAG (y tool si la hubo): el LLM compone una única respuesta.
+        answer = generate_answer(question=state["question"], context=tool_context + kb_context)
+
     tracing.add_step("generate", {"answer": answer})
     return {"answer": answer}
 
 
 def intent_node(state: AgentState) -> dict[str, Any]:
-    """Clasifica la intención: ticket, inventario o pregunta RAG.
+    """Clasifica la intención y decide qué fuentes hacen falta: RAG, tool o ambos.
 
-    Alimenta el estado con ``incident_query`` o ``inventory_query`` solo
-    cuando la pregunta menciona un ticket/incidencia o stock/inventario;
-    de lo contrario deja ``None`` y el grafo sigue con retrieve (knowledge
-    base). Es deliberadamente conservador.
+    Alimenta el estado con ``incident_query`` y/o ``inventory_query`` de forma
+    INDEPENDIENTE (cada tool hace una sola cosa; pueden darse las dos a la vez
+    si la pregunta menciona un ticket y además stock). Deja las consultas en
+    ``None`` cuando no hay intención de tool, y el grafo sigue con retrieve
+    (knowledge base). Es deliberadamente conservador.
 
-    Precedencia: si la pregunta es de ticket, NO se consulta inventario
-    (una sola tool por corrida); la arista condicional decide a partir de
-    qué campo quedó poblado.
+    La decisión de correr tool(s) y/o RAG es automática a partir de la
+    pregunta: el usuario nunca indica qué fuente usar.
     """
     question = (state.get("question") or "").strip()
     incident_query: dict[str, Any] | None = None
     inventory_query: dict[str, Any] | None = None
 
     if _INCIDENT_INTENT_RE.search(question):
-        candidate: str | None = None
-        for match in re.finditer(r"[A-Za-z0-9][A-Za-z0-9._:-]{4,63}", question):
-            token = match.group(0)
-            if token.lower() in {"ticket", "incidencia", "incident"}:
-                continue
-            candidate = token
-        incident_query = {"ticket_id": candidate} if candidate else {"status": "open"}
+        # El id de ticket se extrae de forma robusta; se ignora cualquier token
+        # con forma de SKU para no confundir "stock del ticket X y SKU Y".
+        incident_query = (
+            {"ticket_id": _extract_ticket_id(question)}
+            if _extract_ticket_id(question)
+            else {"status": "open"}
+        )
 
-    elif _INVENTORY_INTENT_RE.search(question):
+    if _INVENTORY_INTENT_RE.search(question):
         sku_match = _SKU_TOKEN_RE.search(question)
         if sku_match:
             inventory_query = {"sku": sku_match.group(0)}
@@ -187,7 +262,8 @@ def incident_lookup_node(state: AgentState) -> dict[str, Any]:
 
     La tool devuelve un IncidentLookupResult (Pydantic); aquí se guarda
     en el estado como dict JSON-serializable (tracing y checkpointer
-    persisten solo JSON).
+    persisten solo JSON) y se añade un resumen en ``tool_context`` para
+    que generate pueda componer una respuesta con KB si procede.
     """
     query = state.get("incident_query") or {}
     try:
@@ -195,6 +271,8 @@ def incident_lookup_node(state: AgentState) -> dict[str, Any]:
     except Exception as exc:  # la tool ya convierte fallos, por si acaso
         result = IncidentLookupResult(resolved=False, error=str(exc))
 
+    incident_result = result.model_dump(mode="json")
+    # Resumen honesto (sin inventar estado) que generate usará para componer.
     if result.resolved and result.ticket_id:
         answer = (
             f"El ticket {result.ticket_id} está "
@@ -209,13 +287,19 @@ def incident_lookup_node(state: AgentState) -> dict[str, Any]:
             + (result.error or "Inténtalo de nuevo más tarde.")
         )
 
-    incident_result = result.model_dump(mode="json")
     out = {
-        "answer": answer,
         "incident_result": incident_result,
+        "tool_answers": [answer],
+        "tool_context": [
+            {
+                "text": answer,
+                "source_document": "incident_lookup",
+                "section": "consulta de ticket",
+            }
+        ],
     }
     tracing.add_step("incident_lookup", out)
-    return {"answer": answer, "incident_result": incident_result}
+    return out
 
 
 def inventory_lookup_node(state: AgentState) -> dict[str, Any]:
@@ -227,7 +311,8 @@ def inventory_lookup_node(state: AgentState) -> dict[str, Any]:
 
     La tool devuelve un InventoryLookupResult (Pydantic); aquí se guarda
     en el estado como dict JSON-serializable (tracing y checkpointer
-    persisten solo JSON).
+    persisten solo JSON) y se añade un resumen en ``tool_context`` para
+    que generate pueda componer una respuesta con KB si procede.
     """
     query = state.get("inventory_query") or {}
     try:
@@ -235,6 +320,8 @@ def inventory_lookup_node(state: AgentState) -> dict[str, Any]:
     except Exception as exc:  # la tool ya convierte fallos, por si acaso
         result = InventoryLookupResult(resolved=False, error=str(exc))
 
+    inventory_result = result.model_dump(mode="json")
+    # Resumen honesto (sin inventar stock) que generate usará para componer.
     if result.resolved and result.product:
         product = result.product
         answer = (
@@ -250,13 +337,19 @@ def inventory_lookup_node(state: AgentState) -> dict[str, Any]:
             + (result.error or "Inténtalo de nuevo más tarde.")
         )
 
-    inventory_result = result.model_dump(mode="json")
     out = {
-        "answer": answer,
         "inventory_result": inventory_result,
+        "tool_answers": [answer],
+        "tool_context": [
+            {
+                "text": answer,
+                "source_document": "inventory_lookup",
+                "section": "consulta de stock",
+            }
+        ],
     }
     tracing.add_step("inventory_lookup", out)
-    return {"answer": answer, "inventory_result": inventory_result}
+    return out
 
 
 def no_context(state: AgentState) -> dict[str, Any]:
@@ -295,14 +388,14 @@ def route_after_validate(state: AgentState) -> str:
 
 
 def route_after_intent(state: AgentState) -> str:
-    """Decide entre las tools (tickets/inventario) y el RAG.
+    """Enruta a la/s tool/s y/o al RAG de forma automática.
 
-    Arista condicional de las tools: solo se usa la consulta de tickets
-    (incident_lookup) cuando la pregunta pide explicitamente un
-    ticket/incidencia, o la de inventario (inventory_lookup) cuando pide
-    stock/sku; en cualquier otro caso el agente sigue con retrieve() sobre
-    el knowledge base. Las tools y el RAG son alternativas (no se ejecutan
-    ambos). Precedencia: incidente > inventario.
+    Cada tool detectada corre (incident_lookup -> inventory_lookup, una
+    sola cosa cada una), y SIEMPRE se continúa después hacia retrieve para
+    comprobar si el company-knowledge-base aporta contexto: si lo aporta,
+    generate compone tool + KB; si no, la respuesta será el resumen honesto
+    de la tool. Una pregunta sin intención de tool va directa a retrieve
+    (RAG). No hay ningún flag que el usuario deba indicar.
     """
     if state.get("incident_query") is not None:
         return "incident_lookup"
@@ -311,18 +404,24 @@ def route_after_intent(state: AgentState) -> str:
     return "retrieve"
 
 
-def route_after_retrieve(state: AgentState) -> str:
-    if not state.get("context"):
-        return "no_context"
-    return "generate"
-
-
 def route_after_incident_lookup(state: AgentState) -> str:
-    return "finalize"
+    """Tras consultar el ticket, enruta a inventario si también se pidió."""
+    if state.get("inventory_query") is not None:
+        return "inventory_lookup"
+    return "retrieve"
 
 
 def route_after_inventory_lookup(state: AgentState) -> str:
-    return "finalize"
+    """Tras la(s) tool(s), se comprueba siempre la knowledge base."""
+    return "retrieve"
+
+
+def route_after_retrieve(state: AgentState) -> str:
+    """Tras recuperar el KB: si hay contexto o respuesta de tool, se compone
+    la respuesta (generate); si no hay nada, fallback honesto (no_context)."""
+    if state.get("context") or state.get("tool_answers"):
+        return "generate"
+    return "no_context"
 
 
 # ── Construcción y compilación (antes de cualquier ejecución) ───────────
@@ -346,10 +445,16 @@ _builder.add_conditional_edges(
     "intent", route_after_intent, ["incident_lookup", "inventory_lookup", "retrieve"]
 )
 _builder.add_conditional_edges(
+    "incident_lookup",
+    route_after_incident_lookup,
+    ["inventory_lookup", "retrieve"],
+)
+_builder.add_conditional_edges(
+    "inventory_lookup", route_after_inventory_lookup, ["retrieve"]
+)
+_builder.add_conditional_edges(
     "retrieve", route_after_retrieve, ["generate", "no_context"]
 )
-_builder.add_edge("incident_lookup", "finalize")
-_builder.add_edge("inventory_lookup", "finalize")
 _builder.add_edge("generate", "finalize")
 _builder.add_edge("no_context", "finalize")
 _builder.add_edge("error", "finalize")

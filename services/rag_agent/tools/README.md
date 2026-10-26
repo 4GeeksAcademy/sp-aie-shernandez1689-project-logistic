@@ -10,10 +10,13 @@ fallback honesto cuando no puede resolver, y sin ramas de escritura.
 | `incident_lookup`   | Estado de tickets de soporte       | `services/api` (TinyDB) | `incident_lookup`       |
 | `inventory_lookup`  | Stock por producto (SKU)           | `services/user-api` (SQLModel/PostgreSQL) | `inventory_lookup` |
 
-Ambas se activan **en lugar del RAG** (nunca en paralelo): el nodo `intent`
-detecta la intención y la arista condicional `route_after_intent` enruta hacia
-la tool o hacia `retrieve`. Precedencia si la pregunta menciona ambas cosas:
-`incident_lookup` gana (una sola tool por corrida).
+El enrutamiento es **automático** (el usuario nunca indica qué fuente usar):
+el nodo `intent` decide a partir de la pregunta si hace falta el RAG, una
+tool, o ambos — y puede correr **las dos tools** si la pregunta menciona un
+ticket **y** un SKU. Cada tool hace **una sola cosa** (tickets **o** stock,
+nunca ambas). `retrieve` corre **siempre** para comprobar si el KB aporta
+contexto, y `generate` compone la respuesta final (resumen de la tool si no
+hay KB, o RAG+tool en una única respuesta si sí lo hay).
 
 - Código: `services/rag_agent/tools/`
 - Usado por: `services/rag_agent/graph.py` (nodos `incident_lookup` e
@@ -132,8 +135,11 @@ result = lookup_incidents({"status": "open"}, timeout=5.0)
 ```
 
 En el grafo, la consulta se dispara automáticamente cuando la intención detecta
-un ticket/incidencia (nodo `intent` → arista condicional → `incident_lookup`),
-**en lugar del RAG** (nunca ambos).
+un ticket/incidencia (nodo `intent` → arista condicional → `incident_lookup`).
+Puede correr junto a `inventory_lookup` (y/o junto al RAG): el enrutamiento
+decide de forma automática, y `retrieve` comprueba siempre el KB para componer
+la respuesta. La tool hace **una sola cosa** (tickets); nunca consulta
+inventario.
 
 ---
 
@@ -268,9 +274,10 @@ result = lookup_inventory({"sku": "CLT-SNK-W-42"}, timeout=5.0)
 ```
 
 En el grafo, la consulta se dispara automáticamente cuando la intención detecta
-stock/inventario/SKU (nodo `intent` → arista condicional → `inventory_lookup`),
-**en lugar del RAG** (nunca ambos). Precedencia: si la pregunta menciona
-ticket/incidencia **e** inventario, gana `incident_lookup`.
+stock/inventario/SKU (nodo `intent` → arista condicional → `inventory_lookup`).
+Puede correr junto a `incident_lookup` (y/o junto al RAG): el enrutamiento
+decide de forma automática, y `retrieve` comprueba siempre el KB. La tool hace
+**una sola cosa** (stock); nunca consulta tickets.
 
 ---
 
@@ -282,11 +289,11 @@ ticket/incidencia **e** inventario, gana `incident_lookup`.
   gestor real en-proceso (mismos modelos SQLModel y misma fórmula
   `current_stock`) sobre una base SQLite aislada; contrato, timeout (SIGALRM),
   fallback honesto y solo-lectura.
-- `tests/pipelines/test_agent_graph_routing.py` — enrutamiento del grafo (tool
-  vs. RAG, ticket inexistente, filtro múltiple, inventario con/sin SKU,
-  precedencia ticket>inventario, pregunta vacía).
+- `tests/pipelines/test_agent_graph_routing.py` — enrutamiento del grafo
+  (decisión automática RAG / tool / ambos, ticket inexistente, filtro múltiple,
+  inventario con/sin SKU, ambas tools en una pregunta mixta, pregunta vacía).
 - `tests/pipelines/test_agent_graph_evals.py` — evals `eval_ticket_lookup` y
-  `eval_inventory_lookup` (traces persistidos con la tool en lugar del RAG).
+  `eval_inventory_lookup` (traces persistidos con tool + retrieve + generate).
 
 ```bash
 uv run pytest tests/pipelines/test_incident_lookup.py \

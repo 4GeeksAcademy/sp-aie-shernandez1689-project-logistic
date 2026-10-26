@@ -11,11 +11,15 @@ Escenarios:
      del company-knowledge-base real (trackflow-storage-pricing.es.md).
   2. eval_empty_question  — pregunta vacía -> rama error, sin retrieve.
   3. eval_no_context      — retrieve sin hits -> no_context, sin generate.
-  4. eval_ticket_lookup   — pregunta de ticket -> tool incident_lookup
-     (lee el gestor de incidencias real) EN LUGAR del RAG.
-  5. eval_inventory_lookup — pregunta de stock -> tool inventory_lookup
-     EN LUGAR del RAG. La tool se mockea igual que Qdrant/LLM (la base del
-     gestor requiere DATABASE_URL, no disponible al generar traces).
+  4. eval_ticket_lookup   — pregunta de ticket -> tool incident_lookup (lee
+     el gestor de incidencias real). Aunque la tool responde, retrieve corre
+     SIEMPRE para comprobar el KB (sin hits aquí -> la respuesta final es el
+     resumen de la tool, sin llamar al LLM).
+  5. eval_inventory_lookup — pregunta de stock -> tool inventory_lookup.
+     Igual que en 4: la tool responde y retrieve comprueba el KB después
+     (sin hits -> respuesta = resumen de la tool). La tool se mockea igual
+     que Qdrant/LLM (la base del gestor requiere DATABASE_URL, no disponible
+     al generar traces).
 
 Ejecución: uv run python tests/pipelines/_gen_agent_traces.py
 """
@@ -161,10 +165,11 @@ def main() -> None:
     assert "no tengo información" in t3["final_state"]["answer"].lower()
 
     # 4. Consulta de ticket: la tool incident_lookup lee el gestor real
-    #    en-proceso. retrieve/generate están mockeados; si el grafo llamara
-    #    al RAG aquí, fallaría al no haber context — por eso scoped como es.
-    #    Sembramos la incidencia en una TinyDB temporal (id fijo) para que la
-    #    generación sea reproducible sin tocar services/api/data/tinydb.json.
+    #    en-proceso. retrieve/generate están mockeados; con hits=[] retrieve
+    #    no aporta contexto KB, así que la respuesta final es el resumen de la
+    #    tool (generate usa el camino tool-only, sin llamar al LLM). Sembramos
+    #    la incidencia en una TinyDB temporal (id fijo) para que la generación
+    #    sea reproducible sin tocar services/api/data/tinydb.json.
     with tempfile.TemporaryDirectory() as tmp:
         with _seeded_incident_manager(Path(tmp)):
             from services.rag_agent.tools.incident_lookup import reset_reader
@@ -173,16 +178,20 @@ def main() -> None:
             t4 = _run(
                 f"¿cuál es el estado del ticket {EVAL_TICKET_ID}?",
                 "eval_ticket_lookup",
-                hits=[],  # el RAG no debe tocarse: la tool va en su lugar
+                hits=[],  # el KB no aporta contexto: respuesta = tool
                 llm_answer=None,
             )
     assert "4bccd74e" in t4["final_state"]["answer"]
     assert t4["final_state"]["incident_result"]["resolved"] is True
+    t4_order = [s["node"] for s in t4["steps"]]
+    assert "retrieve" in t4_order, f"retrieve debe correr tras la tool: {t4_order}"
 
-    # 5. Consulta de stock: la tool inventory_lookup se usa EN LUGAR del
-    #    RAG. Se mockea lookup_inventory igual que se mockea Qdrant/LLM:
-    #    el gestor real requiere DATABASE_URL (no configurada al generar
-    #    traces). El resultado reproduce el SKUResponse real del seed.
+    # 5. Consulta de stock: la tool inventory_lookup responde y retrieve
+    #    comprueba el KB después (hits=[] -> la respuesta final es el resumen
+    #    de la tool, sin llamar al LLM). Se mockea lookup_inventory igual que
+    #    se mockea Qdrant/LLM: el gestor real requiere DATABASE_URL (no
+    #    configurada al generar traces). El resultado reproduce el SKUResponse
+    #    real del seed.
     fake_inventory = InventoryLookupResult(product=EVAL_INVENTORY_PRODUCT, resolved=True)
     with patch(
         "services.rag_agent.graph.lookup_inventory",
@@ -191,13 +200,15 @@ def main() -> None:
         t5 = _run(
             "¿Cuánto stock hay del producto CLT-SNK-W-42?",
             "eval_inventory_lookup",
-            hits=[],  # el RAG no debe tocarse: la tool va en su lugar
+            hits=[],  # el KB no aporta contexto: respuesta = tool
             llm_answer=None,
         )
     assert "CLT-SNK-W-42" in t5["final_state"]["answer"]
     assert "40" in t5["final_state"]["answer"]
     inv_result = t5["final_state"]["inventory_result"]
     assert inv_result is not None and inv_result["resolved"] is True
+    t5_order = [s["node"] for s in t5["steps"]]
+    assert "retrieve" in t5_order, f"retrieve debe correr tras la tool: {t5_order}"
 
     for tid in (
         "eval_policy_discount",

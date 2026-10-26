@@ -11,12 +11,13 @@ Evals:
 - Orden del trace: intent -> retrieve corre ANTES que generate.
 - Pregunta vacía: rama error, retrieve nunca corre.
 - Sin contexto: no_context (honestidad), generate nunca corre.
-- Ticket: la tool incident_lookup se usa EN LUGAR del RAG (retrieve
-  nunca corre) y lee el gestor real de incidencias.
-- Inventario: la tool inventory_lookup se usa EN LUGAR del RAG (retrieve
-  nunca corre) y devuelve el stock real del gestor.
-- Anclaje: la respuesta sigue anclada en el company-knowledge-base
-  (política de descuentos -> Miguel Torres, fuente trackflow-storage-pricing).
+- Ticket: la tool incident_lookup lee el gestor real de incidencias y
+  responde; retrieve corre SIEMPRE después para comprobar si el KB aporta
+  contexto (en este eval sin hits -> respuesta final = resumen de la tool).
+- Inventario: la tool inventory_lookup devuelve el stock real del gestor y
+  retrieve corre SIEMPRE después (sin hits -> respuesta = resumen de la
+  tool). El enrutamiento decide de forma automática RAG, tool o ambos
+  (cada tool hace UNA sola cosa: tickets O stock).
 
 Comando único:
     uv run pytest tests/pipelines/test_agent_graph_evals.py -q
@@ -92,20 +93,26 @@ def test_empty_context_routes_to_no_context_not_generate():
     assert "no tengo información" in answer, answer
 
 
-# ── Tool de tickets: se usa EN LUGAR del RAG ─────────────────────────────
+# ── Tool de tickets: responde y retrieve comprueba el KB ────────────────
 
 
-def test_ticket_question_uses_incident_lookup_instead_of_rag():
+def test_ticket_question_runs_incident_lookup_then_checks_kb():
     """Eval 4: consulta de ticket -> intent -> incident_lookup (tool real),
-    retrieve NUNCA se ejecuta (la tool es alternativa al RAG). La respuesta
-    confirma el estado real del gestor y el resultado queda en el estado."""
+    y retrieve corre DESPUÉS para comprobar si el KB aporta contexto. En este
+    eval el KB no aporta (hits=[]) así que la respuesta final es el resumen
+    honesto de la tool (generate usa el camino tool-only, sin LLM). La
+    respuesta confirma el estado real del gestor y el resultado queda en el
+    estado."""
     trace = _load("eval_ticket_lookup")
     order = _node_order(trace)
     assert "intent" in order
     assert "incident_lookup" in order
     assert order.index("intent") < order.index("incident_lookup"), order
-    assert "retrieve" not in order, f"retrieve no debe correr: {order}"
-    assert "generate" not in order
+    # retrieve corre SIEMPRE (comprobar KB) aunque la tool haya respondido.
+    assert "retrieve" in order, f"retrieve debe correr tras la tool: {order}"
+    assert order.index("incident_lookup") < order.index("retrieve"), order
+    # Sin contexto KB, generate NO llama al LLM (respuesta = resumen tool).
+    assert "generate" in order
 
     answer = trace["final_state"]["answer"]
     assert EVAL_TICKET_ID in answer
@@ -116,20 +123,22 @@ def test_ticket_question_uses_incident_lookup_instead_of_rag():
     assert incident_result["ticket_id"] == EVAL_TICKET_ID
 
 
-# ── Tool de inventario: se usa EN LUGAR del RAG ─────────────────────────
+# ── Tool de inventario: responde y retrieve comprueba el KB ─────────────
 
 
-def test_inventory_question_uses_inventory_lookup_instead_of_rag():
+def test_inventory_question_runs_inventory_lookup_then_checks_kb():
     """Eval 5: consulta de stock -> intent -> inventory_lookup (tool real),
-    retrieve NUNCA se ejecuta (la tool es alternativa al RAG). La respuesta
-    confirma el stock real del gestor y el resultado queda en el estado."""
+    y retrieve corre DESPUÉS para comprobar el KB (hits=[] -> respuesta =
+    resumen honesto de la tool, sin LLM). La respuesta confirma el stock real
+    del gestor y el resultado queda en el estado."""
     trace = _load("eval_inventory_lookup")
     order = _node_order(trace)
     assert "intent" in order
     assert "inventory_lookup" in order
     assert order.index("intent") < order.index("inventory_lookup"), order
-    assert "retrieve" not in order, f"retrieve no debe correr: {order}"
-    assert "generate" not in order
+    assert "retrieve" in order, f"retrieve debe correr tras la tool: {order}"
+    assert order.index("inventory_lookup") < order.index("retrieve"), order
+    assert "generate" in order
 
     answer = trace["final_state"]["answer"]
     assert "CLT-SNK-W-42" in answer

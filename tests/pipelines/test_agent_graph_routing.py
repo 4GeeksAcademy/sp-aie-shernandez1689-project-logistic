@@ -1,16 +1,25 @@
-"""Tests de enrutamiento del grafo: tool de tickets vs. RAG.
+"""Tests de enrutamiento del grafo: RAG, tool(s) o ambos — decisión automática.
 
 Ejecutan el grafo real (services.rag_agent.graph) en vivo, mockeando
 solo las dependencias externas (retrieve/generate) y leyendo el gestor
 de incidencias REAL en una tabla TinyDB temporal (la misma
 database.get_incidents_table que sirve GET /api/incidents).
 
-Cubre la arista condicional de la tool:
-- Pregunta de ticket    -> intent -> incident_lookup -> finalize (retrieve NO).
-- Ticket inexistente    -> incident_lookup con fallback honesto (retrieve NO).
+Cubre la arista condicional de las tools:
+- Pregunta de ticket    -> intent -> incident_lookup -> retrieve (KB) -> generate.
+- Ticket inexistente    -> incident_lookup con fallback honesto (retrieve corre).
 - Filtro con varios hits -> fallback honesto pidiendo ticket_id.
-- Pregunta RAG normal   -> intent -> retrieve -> generate (incident_lookup NO).
+- Pregunta de stock     -> intent -> inventory_lookup -> retrieve (KB) -> generate.
+- AMBOS (tool + RAG)    -> la tool corre y, si el KB aporta contexto, generate
+  compone resumen de tool + chunk KB en una única respuesta.
+- Ambas intenciones (ticket + stock) -> corren AMBAS tools (single-purpose),
+  cada una hace una sola cosa.
+- Pregunta RAG normal   -> intent -> retrieve -> generate (sin tool).
 - Pregunta vacía        -> validate -> error (nada más).
+
+La decisión es automática a partir de la pregunta: el usuario nunca indica
+qué fuente usar. Las tools y el RAG no son mutuamente excluyentes: retrieve
+corre SIEMPRE para comprobar si el company-knowledge-base aporta contexto.
 
 Los traces se escriben en un directorio temporal (no ensucian
 data/eval/agent_traces).
@@ -146,11 +155,15 @@ def _fake_inventory(*, product: dict | None = None, description: str | None = No
     )
 
 
-# ── La tool se usa EN LUGAR del RAG ─────────────────────────────────────
+# ── Tool de tickets: corre (y retrieve comprueba el KB) ─────────────────
 
 
-def test_ticket_question_uses_incident_lookup_instead_of_rag(live_graph, incident_table):
-    """Pregunta de ticket -> incident_lookup; retrieve NUNCA se ejecuta."""
+def test_ticket_question_runs_tool_and_checks_kb(live_graph, incident_table):
+    """Pregunta de ticket -> intent -> incident_lookup -> retrieve.
+
+    El KB no aporta contexto (mock devuelve []) -> la respuesta final es el
+    resumen honesto de la tool, sin llamar al LLM (no se inventa contexto).
+    """
     db, table = incident_table.get_incidents_table()
     try:
         real_id = table.all()[0]["id"]
@@ -166,10 +179,14 @@ def test_ticket_question_uses_incident_lookup_instead_of_rag(live_graph, inciden
     order = _node_order(trace)
     assert "intent" in order
     assert "incident_lookup" in order
-    assert order.index("intent") < order.index("incident_lookup")
-    assert "retrieve" not in order, f"retrieve no debe correr: {order}"
-    assert "generate" not in order
-    mock_retrieve.assert_not_called()
+    assert order.index("intent") < order.index("incident_lookup"), order
+    # Single-purpose: la pregunta de ticket NO dispara la tool de inventario.
+    assert "inventory_lookup" not in order, f"tool de tickets es single-purpose: {order}"
+    # retrieve corre SIEMPRE para comprobar si el KB aporta contexto.
+    assert "retrieve" in order, f"retrieve debe correr para comprobar el KB: {order}"
+    assert order.index("incident_lookup") < order.index("retrieve"), order
+    # Sin contexto en el KB: no se llama al LLM; la respuesta es de la tool.
+    mock_retrieve.assert_called_once()
     mock_generate.assert_not_called()
 
     answer = trace["final_state"]["answer"]
@@ -177,35 +194,73 @@ def test_ticket_question_uses_incident_lookup_instead_of_rag(live_graph, inciden
     assert "open" in answer
 
 
-def test_missing_ticket_is_honest_without_rag(live_graph, incident_table):
-    """Ticket inexistente -> fallback honesto; retrieve NUNCA se ejecuta."""
+def test_missing_ticket_is_honest_still_checks_kb(live_graph, incident_table):
+    """Ticket inexistente -> fallback honesto; retrieve corre para el KB."""
     with _fake_rag() as (mock_retrieve, mock_generate):
         trace = _run_thread("test_ticket_missing", "¿Estado del ticket INC-999999?")
 
     order = _node_order(trace)
     assert "incident_lookup" in order
-    assert "retrieve" not in order
-    mock_retrieve.assert_not_called()
+    assert "retrieve" in order
+    mock_retrieve.assert_called_once()
+    mock_generate.assert_not_called()
     answer = trace["final_state"]["answer"]
     assert "No pude confirmar el estado de ese ticket ahora mismo" in answer
     assert "no existe" in answer
 
 
-def test_filter_multiple_matches_is_honest(live_graph, incident_table):
+def test_filter_multiple_matches_is_honest_checks_kb(live_graph, incident_table):
     """Filtro con varios hits -> la tool pide ticket_id (sin inventar)."""
     with _fake_rag() as (mock_retrieve, _):
         trace = _run_thread("test_ticket_filter_multi", "ver ticket")
 
     order = _node_order(trace)
     assert "incident_lookup" in order
-    assert "retrieve" not in order
-    mock_retrieve.assert_not_called()
+    assert "retrieve" in order
+    mock_retrieve.assert_called_once()
     answer = trace["final_state"]["answer"]
     assert "No pude confirmar el estado de ese ticket ahora mismo" in answer
     assert "especifica un ticket_id" in answer
 
 
-# ── El RAG se usa cuando NO hay intención de ticket ─────────────────────
+# ── AMBOS: tool + RAG compone una única respuesta ───────────────────────
+
+
+def test_tool_plus_kb_composes_combined_answer(live_graph, incident_table):
+    """Pregunta de ticket con contexto de KB disponible -> generate compone.
+
+    Si retrieve devuelve chunk del company-knowledge-base, la respuesta final
+    la redacta el LLM combinando el resumen de la tool y el contexto del KB
+    (una única respuesta, no concatenación).
+    """
+    db, table = incident_table.get_incidents_table()
+    try:
+        real_id = table.all()[0]["id"]
+    finally:
+        db.close()
+
+    kb_chunk = {
+        "text": "Política de devoluciones de TrackFlow aplicable al proceso de tickets.",
+        "source_document": "trackflow-returns-policy",
+        "scope": "returns",
+        "score": 0.85,
+    }
+    combined = f"El ticket {real_id} está open y, según la política de TrackFlow, se aplica devolución."
+    with _fake_rag(context=[kb_chunk], answer=combined) as (mock_retrieve, mock_generate):
+        trace = _run_thread(
+            "test_ticket_plus_kb",
+            f"¿Cuál es el estado del ticket {real_id}?",
+        )
+
+    order = _node_order(trace)
+    assert order.index("incident_lookup") < order.index("retrieve") < order.index("generate")
+    mock_retrieve.assert_called_once()
+    mock_generate.assert_called_once()
+    answer = trace["final_state"]["answer"]
+    assert combined == answer
+
+
+# ── El RAG se usa cuando NO hay intención de herramienta ────────────────
 
 
 def test_rag_question_goes_through_retrieve_not_incident_lookup(live_graph):
@@ -223,6 +278,7 @@ def test_rag_question_goes_through_retrieve_not_incident_lookup(live_graph):
     order = _node_order(trace)
     assert "intent" in order
     assert "incident_lookup" not in order, f"no debe usar la tool: {order}"
+    assert "inventory_lookup" not in order, f"no debe usar la tool: {order}"
     assert "retrieve" in order and "generate" in order
     assert order.index("retrieve") < order.index("generate")
     mock_retrieve.assert_called_once()
@@ -271,11 +327,16 @@ def test_trace_schema_holds_for_incident_run(live_graph, incident_table):
     assert incident_result["resolved"] is True
 
 
-# ── La tool de inventario se usa EN LUGAR del RAG ───────────────────────
+# ── Tool de inventario: corre (y retrieve comprueba el KB) ──────────────
 
 
-def test_inventory_question_uses_inventory_lookup_instead_of_rag(live_graph):
-    """Pregunta de stock -> intent -> inventory_lookup; retrieve NUNCA corre."""
+def test_inventory_question_runs_tool_and_checks_kb(live_graph):
+    """Pregunta de stock -> intent -> inventory_lookup -> retrieve -> generate.
+
+    Al llamar la tool, se pasa un context de KB vacío (mock) -> como retrieve
+    no aporta contexto, la respuesta final es el resumen honesto de la tool
+    (sin llamar al LLM).
+    """
     product = {
         "id": 1,
         "name": "Zapatilla blanca clásica - Talla 42",
@@ -300,12 +361,13 @@ def test_inventory_question_uses_inventory_lookup_instead_of_rag(live_graph):
     order = _node_order(trace)
     assert "intent" in order
     assert "inventory_lookup" in order
-    assert order.index("intent") < order.index("inventory_lookup")
+    assert order.index("intent") < order.index("inventory_lookup"), order
     assert "incident_lookup" not in order, f"no debe usar la tool de tickets: {order}"
-    assert "retrieve" not in order, f"retrieve no debe correr: {order}"
-    assert "generate" not in order
-    mock_retrieve.assert_not_called()
-    mock_generate.assert_not_called()
+    # retrieve corre SIEMPRE para comprobar si el KB aporta contexto.
+    assert "retrieve" in order, f"retrieve debe correr tras la tool: {order}"
+    assert order.index("inventory_lookup") < order.index("retrieve"), order
+    mock_retrieve.assert_called_once()
+    mock_generate.assert_not_called()  # sin contexto KB, la respuesta es de la tool
     mock_inventory.assert_called_once()
     # Se ejecutó con el SKU extraído por intent (no un filtro genérico).
     assert mock_inventory.call_args[0][0] == {"sku": "CLT-SNK-W-42"}
@@ -330,15 +392,15 @@ def test_inventory_question_without_sku_runs_tool_anyway(live_graph):
 
     order = _node_order(trace)
     assert "inventory_lookup" in order
-    assert "retrieve" not in order
-    mock_retrieve.assert_not_called()
+    assert "retrieve" in order, f"retrieve debe correr tras la tool: {order}"
+    mock_retrieve.assert_called_once()
     assert mock_inventory.call_args[0][0] == {"sku_id": None}
     answer = trace["final_state"]["answer"]
     assert "3 productos" in answer
 
 
-def test_inventory_fallback_is_honest_without_rag(live_graph):
-    """Fallo en inventario -> respuesta honesta; retrieve NUNCA corre."""
+def test_inventory_fallback_is_honest_still_checks_kb(live_graph):
+    """Fallo en inventario -> respuesta honesta; retrieve corre para el KB."""
     fake_result = InventoryLookupResult(
         resolved=False,
         error="el producto 'ZZZ-NOPE-99' no existe",
@@ -355,9 +417,9 @@ def test_inventory_fallback_is_honest_without_rag(live_graph):
 
     order = _node_order(trace)
     assert "inventory_lookup" in order
-    assert "retrieve" not in order
-    mock_retrieve.assert_not_called()
-    mock_generate.assert_not_called()
+    assert "retrieve" in order, f"retrieve debe correr tras la tool: {order}"
+    mock_retrieve.assert_called_once()
+    mock_generate.assert_not_called()  # sin contexto KB, respuesta de la tool
     mock_inventory.assert_called_once()
     answer = trace["final_state"]["answer"]
     assert "No pude consultar el stock" in answer
@@ -417,15 +479,15 @@ def test_rag_question_does_not_run_inventory_lookup(live_graph):
     mock_inventory.assert_not_called()
 
 
-# ── Precedencia: ticket > inventario (una sola tool por corrida) ────────
+# ── Ambas intenciones: corren AMBOS tools (single-purpose) ──────────────
 
 
-def test_ticket_question_takes_precedence_over_inventory(live_graph, incident_table):
-    """Pregunta de ticket que menciona stock -> incident_lookup (no inventario).
+def test_ticket_and_inventory_run_both_tools(live_graph, incident_table):
+    """Pregunta que menciona ticket y stock -> corren AMBAS tools.
 
-    El elif de intent_node da prioridad a ticket/incidencia: incluso si la
-    frase contiene "stock"/"sku", una sola tool corre por corrida y debe ser
-    la de incidencias.
+    Cada tool hace una sola cosa (tickets o inventario): en una pregunta que
+    pide el estado de un ticket y además stock de un SKU, incident_lookup e
+    inventory_lookup se ejecutan (no una 'tool' ambigua que haga ambas).
     """
     db, table = incident_table.get_incidents_table()
     try:
@@ -433,22 +495,31 @@ def test_ticket_question_takes_precedence_over_inventory(live_graph, incident_ta
     finally:
         db.close()
 
+    fake_inv = _fake_inventory(
+        description="El producto CLT-SNK-W-42 tiene 40 unidades en stock"
+    )
     with _fake_rag() as (mock_retrieve, _):
         with patch(
             "services.rag_agent.graph.lookup_inventory",
-            return_value=_fake_inventory(product={}),
+            return_value=fake_inv,
         ) as mock_inventory:
             trace = _run_thread(
-                "test_ticket_precedence",
-                # El id es el último token largo: intent lo usa como ticket_id.
-                f"problema de stock del ticket {real_id}",
+                "test_both_tools",
+                f"problema de stock del ticket {real_id} del producto CLT-SNK-W-42",
             )
 
     order = _node_order(trace)
-    assert "incident_lookup" in order
-    assert "inventory_lookup" not in order, f"solo una tool por corrida: {order}"
-    mock_retrieve.assert_not_called()
-    mock_inventory.assert_not_called()
-    answer = trace["final_state"]["answer"]
+    assert "incident_lookup" in order, f"incident_lookup debe correr: {order}"
+    assert "inventory_lookup" in order, f"inventory_lookup debe correr: {order}"
+    assert order.index("incident_lookup") < order.index("inventory_lookup") < order.index("retrieve")
+    mock_inventory.assert_called_once()
+    mock_inventory.call_args[0][0] == {"sku": "CLT-SNK-W-42"}
+
+    # Ambas fuentes quedaron en el estado (trace consultable).
+    fs = trace["final_state"]
+    assert fs["incident_result"]["ticket_id"] == real_id
+    assert fs["inventory_result"]["resolved"] is True
+    # La respuesta combina ambas tools de forma honesta.
+    answer = fs["answer"]
     assert real_id in answer
-    assert "open" in answer
+    assert "40 unidades" in answer
