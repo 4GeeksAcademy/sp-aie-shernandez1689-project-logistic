@@ -1,0 +1,113 @@
+{
+  "schema_version": 2,
+  "thread_id": "eval_inventory_lookup",
+  "started_at": "2026-10-26T19:51:34+00:00",
+  "completed_at": "2026-10-26T19:51:34+00:00",
+  "question": "¿Cuánto stock hay del producto CLT-SNK-W-42?",
+  "steps": [
+    {
+      "seq": 1,
+      "node": "validate",
+      "started_at": "2026-10-26T19:51:34+00:00",
+      "output": {
+        "question": "¿Cuánto stock hay del producto CLT-SNK-W-42?"
+      }
+    },
+    {
+      "seq": 2,
+      "node": "intent",
+      "started_at": "2026-10-26T19:51:34+00:00",
+      "output": {
+        "incident_query": null,
+        "inventory_query": {
+          "sku": "CLT-SNK-W-42"
+        },
+        "use_rag": false
+      }
+    },
+    {
+      "seq": 3,
+      "node": "inventory_lookup",
+      "started_at": "2026-10-26T19:51:34+00:00",
+      "output": {
+        "inventory_result": {
+          "product": {
+            "name": "Zapatilla blanca clásica - Talla 42",
+            "sku": "CLT-SNK-W-42",
+            "client_name": "PureStep Footwear",
+            "category": "fashion",
+            "warehouse": "LA",
+            "id": 1,
+            "current_stock": 40
+          },
+          "description": null,
+          "resolved": true,
+          "error": null,
+          "matched_filters": []
+        },
+        "tool_answers": [
+          "El producto CLT-SNK-W-42 (Zapatilla blanca clásica - Talla 42) tiene 40 unidades en stock (almacén LA, categoría fashion)."
+        ],
+        "tool_context": [
+          {
+            "text": "El producto CLT-SNK-W-42 (Zapatilla blanca clásica - Talla 42) tiene 40 unidades en stock (almacén LA, categoría fashion).",
+            "source_document": "inventory_lookup",
+            "section": "consulta de stock"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 4,
+      "node": "generate",
+      "started_at": "2026-10-26T19:51:34+00:00",
+      "output": {
+        "answer": "El producto CLT-SNK-W-42 (Zapatilla blanca clásica - Talla 42) tiene 40 unidades en stock (almacén LA, categoría fashion)."
+      }
+    }
+  ],
+  "final_state": {
+    "question": "¿Cuánto stock hay del producto CLT-SNK-W-42?",
+    "answer": "El producto CLT-SNK-W-42 (Zapatilla blanca clásica - Talla 42) tiene 40 unidades en stock (almacén LA, categoría fashion).",
+    "incident_query": null,
+    "inventory_query": {
+      "sku": "CLT-SNK-W-42"
+    },
+    "use_rag": false,
+    "inventory_result": {
+      "product": {
+        "name": "Zapatilla blanca clásica - Talla 42",
+        "sku": "CLT-SNK-W-42",
+        "client_name": "PureStep Footwear",
+        "category": "fashion",
+        "warehouse": "LA",
+        "id": 1,
+        "current_stock": 40
+      },
+      "description": null,
+      "resolved": true,
+      "error": null,
+      "matched_filters": []
+    },
+    "tool_answers": [
+      "El producto CLT-SNK-W-42 (Zapatilla blanca clásica - Talla 42) tiene 40 unidades en stock (almacén LA, categoría fashion)."
+    ],
+    "tool_context": [
+      {
+        "text": "El producto CLT-SNK-W-42 (Zapatilla blanca clásica - Talla 42) tiene 40 unidades en stock (almacén LA, categoría fashion).",
+        "source_document": "inventory_lookup",
+        "section": "consulta de stock"
+      }
+    ]
+  },
+  "routing": {
+    "decision": "tool",
+    "used_rag": false,
+    "tools": [
+      "inventory_lookup"
+    ],
+    "order": [
+      "tool:inventory_lookup"
+    ]
+  }
+}
