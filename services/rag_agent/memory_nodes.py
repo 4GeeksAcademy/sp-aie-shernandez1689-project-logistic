@@ -6,53 +6,65 @@ Flujo de memoria (auto-evaluación + propuesta)
 Este módulo implementa el diseño de **memoria por propuesta explícita**:
 el agente nunca escribe directamente a memoria. En su lugar:
 
-  1. ``generate_node`` produce la respuesta + una auto-evaluación de si
-     hay algo nuevo que valga la pena recordar (``_memory_proposal``).
-  2. Si hay propuesta, se incrusta como pregunta al final de la respuesta
-     para que el usuario la acepte o rechace.
-  3. ``remember_node`` (en la **siguiente** interacción) detecta si la
-     nueva pregunta del usuario es una confirmación de la propuesta
-     anterior y, de ser así, persiste el hecho.
+  1. ``memorize_node`` auto-evalúa la interacción y, si hay algo memorable,
+     genera una ``_memory_proposal`` que se incrusta como pregunta al final
+     de la respuesta.
+  2. En la **siguiente** interacción, ``remember_node`` clasifica el mensaje
+     del usuario con una etiqueta estructurada para determinar si acepta,
+     rechaza, edita o cambia de tema.
+  3. Solo se persiste si hay confirmación explícita. El cambio de tema sin
+     respuesta clara descarta la propuesta automáticamente.
 
-Esto garantiza que:
-  - Nunca se escribe a memoria sin consentimiento explícito del usuario.
-  - No hace falta una segunda llamada al LLM ni un agente separado.
-  - La mayoría de las interacciones se descartan sin propuesta.
+Reglas de negocio clave
+-----------------------
+- **Clasificador estructurado**: ``_classify_proposal_intent()`` devuelve
+  ``"accept" | "reject" | "edit" | "topic_change" | "ambiguous"``, no un
+  booleano.
+- **Una propuesta a la vez**: si ya hay una ``_memory_proposal`` pendiente
+  sin resolver, ``memorize_node`` no genera una segunda.
+- **Cambio de tema = descarte**: si el usuario no responde clara y directamente
+  a la propuesta, se descarta (nunca se asume aprobación por silencio).
+- **Auditoría**: cada propuesta, aceptación, rechazo, edición o descarte se
+  registra en ``data/audit/memory_proposals.jsonl`` con marca de tiempo,
+  mensaje origen y resultado.
+- **Mensaje combinado**: si el usuario acepta/rechaza y además hace una nueva
+  pregunta en el mismo mensaje, la propuesta se resuelve y la conversación
+  continúa normalmente.
 
 Nodos
 -----
-- ``remember_node``: Inicio de corrida. Carga memoria existente Y
-  procesa propuestas pendientes del checkpoint anterior.
+- ``remember_node``: Inicio de corrida. Carga memoria existente Y clasifica
+  la intención del usuario frente a la propuesta pendiente.
 
-- ``memorize_node``: Fin de corrida. Auto-evalúa y genera
-  ``_memory_proposal`` si aplica.
+- ``memorize_node``: Fin de corrida. Auto-evalúa y genera propuesta solo si
+  no hay ya una pendiente.
 
-Reglas de negocio
-------------------
+Reglas de auto-evaluación (``memorize_node``)
+-----------------------------------------------
+1. Preferencias detectadas → proponer.
+2. Hechos aprobados en respuesta → proponer.
+3. Solicitud explícita del usuario → proponer.
+4. Ninguna de las anteriores → ``{"type": "none"}`` (no se propone nada).
 
-✅ MEMORIZABLE (se propone al usuario):
-  - Preferencias de idioma ("en español", "in English").
-  - Preferencias de formato / nivel de detalle ("solo resumen").
-  - Hechos aprobados: mapeos persona→rol confirmados explícitamente.
-  - Decisiones documentadas que el usuario pide recordar.
-
-❌ NO MEMORIZABLE (se descarta sin propuesta):
-  1. "¿Cuál es el estado del ticket INC-123?" — Consulta operacional puntual.
-     Sin preferencias nuevas, sin hechos que confirmar → nada que recordar.
-  2. "Necesito el stock del SKU CLT-SNK-W-42" — Consulta de inventario.
-     Información transaccional que cambia constantemente.
-  3. "¿Qué dice la política de devoluciones?" — Pregunta documental RAG.
-     La respuesta está en la base de conocimiento, no es un hecho nuevo.
-  4. "Gracias" / "ok" / "entendido" — Sin información nueva.
-  5. Preguntas sobre el clima o temas no relacionados con TrackFlow.
+Ejemplos de NO memorización
+----------------------------
+1. "¿Cuál es el estado del ticket INC-123?" — Consulta operacional puntual.
+2. "Necesito el stock del SKU CLT-SNK-W-42" — Consulta de inventario.
+3. "¿Qué dice la política de devoluciones?" — Pregunta documental RAG.
+4. "Gracias" / "ok" / "entendido" — Sin información nueva.
+5. Preguntas sobre el clima o temas no relacionados.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import re
-from typing import Any
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Literal
 
 from langgraph.config import get_config
 
@@ -64,9 +76,21 @@ logger = logging.getLogger(__name__)
 # Singleton del servicio — se inicializa bajo demanda.
 _memory: MemoryService | None = None
 
-# ── Patrones de detección de confirmación ─────────────────────────────
+# ── Ruta del log de auditoría ─────────────────────────────────────────
 
-# Frases con las que un usuario ACEPTA una propuesta de memoria.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+_AUDIT_LOG_PATH = REPO_ROOT / "data" / "audit" / "memory_proposals.jsonl"
+
+
+# ── Tipos de intención para el clasificador ───────────────────────────
+
+ProposalIntent = Literal["accept", "reject", "edit", "topic_change", "ambiguous"]
+
+
+# ── Clasificador de intención explícita ──────────────────────────────
+# En lugar de simples booleanos, produce una etiqueta estructurada.
+
+# Patrones que indican ACEPTACIÓN explícita de la propuesta.
 _ACCEPT_PATTERNS = re.compile(
     r"^\s*(s[ií]|si\s*guarda|ok|okay|de\s*[áa]cuerdo|confirmo|adelante|"
     r"claro|s[ií],?\s*gu[áa]rdalo|s[ií],?\s*recu[eé]rdalo|"
@@ -74,16 +98,34 @@ _ACCEPT_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# Frases con las que un usuario RECHAZA explícitamente.
+# Patrones que indican RECHAZO explícito.
 _REJECT_PATTERNS = re.compile(
     r"^\s*(no|no\s*gracias|no\s*gu[áa]rdes|no\s*recuerdes|"
     r"nope|not\s*now|no\s*thanks|no\s*quiero)\s*[\.!\?]*\s*$",
     re.IGNORECASE,
 )
 
-# Umbral mínimo de longitud para considerar una pregunta como "contenido real"
-# (por debajo de esto, probablemente es sólo una respuesta de confirmación).
+# Patrones que indican EDICIÓN: el usuario quiere modificar el valor propuesto.
+_EDIT_PATTERNS = re.compile(
+    r"\b(?:en\s*realidad|cambia|corrige|mejor\s*di|edita|modifica|"
+    r"no\s*es\s*eso|rectifica|realmente)\b",
+    re.IGNORECASE,
+)
+
+# Umbral mínimo de longitud para considerar contenido real.
 _MIN_QUESTION_LENGTH = 8
+
+# Señales de que el usuario cambió de tema (no relacionado con la propuesta).
+# Si una frase contiene estos términos Y no coincide con aceptación/rechazo,
+# se clasifica como cambio de tema.
+_TOPIC_CHANGE_SIGNALS = re.compile(
+    r"\b(?:ticket|incidencia|stock|inventario|sku|pol[ií]tica|devoluci[oó]n|"
+    r"cu[aá]l\s*es\s*el\s*estado|d[ií]m(e|a)\s*el|"
+    r"qu[eé]\s*es|qu[eé]\s*significa|c[oó]mo\s*funciona|"
+    r"reporte|informe|dashboard|gr[aá]fica|"
+    r"qu[eé]\s*tal|buenas|hola|gracias)\b",
+    re.IGNORECASE,
+)
 
 
 # ── Inicialización del servicio ────────────────────────────────────────
@@ -122,14 +164,115 @@ def _run_async(coro):
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # No hay loop corriendo → crear uno nuevo
         return asyncio.run(coro)
-    # Ya hay un loop (ej. Jupyter, tests con pytest-asyncio)
-    # → crear una tarea y esperar
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         return future.result()
+
+
+# ── Auditoría ────────────────────────────────────────────────────────
+# Cada decisión sobre memoria se registra de forma auditable.
+
+
+def _audit_proposal(
+    event: str,
+    proposal: dict[str, Any] | None,
+    user_message: str | None,
+    result: dict[str, Any] | None,
+    thread_id: str,
+    uid: str | None,
+) -> None:
+    """Registra un evento de auditoría en el log persistente.
+
+    Args:
+        event: Tipo de evento (proposed|accepted|rejected|edited|discarded|error).
+        proposal: La propuesta implicada (o None).
+        user_message: Mensaje del usuario que originó la decisión.
+        result: Dict con detalles del resultado (errores, valores persistidos).
+        thread_id: Identificador del hilo de conversación.
+        uid: Identificador del usuario (puede ser None).
+    """
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "event": event,
+        "thread_id": thread_id,
+        "user_id": uid,
+        "proposal": proposal,
+        "user_message": user_message,
+        "result": result,
+    }
+    try:
+        _AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_AUDIT_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.warning("No se pudo escribir auditoría: %s", exc)
+
+
+# ── Clasificador de intención explícita ──────────────────────────────
+
+
+def _classify_proposal_intent(
+    user_text: str,
+    proposal: dict[str, Any] | None,
+) -> ProposalIntent:
+    """Clasifica la intención del usuario frente a una propuesta pendiente.
+
+    Clasificador estructurado que usa el texto completo del mensaje del
+    usuario para determinar la intención. Devuelve una etiqueta explícita:
+
+    - ``"accept"``: El usuario aprueba la propuesta de forma clara.
+    - ``"reject"``: El usuario rechaza explícitamente.
+    - ``"edit"``: El usuario corrige o modifica el valor propuesto.
+    - ``"topic_change"``: El usuario ignora la propuesta y cambia de tema.
+    - ``"ambiguous"``: No se puede determinar la intención.
+
+    El clasificador usa el texto COMPLETO del mensaje, no solo el primer
+    token, para poder detectar mensajes combinados como
+    "sí, y dime el stock del SKU XYZ".
+    """
+    if not user_text or not proposal:
+        return "ambiguous"
+
+    text = user_text.strip()
+    if not text:
+        return "ambiguous"
+
+    lower = text.lower()
+
+    # 1. Detección de edición — tiene prioridad porque el usuario quiere
+    #    corregir el valor propuesto, no simplemente rechazar.
+    if _EDIT_PATTERNS.search(text):
+        return "edit"
+
+    # 2. Aceptación explícita (texto completo o comienzo del mensaje)
+    #    "sí" / "sí, guarda eso" / "sí, ahora dime el stock"
+    first_token = text.split()[0].lower().strip(",.!¡¿?")
+    if first_token in ("sí", "si", "ok", "okay", "yes", "sure", "claro", "adelante"):
+        return "accept"
+
+    if _ACCEPT_PATTERNS.match(text):
+        return "accept"
+
+    # 3. Rechazo explícito
+    if _REJECT_PATTERNS.match(text):
+        return "reject"
+
+    # Primer token de rechazo
+    if first_token in ("no", "nope"):
+        return "reject"
+
+    # 4. Cambio de tema: el mensaje es largo y menciona términos operacionales
+    if len(text) >= _MIN_QUESTION_LENGTH and _TOPIC_CHANGE_SIGNALS.search(text):
+        return "topic_change"
+
+    # 5. Mensajes muy cortos que no son claramente aceptación/rechazo
+    if len(text) < _MIN_QUESTION_LENGTH:
+        return "ambiguous"
+
+    # 6. Por defecto, si no hay señales claras, es cambio de tema
+    return "topic_change"
 
 
 # ── Nodo: remember (inicio de corrida) ────────────────────────────────
@@ -140,14 +283,21 @@ def remember_node(state: dict[str, Any]) -> dict[str, Any]:
 
     Responsabilidades:
     1. Cargar preferencias, episodios y hechos semánticos previos.
-    2. Detectar si la pregunta actual es una confirmación/rechazo de
-       una propuesta de memoria del checkpoint anterior.
-    3. Si es confirmación → persiste la memoria propuesta.
-    4. Si es rechazo → descarta la propuesta.
+    2. Clasificar la intención del mensaje actual frente a la propuesta
+       pendiente del checkpoint anterior usando ``_classify_proposal_intent``.
+    3. Según la clasificación:
+       - ``accept`` → persistir la memoria propuesta.
+       - ``reject`` → descartar sin persistir.
+       - ``edit`` → descartar y registrar que el usuario quiere editar.
+       - ``topic_change`` → descartar por omisión.
+       - ``ambiguous`` → mantener propuesta pendiente.
+    4. Si el usuario además hace una nueva pregunta tras resolver la
+       propuesta, se carga la memoria existente para continuar.
 
     Returns:
-        Dict con ``memory_context`` y opcionalmente ``answer`` si se
-        procesó una confirmación.
+        Dict con ``memory_context``, opcionalmente ``answer`` si solo se
+        procesó la propuesta, y ``_memory_intent_classification`` con la
+        etiqueta de clasificación.
     """
     memory = _get_memory()
     question = state.get("question", "").strip()
@@ -164,38 +314,99 @@ def remember_node(state: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {
         "memory_context": context,
         "_memory_loaded": True,
-        "_memory_proposal": None,  # se limpia siempre; si se genera de nuevo,
-                                   # lo hará memorize_node al final de esta corrida
+        "_memory_proposal": None,
+        "_memory_intent_classification": None,
     }
     processed_proposal = False
 
-    # ── Paso 1: Procesar propuesta pendiente del run anterior ──────
+    # ── Paso 1: Clasificar intención y procesar propuesta pendiente ──
     if prev_proposal and prev_proposal.get("type") not in (None, "none") and question:
-        proposal_type = prev_proposal.get("type")
-        payload = prev_proposal.get("payload", {})
+        intent = _classify_proposal_intent(question, prev_proposal)
+        out["_memory_intent_classification"] = intent
 
-        if _is_acceptance(question):
+        if intent == "accept":
             # ✅ Usuario aceptó → persistir
-            accepted = _persist_proposal(memory, proposal_type, payload, uid, thread_id)
-            out["_memory_proposal"] = None  # propuesta resuelta
-            out["answer"] = _build_acceptance_response(accepted)
-            processed_proposal = True
+            accepted = _persist_proposal(memory, prev_proposal, uid, thread_id)
+            out["_memory_proposal"] = None
+            _audit_proposal(
+                event="accepted",
+                proposal=prev_proposal,
+                user_message=question,
+                result=accepted,
+                thread_id=thread_id,
+                uid=uid,
+            )
             logger.info("Propuesta ACEPTADA y persistida: %s", accepted)
 
-        elif _is_rejection(question):
-            # ❌ Usuario rechazó → descartar sin persistir
+            # Si el mensaje solo es aceptación (no tiene más contenido),
+            # responder directamente. Si tiene más contenido, continuar.
+            if _is_pure_confirmation(question):
+                out["answer"] = _build_acceptance_response(accepted)
+                processed_proposal = True
+            else:
+                # Mensaje combinado: "sí, y dime el stock..."
+                # La aceptación se procesa, pero seguimos para responder
+                # a la nueva pregunta. Se añade un prefacio a la memoria.
+                processed_proposal = False
+                context["_proposal_result"] = _build_acceptance_response(accepted)
+
+        elif intent == "reject":
+            # ❌ Usuario rechazó → descartar
             out["_memory_proposal"] = None
-            out["answer"] = "Entendido. No guardo nada."
-            processed_proposal = True
+            _audit_proposal(
+                event="rejected",
+                proposal=prev_proposal,
+                user_message=question,
+                result={"discarded": True},
+                thread_id=thread_id,
+                uid=uid,
+            )
             logger.info("Propuesta RECHAZADA por el usuario: %s", prev_proposal)
 
-        elif len(question) < _MIN_QUESTION_LENGTH:
-            # Pregunta muy corta que no es claramente aceptación ni rechazo
-            # → tratar como respuesta ambigua (no hacer nada, mantener propuesta)
-            logger.debug(
-                "Respuesta ambigua a propuesta (long=%d): %r",
-                len(question), question,
+            if _is_pure_confirmation(question):
+                out["answer"] = "Entendido. No guardo nada."
+                processed_proposal = True
+            else:
+                # Rechazo + nueva pregunta → continuar
+                processed_proposal = False
+                context["_proposal_result"] = "Entendido. No guardo nada."
+
+        elif intent == "edit":
+            # ✏️ Usuario quiere editar → descartar propuesta actual
+            out["_memory_proposal"] = None
+            _audit_proposal(
+                event="edited",
+                proposal=prev_proposal,
+                user_message=question,
+                result={"discarded": True, "intent": "user_wants_to_edit"},
+                thread_id=thread_id,
+                uid=uid,
             )
+            logger.info("Propuesta EDITADA (descartada): %s", prev_proposal)
+            # El usuario hará una nueva solicitud explícita; continuar
+            processed_proposal = False
+            context["_proposal_result"] = (
+                "Entendido. Descarto la propuesta anterior. "
+                "Dime exactamente qué quieres que recuerde."
+            )
+
+        elif intent in ("topic_change", "ambiguous"):
+            # 🔀 Cambio de tema o ambigüedad → descartar por defecto
+            out["_memory_proposal"] = None
+            _audit_proposal(
+                event="discarded",
+                proposal=prev_proposal,
+                user_message=question,
+                result={"intent": intent, "discarded": True},
+                thread_id=thread_id,
+                uid=uid,
+            )
+            logger.info(
+                "Propuesta DESCARTADA por %s: %r",
+                intent, question[:80],
+            )
+            processed_proposal = False
+            context["_proposal_result"] = None  # fluye sin mención
 
     # ── Paso 2: Cargar memoria existente ───────────────────────────
     if not processed_proposal:
@@ -216,15 +427,17 @@ def remember_node(state: dict[str, Any]) -> dict[str, Any]:
         "n_semantic_hits": len(context.get("semantic_hits", [])),
         "has_episode": context.get("episode") is not None,
         "processed_proposal": processed_proposal,
+        "intent_classification": out.get("_memory_intent_classification"),
     })
 
     logger.debug(
         "Memory loaded: %d prefs, %d semantic hits, episode=%s, "
-        "proposal_processed=%s",
+        "proposal_processed=%s, intent=%s",
         len(context.get("prefs", {})),
         len(context.get("semantic_hits", [])),
         bool(context.get("episode")),
         processed_proposal,
+        out.get("_memory_intent_classification"),
     )
     return out
 
@@ -239,18 +452,44 @@ def memorize_node(state: dict[str, Any]) -> dict[str, Any]:
     con la información que *podría* memorizarse, y una pregunta en lenguaje
     natural al final de la respuesta para que el usuario confirme.
 
-    El criterio de auto-evaluación es:
-    1. Si se detectaron preferencias nuevas en la pregunta del usuario → proponer.
-    2. Si la respuesta contiene hechos confirmados explícitamente → proponer.
-    3. Si el usuario pidió explícitamente recordar algo → proponer.
-    4. En cualquier otro caso → ``_memory_proposal = {"type": "none"}``.
+    Reglas:
+    - Si ya hay una propuesta pendiente sin resolver (del checkpoint anterior),
+      NO se genera una segunda. Solo puede haber una a la vez.
+    - Si no se detecta contenido memorable, ``_memory_proposal = {"type": "none"}``.
 
     Returns:
-        Dict con ``_memory_proposal`` y opcionalmente ``answer`` modificada.
+        Dict con ``_memory_proposal``, ``_audit_memory`` (registro de la
+        decisión), y opcionalmente ``answer`` modificada.
     """
     question = state.get("question", "")
     answer = state.get("answer", "")
     uid = _user_id(state)
+    thread_id = _thread_id()
+
+    # ── Verificar si ya hay una propuesta pendiente ────────────────
+    existing_proposal = state.get("_memory_proposal")
+    if existing_proposal and existing_proposal.get("type") not in (None, "none"):
+        # Ya hay una propuesta sin resolver → no generar otra
+        _audit_proposal(
+            event="skipped",
+            proposal=None,
+            user_message=question[:200],
+            result={"reason": "existing_pending_proposal"},
+            thread_id=thread_id,
+            uid=uid,
+        )
+        logger.debug(
+            "Propuesta saltada: ya hay una pendiente (type=%s)",
+            existing_proposal.get("type"),
+        )
+        return {
+            "_memory_proposal": existing_proposal,  # mantener la pendiente
+            "_memorized": {
+                "proposal_type": existing_proposal["type"],
+                "proposed": False,
+                "skipped_reason": "existing_pending_proposal",
+            },
+        }
 
     # --- Auto-evaluación ---
     proposal: dict[str, Any] = {"type": "none", "payload": {}}
@@ -277,7 +516,7 @@ def memorize_node(state: dict[str, Any]) -> dict[str, Any]:
             proposal_text = "📝 ¿Quieres que recuerde que " + \
                 " y ".join(pref_descriptions) + "?"
 
-    # 2. Hechos aprobados (solo si no hay ya una propuesta de preferencia)
+    # 2. Hechos aprobados (solo si no hay ya una propuesta)
     if proposal["type"] == "none":
         approved = _extract_approved_facts(answer)
         if approved:
@@ -308,6 +547,19 @@ def memorize_node(state: dict[str, Any]) -> dict[str, Any]:
             }
             proposal_text = f"📝 ¿Quieres que recuerde esto: {explicit['value']}?"
 
+    # --- Auditoría de la propuesta generada ---
+    _audit_proposal(
+        event="proposed" if proposal["type"] != "none" else "none",
+        proposal=proposal,
+        user_message=question[:200],
+        result={
+            "proposal_type": proposal["type"],
+            "proposal_text": proposal_text,
+        },
+        thread_id=thread_id,
+        uid=uid,
+    )
+
     # --- Construir salida ---
     out: dict[str, Any] = {
         "_memory_proposal": proposal,
@@ -319,8 +571,7 @@ def memorize_node(state: dict[str, Any]) -> dict[str, Any]:
 
     # Si hay propuesta, añadir la pregunta al final de la respuesta
     if proposal_text and answer and not answer.endswith(proposal_text):
-        # No duplicar si ya se incluyó
-        if "¿Quieres que recuerde" not in answer:
+        if "📝 ¿Quieres que recuerde" not in answer:
             out["answer"] = answer.rstrip() + "\n\n" + proposal_text
 
     tracing.add_step("memorize", {
@@ -336,31 +587,52 @@ def memorize_node(state: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-# ── Helpers de detección ──────────────────────────────────────────────
+# ── Helpers de clasificación ──────────────────────────────────────────
 
 
-def _is_acceptance(text: str) -> bool:
-    """Determina si el texto del usuario es una confirmación."""
-    return bool(_ACCEPT_PATTERNS.match(text.strip()))
+def _is_pure_confirmation(text: str) -> bool:
+    """Determina si el mensaje es solo una confirmación sin contenido adicional.
+
+    Es decir, el usuario solo respondió "sí" o "no" sin hacer una nueva
+    pregunta. Esto permite distinguir entre:
+    - "sí" → solo confirmación
+    - "sí, y dime el stock" → confirmación + nueva pregunta
+    """
+    if not text:
+        return True
+    stripped = text.strip().strip(",.!¡¿?")
+    # Si después de limpiar puntuación queda una palabra corta, es confirmación pura
+    words = stripped.split()
+    if len(words) <= 3:
+        lower = stripped.lower().strip()
+        accept_words = {"sí", "si", "ok", "okay", "yes", "sure", "no", "nope", "claro", "adelante", "de acuerdo", "deacuerdo"}
+        if lower in accept_words or any(lower.startswith(w) for w in ("sí", "si", "no", "ok")):
+            return True
+    return False
 
 
-def _is_rejection(text: str) -> bool:
-    """Determina si el texto del usuario es un rechazo."""
-    return bool(_REJECT_PATTERNS.match(text.strip()))
+# ── Helpers de persistencia ──────────────────────────────────────────
 
 
 def _persist_proposal(
     memory: MemoryService,
-    proposal_type: str,
-    payload: dict[str, Any],
+    proposal: dict[str, Any],
     uid: str | None,
     thread_id: str,
 ) -> dict[str, Any]:
     """Persiste una propuesta aceptada en los stores de memoria.
 
+    Args:
+        memory: Instancia de MemoryService.
+        proposal: La propuesta a persistir (debe tener ``type`` y ``payload``).
+        uid: Identificador del usuario.
+        thread_id: Identificador del hilo.
+
     Returns:
         Dict con resumen de lo persistido.
     """
+    proposal_type = proposal.get("type")
+    payload = proposal.get("payload", {})
     accepted: dict[str, Any] = {"type": proposal_type, "details": []}
 
     if proposal_type == "preference":
@@ -384,7 +656,7 @@ def _build_acceptance_response(accepted: dict[str, Any]) -> str:
     """Construye la respuesta tras aceptar una propuesta."""
     if accepted["type"] == "preference":
         return (
-            "✅ Preferencia guardada. " +
+            "✅ Preferencia guardada. "
             "La tendré en cuenta en futuras respuestas."
         )
     elif accepted["type"] == "fact":
@@ -413,9 +685,10 @@ def _extract_preferences(text: str) -> dict[str, str]:
     # Idioma
     if "en español" in lower or "en castellano" in lower or "respóndeme en español" in lower:
         prefs["language"] = "es"
-    elif "in english" in lower or "in spanish" in lower:
-        if "in spanish" in lower:
-            prefs["language"] = "es"
+    elif "in english" in lower:
+        prefs["language"] = "en"
+    elif "in spanish" in lower:
+        prefs["language"] = "es"
     if "respondeme en ingles" in lower or "respóndeme en inglés" in lower:
         prefs["language"] = "en"
 

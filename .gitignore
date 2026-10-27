@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 .venv/
+
+# Audit logs (generated at runtime, not committed)
+data/audit/*.jsonl

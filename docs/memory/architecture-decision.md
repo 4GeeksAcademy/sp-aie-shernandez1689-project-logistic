@@ -23,19 +23,42 @@ Interacción N:
   memorize_node incrusta pregunta al final: "📝 ¿Quieres que recuerde...?"
   
 Interacción N+1 (siguiente pregunta del usuario):
-  remember_node detecta si la nueva pregunta es una confirmación/rechazo
-  Si es confirmación → persiste en Redis/Qdrant
-  Si es rechazo → descarta la propuesta
-  Si es ambigua → mantiene la propuesta pendiente
+  remember_node clasifica la intención con _classify_proposal_intent()
+    accept       → persiste en Redis/Qdrant (si solo "sí" → finaliza)
+                    (si "sí, y dime X..." → continúa al intent)
+    reject       → descarta (idem mensaje combinado)
+    edit         → descarta y notifica (nunca asume)
+    topic_change → descarta automáticamente (nunca asume aprobación)
+    ambiguous    → descarta por seguridad (nunca asume)
 ```
 
-### ¿Por qué?
+## Reglas de Negocio Clave (v2)
 
-- **Consentimiento explícito**: el usuario decide qué se guarda.
-- **Sin segunda llamada al LLM**: la auto-evaluación es puramente heurística
-  (regex + reglas de negocio).
-- **Sin agente separado**: todo ocurre dentro del mismo grafo LangGraph.
-- **Sin arquitectura multi-agente**: un solo flujo de nodos síncronos.
+### 1. Clasificador Estructurado
+
+Reemplaza los antiguos booleanos `_is_acceptance`/`_is_rejection` por una
+etiqueta explícita con 5 valores: `accept | reject | edit | topic_change | ambiguous`.
+Usa el texto COMPLETO del mensaje, no solo el primer token.
+
+### 2. Una Propuesta a la Vez
+
+Si `memorize_node` encuentra una `_memory_proposal` pendiente
+(`type != none`), **NO genera una segunda** (audita `event: "skipped"`).
+
+### 3. Cambio de Tema = Descarte Automático
+
+Nunca se asume aprobación por silencio o ambigüedad.
+
+### 4. Log de Auditoría
+
+Cada decisión se registra en `data/audit/memory_proposals.jsonl` (JSONL).
+Eventos: `proposed | accepted | rejected | edited | discarded | skipped | error | none`.
+
+### 5. Mensaje Combinado
+
+Si el usuario acepta/rechaza y además pregunta algo nuevo
+(ej. "sí, y dime el stock"), la propuesta se resuelve y la conversación
+continúa. `_is_pure_confirmation()` distingue confirmación pura de combinada.
 
 ## Estructura de Datos
 
@@ -51,6 +74,11 @@ Interacción N+1 (siguiente pregunta del usuario):
 # Sin propuesta
 {"type": "none", "payload": {}}
 ```
+
+### `_memory_intent_classification` (estado del grafo — no persiste)
+
+Producido por `remember_node` tras clasificar la intención del usuario.
+Valores: `"accept" | "reject" | "edit" | "topic_change" | "ambiguous" | None`.
 
 ### Redis KV (`agent_memory:*`)
 
@@ -82,6 +110,7 @@ agent_memory:episode:{thread_id}      → JSON con historial de la conversación
 2. **Hechos aprobados en respuesta** → proponer (p.ej., "Confirmado: Juan es Gerente").
 3. **Solicitud explícita** → proponer (p.ej., "recuerda que María es líder").
 4. **Ninguna de las anteriores** → `{"type": "none"}` (no se propone nada).
+5. **Si ya hay una propuesta pendiente** → saltar sin generar segunda.
 
 ## Ejemplos de NO Memorización
 
@@ -93,22 +122,47 @@ agent_memory:episode:{thread_id}      → JSON con historial de la conversación
 | "Gracias" / "ok" / "entendido" | Sin información nueva |
 | Preguntas sobre el clima | Fuera del dominio de TrackFlow |
 
-## Detección de Confirmación (remember_node)
+## Clasificador de Intención (`_classify_proposal_intent`)
 
 ### Patrones de Aceptación
 
 `sí`, `si`, `ok`, `okay`, `de acuerdo`, `confirmo`, `adelante`, `claro`,
 `sí, guárdalo`, `sí, recuérdalo`, `yes`, `sure`, `go ahead`
 
+También detecta primer token: `sí`, `si`, `ok`, `okay`, `yes`, `sure`,
+`claro`, `adelante`.
+
 ### Patrones de Rechazo
 
 `no`, `no gracias`, `no guardes`, `no recuerdes`, `nope`, `not now`,
 `no thanks`, `no quiero`
 
-### Mensajes ambiguos
+También detecta primer token: `no`, `nope`.
 
-Mensajes de menos de 8 caracteres que no coinciden con aceptación ni rechazo
-se consideran ambiguos y la propuesta se mantiene pendiente.
+### Patrones de Edición
+
+`en realidad`, `cambia`, `corrige`, `mejor di`, `edita`, `modifica`,
+`no es eso`, `rectifica`, `realmente`
+
+### Cambio de Tema
+
+Mensajes de ≥8 caracteres que contienen términos operacionales (ticket,
+stock, inventario, sku, política, devolución, reporte, dashboard, etc.).
+
+### Ambigüedad
+
+Mensajes vacíos, de solo espacios, o muy cortos (<8 caracteres) sin
+coincidencia con patrones claros → `ambiguous`.
+
+## Routing (`route_after_remember`)
+
+```
+state._memory_intent_classification
+  ├── accept/reject + _is_pure_confirmation  → finalize
+  ├── accept/reject + no _is_pure_confirmation → intent (combinado)
+  ├── edit/topic_change/ambiguous → intent (descartar y continuar)
+  └── None (sin propuesta) → intent (normal)
+```
 
 ## Implementación
 
@@ -130,13 +184,16 @@ detecta si hay un event loop corriendo y ejecuta la corutina adecuadamente.
 
 `_memory_proposal` sobrevive entre invocaciones gracias al `MemorySaver`
 checkpointing de LangGraph (el estado se persiste tras cada transición de nodo).
-`remember_node` lo limpia al procesarlo (aceptación o rechazo).
+`remember_node` lo limpia al procesarlo (aceptación, rechazo, edición o descarte).
 
 ## Testing
 
-Ver `tests/pipelines/test_memory_nodes.py` para:
-- Tests unitarios de `_is_acceptance`, `_is_rejection`, `_extract_preferences`,
-  `_extract_approved_facts`, `_extract_explicit_remember_request`.
-- Tests de `memorize_node` con estados simulados.
-- Tests de `remember_node` con propuestas pendientes simuladas.
-- Tests de integración con `MemoryService` mockeado.
+Ver `tests/pipelines/test_memory_helpers.py` para:
+- Tests unitarios de `_classify_proposal_intent` (cobertura 5 etiquetas, 90 tests).
+- Tests unitarios de `_is_pure_confirmation`.
+- Tests unitarios de `_audit_proposal` (verificación escritura JSONL).
+- Tests unitarios de `_extract_preferences`, `_extract_approved_facts`,
+  `_extract_explicit_remember_request`.
+
+Para tests de nodos completos con MemoryService mockeado, ver
+`tests/pipelines/test_agent_graph_routing.py` como patrón de mocking.

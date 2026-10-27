@@ -22,19 +22,22 @@ ACTUALIZACIÓN — Memoria persistente con flujo de propuesta (2026-10-27)
 Se implementa un diseño de **memoria por propuesta explícita**:
 
 1. ``remember``: Al inicio de la corrida, carga memoria existente Y
-   procesa propuestas pendientes del checkpoint anterior. Si detecta
-   que la pregunta del usuario es una confirmación de una propuesta
-   previa, persiste el hecho y responde directamente (sin pasar por
-   intent/tools/generate). Si es un rechazo, descarta la propuesta.
+   procesa propuestas pendientes del checkpoint anterior usando un
+   clasificador de intención estructurado (accept|reject|edit|topic_change).
+   Si el usuario además hace una nueva pregunta tras resolver la propuesta,
+   la conversación continúa con normalidad (no salta a finalize).
 
 2. ``memorize``: Después de ``generate`` (antes de ``finalize``),
-   auto-evalúa la interacción. Si encuentra algo digno de recordar
-   (preferencias, hechos aprobados, solicitudes explícitas), genera
-   una ``_memory_proposal`` y la muestra al usuario como pregunta
-   al final de la respuesta. **Nunca escribe directamente a memoria.**
+   auto-evalúa la interacción. Si ya hay una propuesta pendiente sin
+   resolver, NO genera una segunda. **Nunca escribe directamente a memoria.**
 
-Esto garantiza que el agente nunca memoriza nada sin consentimiento
-explícito del usuario.
+3. **Auditoría**: Cada propuesta, aceptación, rechazo, edición o descarte
+   se registra en ``data/audit/memory_proposals.jsonl`` con marca de tiempo,
+   mensaje origen y resultado.
+
+4. **Cambio de tema = descarte**: Si el usuario cambia de tema sin
+   responder clara y directamente a la propuesta, se descarta automáticamente.
+   Nunca se asume aprobación por silencio o ambigüedad.
 
 Nodos y aristas (con memoria por propuesta)
 ---------------------------------------------
@@ -155,6 +158,11 @@ class AgentState(TypedDict, total=False):
       el nodo ``remember`` y lo consume ``generate``.
     - _memory_loaded: flag interno (remember ejecutado).
     - _memorized: metadatos de lo guardado por ``memorize``.
+    - _memory_proposal: propuesta de memoria generada por ``memorize``.
+      Solo puede haber una pendiente a la vez.
+    - _memory_intent_classification: etiqueta estructurada del clasificador
+      de intención (accept|reject|edit|topic_change|ambiguous) producida
+      por ``remember``.
     """
 
     question: str
@@ -181,8 +189,10 @@ class AgentState(TypedDict, total=False):
     #   - "text": pregunta en lenguaje natural para el usuario
     #   - "type": tipo de memoria propuesta (preference | fact | none)
     #   - "payload": dict con la información a persisitir si se acepta
-    _memory_proposal: dict[str, Any]
-
+    _memory_proposal: dict[str, Any]    # Clasificación de intención estructurada del mensaje del usuario
+    # frente a la propuesta pendiente (producida por remember_node).
+    # Valores: "accept" | "reject" | "edit" | "topic_change" | "ambiguous"
+    _memory_intent_classification: str | None
 
 # ── Nodos ───────────────────────────────────────────────────────────────
 # Cada nodo registra su salida en el trace (tracing.add_step) para que la
@@ -239,8 +249,14 @@ def generate_node(state: AgentState) -> dict[str, Any]:
 
     # Inyectar memoria como prefacio contextual si existe.
     memory_lines = []
-    if memory_ctx.get("user_prefs"):
-        prefs = memory_ctx["user_prefs"]
+
+    # Mensaje de resultado de propuesta de memoria (aceptada/rechazada/editada)
+    proposal_result = memory_ctx.get("_proposal_result")
+    if proposal_result:
+        memory_lines.append(proposal_result)
+
+    if memory_ctx.get("prefs"):
+        prefs = memory_ctx["prefs"]
         if isinstance(prefs, dict):
             pref_strs = [f"  - {k}: {v}" for k, v in prefs.items()]
             memory_lines.append("Preferencias del usuario:\n" + "\n".join(pref_strs))
@@ -485,11 +501,37 @@ def route_after_validate(state: AgentState) -> str:
 def route_after_remember(state: AgentState) -> str:
     """Tras cargar memoria, decide el siguiente paso.
 
-    Si ``remember_node`` ya generó una respuesta (por ejemplo, tras
-    procesar una confirmación/rechazo de propuesta de memoria), salta
-    directamente a ``finalize``. En caso contrario, sigue al intent.
+    Si ``remember_node`` ya generó una respuesta y la clasificación de
+    intención indica que fue una confirmación pura (sin nueva pregunta),
+    salta directamente a ``finalize``.
+
+    Si el usuario combinó la respuesta a la propuesta con una nueva
+    pregunta (ej. "sí, y dime el stock del SKU X"), la propuesta se
+    resuelve pero la conversación continúa: routea a ``intent`` para
+    procesar la nueva pregunta con el mismo mensaje.
+
+    Si no había propuesta pendiente, sigue a ``intent`` como siempre.
     """
-    if state.get("answer"):
+    from services.rag_agent.memory_nodes import _is_pure_confirmation
+
+    has_answer = bool(state.get("answer"))
+    intent_class = state.get("_memory_intent_classification")
+
+    if intent_class in ("accept", "reject"):
+        if has_answer:
+            # Si el mensaje era solo confirmación (sin nueva pregunta), finaliza
+            question = (state.get("question") or "").strip()
+            if _is_pure_confirmation(question):
+                return "finalize"
+            # Mensaje combinado: confirmación + nueva pregunta → sigue a intent
+            return "intent"
+
+    if intent_class in ("edit", "topic_change", "ambiguous"):
+        # Propuesta descartada, el usuario preguntó algo → continúa
+        return "intent"
+
+    # Sin propuesta pendiente: comportamiento normal
+    if has_answer:
         return "finalize"
     return "intent"
 
