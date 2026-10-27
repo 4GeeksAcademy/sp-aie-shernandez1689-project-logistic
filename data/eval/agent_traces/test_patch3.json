@@ -1,0 +1,93 @@
+{
+  "schema_version": 2,
+  "thread_id": "test_patch3",
+  "started_at": "2026-10-27T13:04:06+00:00",
+  "completed_at": "2026-10-27T13:04:06+00:00",
+  "question": "test de ticket fake-123",
+  "steps": [
+    {
+      "seq": 1,
+      "node": "validate",
+      "started_at": "2026-10-27T13:04:06+00:00",
+      "output": {
+        "question": "test de ticket fake-123"
+      }
+    },
+    {
+      "seq": 2,
+      "node": "intent",
+      "started_at": "2026-10-27T13:04:06+00:00",
+      "output": {
+        "incident_query": {
+          "ticket_id": "fake-123"
+        },
+        "inventory_query": null,
+        "use_rag": false
+      }
+    },
+    {
+      "seq": 3,
+      "node": "incident_lookup",
+      "started_at": "2026-10-27T13:04:06+00:00",
+      "output": {
+        "incident_result": {
+          "resolved": true,
+          "ticket_id": "fake-123",
+          "status": "open"
+        },
+        "tool_answers": [
+          "El ticket fake-123 está open (origen: desconocido, sucursal: desconocida)."
+        ],
+        "tool_context": [
+          {
+            "text": "El ticket fake-123 está open (origen: desconocido, sucursal: desconocida).",
+            "source_document": "incident_lookup",
+            "section": "consulta de ticket"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 4,
+      "node": "generate",
+      "started_at": "2026-10-27T13:04:06+00:00",
+      "output": {
+        "answer": "El ticket fake-123 está open (origen: desconocido, sucursal: desconocida)."
+      }
+    }
+  ],
+  "final_state": {
+    "question": "test de ticket fake-123",
+    "answer": "El ticket fake-123 está open (origen: desconocido, sucursal: desconocida).",
+    "incident_query": {
+      "ticket_id": "fake-123"
+    },
+    "inventory_query": null,
+    "use_rag": false,
+    "incident_result": {
+      "resolved": true,
+      "ticket_id": "fake-123",
+      "status": "open"
+    },
+    "tool_answers": [
+      "El ticket fake-123 está open (origen: desconocido, sucursal: desconocida)."
+    ],
+    "tool_context": [
+      {
+        "text": "El ticket fake-123 está open (origen: desconocido, sucursal: desconocida).",
+        "source_document": "incident_lookup",
+        "section": "consulta de ticket"
+      }
+    ]
+  },
+  "routing": {
+    "decision": "tool",
+    "used_rag": false,
+    "tools": [
+      "incident_lookup"
+    ],
+    "order": [
+      "tool:incident_lookup"
+    ]
+  }
+}

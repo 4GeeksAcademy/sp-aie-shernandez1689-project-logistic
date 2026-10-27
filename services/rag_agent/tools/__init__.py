@@ -1,11 +1,19 @@
-"""Herramientas (tools) del agente RAG de TrackFlow.
+"""Herramientas (tools) del agente RAG de TrackFlow (DEPRECATED).
 
-Cada tool es un módulo autocontenido con un contrato tipado de
-entrada/salida (Pydantic) y una función de consulta pura que el grafo
-(`services/rag_agent/graph.py`) invoca como un nodo.
+ESTADO: DEPRECADO desde 2026-10-27
+----------------------------------
+El agente ya NO usa estas tools directas en-proceso. Los nodos
+``incident_lookup`` e ``inventory_lookup`` del grafo LangGraph se
+conectan ahora al TrackFlow MCP Server via ``langchain-mcp-adapters``.
 
-  - incident_lookup: consulta de tickets de soporte/incidencias contra el
-    gestor de incidencias real (services/api). Solo lectura.
-  - inventory_lookup: consulta de stock por producto contra el gestor de
-    inventario real (services/user-api). Solo lectura.
+Ver:
+  - ``services/rag_agent/mcp_client.py``: nuevo cliente MCP.
+  - ``services/rag_agent/tools/DEPRECATED.md``: explicación detallada.
+
+Los módulos siguientes se conservan por compatibilidad con los tests
+existentes hasta que se actualicen, pero **no deben usarse en nuevo
+código**:
+
+  - incident_lookup: consulta de tickets (en-proceso).
+  - inventory_lookup: consulta de stock (en-proceso).
 """
