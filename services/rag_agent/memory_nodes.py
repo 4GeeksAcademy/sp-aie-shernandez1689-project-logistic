@@ -69,12 +69,15 @@ from typing import Any, Literal
 from langgraph.config import get_config
 
 from services.memory import MemoryService
+from services.memory.consolidation import MemoryConsolidationService
 from services.rag_agent import tracing
 
 logger = logging.getLogger(__name__)
 
 # Singleton del servicio — se inicializa bajo demanda.
 _memory: MemoryService | None = None
+# Singleton del servicio de consolidación.
+_consolidation: MemoryConsolidationService | None = None
 
 # ── Ruta del log de auditoría ─────────────────────────────────────────
 
@@ -136,6 +139,13 @@ def _get_memory() -> MemoryService:
     if _memory is None:
         _memory = MemoryService()
     return _memory
+
+
+def _get_consolidation() -> MemoryConsolidationService:
+    global _consolidation
+    if _consolidation is None:
+        _consolidation = MemoryConsolidationService()
+    return _consolidation
 
 
 def _thread_id() -> str:
@@ -574,6 +584,16 @@ def memorize_node(state: dict[str, Any]) -> dict[str, Any]:
         if "📝 ¿Quieres que recuerde" not in answer:
             out["answer"] = answer.rstrip() + "\n\n" + proposal_text
 
+    # Señal para consolidación programada: ``consolidate_node`` se ejecuta
+    # si hay propuesta de memoria pendiente (aprovechando que ya estamos
+    # en modo de escritura). La consolidación respeta su propio rate-limit
+    # interno (mínimo 6h entre ejecuciones).
+    consolidation_needed = (
+        proposal["type"] not in ("none",)
+        and uid is not None
+    )
+    out["consolidation_pending"] = consolidation_needed
+
     tracing.add_step("memorize", {
         "proposal_type": proposal["type"],
         "proposal_text": proposal_text,
@@ -665,6 +685,57 @@ def _build_acceptance_response(accepted: dict[str, Any]) -> str:
             "cuando sea relevante."
         )
     return "✅ Entendido."
+
+
+# ── Nodo: consolidate (limpieza programada) ────────────────────────────
+
+
+def consolidate_node(state: dict[str, Any]) -> dict[str, Any]:
+    """Ejecuta consolidación de memoria si ha pasado suficiente tiempo.
+
+    Este nodo NO se ejecuta en cada turno. ``memorize_node`` activa
+    ``consolidation_pending`` en el estado solo si han pasado más de
+    ``rate_limit_hours`` (default 6) desde la última consolidación.
+
+    Cuando se activa, ejecuta las 4 estrategias de consolidación:
+    1. Sync cleanup: eliminar huérfanos de Qdrant.
+    2. Deduplicación vectorial: fusionar duplicados.
+    3. Compresión de episodios: agrupar episodios viejos en mensuales.
+    4. Poda de baja relevancia: eliminar puntos no recuperados.
+
+    Returns:
+        Dict con ``_consolidation_report`` y ``consolidation_pending=False``.
+    """
+    report = _run_async(_get_consolidation().consolidate())
+
+    if report.errors:
+        logger.warning(
+            "Consolidación con errores (%d): %s",
+            len(report.errors), report.errors[:2],
+        )
+
+    logger.info(
+        "Consolidación completada en %.1fms: "
+        "%d huérfanos, %d duplicados, %d episodios comprimidos, %d podados",
+        report.duration_ms,
+        report.synced_orphans,
+        report.dedup_removed,
+        report.episodes_compressed,
+        report.low_relevance_pruned,
+    )
+
+    return {
+        "_consolidation_report": {
+            "synced_orphans": report.synced_orphans,
+            "dedup_removed": report.dedup_removed,
+            "dedup_kept": report.dedup_kept,
+            "episodes_compressed": report.episodes_compressed,
+            "low_relevance_pruned": report.low_relevance_pruned,
+            "duration_ms": round(report.duration_ms, 1),
+            "errors": report.errors,
+        },
+        "consolidation_pending": False,
+    }
 
 
 # ── Helpers de extracción (compartidos con generate_node) ─────────────

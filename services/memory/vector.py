@@ -302,6 +302,121 @@ class MemoryVectorStore:
         logger.debug("Memoria vectorial eliminada: id=%s", point_id)
         return True
 
+    def delete_points(self, point_ids: list[str]) -> None:
+        """Elimina múltiples puntos de memoria vectorial (síncrono).
+
+        Args:
+            point_ids: Lista de UUIDs de puntos a eliminar.
+        """
+        if not point_ids:
+            return
+        self._client.delete(
+            collection_name=COLLECTION_NAME,
+            points_selector=qmodels.PointIdsList(points=point_ids),
+        )
+        logger.debug(
+            "Memoria vectorial: %d puntos eliminados", len(point_ids),
+        )
+
+    def get_all_points(self) -> list[dict[str, Any]]:
+        """Recupera TODOS los puntos de la colección de memoria (síncrono).
+
+        Itera sobre todos los puntos con scroll, sin límite de paginación.
+
+        Returns:
+            Lista plana de dicts con id, memory_type, text, metadata,
+            created_at, expires_at, score.
+        """
+        results: list[dict[str, Any]] = []
+        next_offset: Any = None
+
+        while True:
+            page, next_offset = self._client.scroll(
+                collection_name=COLLECTION_NAME,
+                limit=500,
+                offset=next_offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in page:
+                results.append({
+                    "id": str(point.id),
+                    "memory_type": point.payload.get("memory_type"),
+                    "text": point.payload.get("text"),
+                    "metadata": point.payload.get("metadata"),
+                    "created_at": point.payload.get("created_at"),
+                    "expires_at": point.payload.get("expires_at"),
+                    "score": None,
+                })
+            if next_offset is None or len(page) < 500:
+                break
+
+        logger.debug("get_all_points: %d puntos recuperados", len(results))
+        return results
+
+    def get_points_by_type(
+        self,
+        memory_type: str,
+        older_than: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Recupera puntos de un tipo específico (síncrono).
+
+        Args:
+            memory_type: Tipo de memoria a filtrar (ej. ``fact``, ``episode``).
+            older_than: Si se proporciona, solo devuelve puntos con
+                        ``created_at`` anterior a esta fecha.
+
+        Returns:
+            Lista de puntos filtrados.
+        """
+        must_conditions = [
+            qmodels.FieldCondition(
+                key="memory_type",
+                match=qmodels.MatchValue(value=memory_type),
+            ),
+        ]
+        if older_than is not None:
+            must_conditions.append(
+                qmodels.FieldCondition(
+                    key="created_at",
+                    range=qmodels.Range(
+                        lt=older_than.isoformat(),
+                    ),
+                ),
+            )
+
+        filter_cond = qmodels.Filter(must=must_conditions) if must_conditions else None
+        results: list[dict[str, Any]] = []
+        next_offset: Any = None
+
+        while True:
+            page, next_offset = self._client.scroll(
+                collection_name=COLLECTION_NAME,
+                limit=500,
+                offset=next_offset,
+                with_payload=True,
+                with_vectors=False,
+                scroll_filter=filter_cond,
+            )
+            for point in page:
+                results.append({
+                    "id": str(point.id),
+                    "memory_type": point.payload.get("memory_type"),
+                    "text": point.payload.get("text"),
+                    "metadata": point.payload.get("metadata"),
+                    "created_at": point.payload.get("created_at"),
+                    "expires_at": point.payload.get("expires_at"),
+                    "score": None,
+                })
+            if next_offset is None or len(page) < 500:
+                break
+
+        logger.debug(
+            "get_points_by_type(%s): %d puntos recuperados",
+            memory_type, len(results),
+        )
+        return results
+
     async def close(self) -> None:
         """Cierra el cliente Qdrant."""
         self._client.close()

@@ -72,6 +72,7 @@ from data.pipelines.rag import DEFAULT_MIN_SCORE, generate_answer, retrieve
 from services.rag_agent import tracing
 from services.rag_agent import mcp_client
 from services.rag_agent.memory_nodes import (
+    consolidate_node,
     memorize_node,
     remember_node,
 )
@@ -193,6 +194,9 @@ class AgentState(TypedDict, total=False):
     # frente a la propuesta pendiente (producida por remember_node).
     # Valores: "accept" | "reject" | "edit" | "topic_change" | "ambiguous"
     _memory_intent_classification: str | None
+    # Consolidación de memoria.
+    consolidation_pending: bool
+    _consolidation_report: dict[str, Any]
 
 # ── Nodos ───────────────────────────────────────────────────────────────
 # Cada nodo registra su salida en el trace (tracing.add_step) para que la
@@ -581,6 +585,18 @@ def route_after_no_context(state: AgentState) -> str:
     return "memorize"
 
 
+def route_after_memorize(state: AgentState) -> str:
+    """Tras memorize, va a consolidate si hay solicitud pendiente, o finaliza."""
+    if state.get("consolidation_pending"):
+        return "consolidate"
+    return "finalize"
+
+
+def route_after_consolidate(state: AgentState) -> str:
+    """Tras consolidación, siempre finaliza."""
+    return "finalize"
+
+
 # ── Construcción y compilación (antes de cualquier ejecución) ───────────
 
 _builder = StateGraph(AgentState)
@@ -593,6 +609,7 @@ _builder.add_node("retrieve", retrieve_node)
 _builder.add_node("generate", generate_node)
 _builder.add_node("no_context", no_context)
 _builder.add_node("memorize", memorize_node)
+_builder.add_node("consolidate", consolidate_node)
 _builder.add_node("error", error_node)
 _builder.add_node("finalize", finalize)
 
@@ -621,7 +638,12 @@ _builder.add_conditional_edges(
 _builder.add_conditional_edges(
     "no_context", route_after_no_context, ["memorize"]
 )
-_builder.add_edge("memorize", "finalize")
+_builder.add_conditional_edges(
+    "memorize", route_after_memorize, ["consolidate", "finalize"]
+)
+_builder.add_conditional_edges(
+    "consolidate", route_after_consolidate, ["finalize"]
+)
 _builder.add_edge("error", "finalize")
 _builder.add_edge("finalize", END)
 
