@@ -11,27 +11,35 @@ Estado del grafo
 - memory_context: contexto recuperado de la memoria persistente (preferencias,
   hechos aprobados, episodios anteriores). NO es el historial de la
   conversación — el grafo sigue siendo stateless por corrida.
+- _memory_proposal: propuesta de memoria generada por ``memorize_node``
+  al final de la corrida. Contiene tipo (preference|fact|none), payload
+  con la información a persistir, y se incrusta como pregunta en la
+  respuesta al usuario. ``remember_node`` de la SIGUIENTE corrida la
+  procesa si el usuario confirma o rechaza.
 
-ACTUALIZACIÓN — Memoria persistente (2026-10-27)
--------------------------------------------------
-Se añaden dos nodos para manejo explícito de memoria:
+ACTUALIZACIÓN — Memoria persistente con flujo de propuesta (2026-10-27)
+-----------------------------------------------------------------------
+Se implementa un diseño de **memoria por propuesta explícita**:
 
-- ``remember``: Al inicio de la corrida (tras validate), recupera memoria
-  relevante de los stores KV (Redis) y vectorial (Qdrant ``trackflow_agent_memory``)
-  y la inyecta en ``memory_context``. El nodo ``generate`` usa este contexto
-  para personalizar la respuesta.
+1. ``remember``: Al inicio de la corrida, carga memoria existente Y
+   procesa propuestas pendientes del checkpoint anterior. Si detecta
+   que la pregunta del usuario es una confirmación de una propuesta
+   previa, persiste el hecho y responde directamente (sin pasar por
+   intent/tools/generate). Si es un rechazo, descarta la propuesta.
 
-- ``memorize``: Después de ``generate`` (antes de ``finalize``), extrae hechos
-  memorizables de la interacción (preferencias, hechos aprobados, resúmenes
-  de sesión) y los persiste. Nunca memoriza datos de tools, credenciales o
-  información no verificada.
+2. ``memorize``: Después de ``generate`` (antes de ``finalize``),
+   auto-evalúa la interacción. Si encuentra algo digno de recordar
+   (preferencias, hechos aprobados, solicitudes explícitas), genera
+   una ``_memory_proposal`` y la muestra al usuario como pregunta
+   al final de la respuesta. **Nunca escribe directamente a memoria.**
 
-El agente NUNCA acumula estado inyectándolo al system prompt. Toda la
-memoria se gestiona a través de la interfaz explícita del servicio.
+Esto garantiza que el agente nunca memoriza nada sin consentimiento
+explícito del usuario.
 
-Nodos y aristas (con memoria)
--------------------------------
-  START -> validate -> (error?) -> remember -> intent -> ...
+Nodos y aristas (con memoria por propuesta)
+---------------------------------------------
+  START -> validate -> (error?) -> remember -> (answer? -> finalize)
+                                            -> (else -> intent -> ...)
   ... -> generate -> memorize -> finalize -> END
 
   El resto del flujo (intent → tools → retrieve → generate) permanece
@@ -168,6 +176,12 @@ class AgentState(TypedDict, total=False):
     memory_context: dict[str, Any]
     _memory_loaded: bool
     _memorized: dict[str, Any]
+    # Propuesta de memoria generada por generate_node para que el usuario
+    # confirme en la siguiente interacción. Contiene:
+    #   - "text": pregunta en lenguaje natural para el usuario
+    #   - "type": tipo de memoria propuesta (preference | fact | none)
+    #   - "payload": dict con la información a persisitir si se acepta
+    _memory_proposal: dict[str, Any]
 
 
 # ── Nodos ───────────────────────────────────────────────────────────────
@@ -469,7 +483,14 @@ def route_after_validate(state: AgentState) -> str:
 
 
 def route_after_remember(state: AgentState) -> str:
-    """Tras cargar memoria, sigue al intent para decidir fuentes."""
+    """Tras cargar memoria, decide el siguiente paso.
+
+    Si ``remember_node`` ya generó una respuesta (por ejemplo, tras
+    procesar una confirmación/rechazo de propuesta de memoria), salta
+    directamente a ``finalize``. En caso contrario, sigue al intent.
+    """
+    if state.get("answer"):
+        return "finalize"
     return "intent"
 
 
@@ -537,7 +558,9 @@ _builder.add_edge(START, "validate")
 _builder.add_conditional_edges(
     "validate", route_after_validate, ["error", "remember"]
 )
-_builder.add_edge("remember", "intent")
+_builder.add_conditional_edges(
+    "remember", route_after_remember, ["intent", "finalize"]
+)
 _builder.add_conditional_edges(
     "intent", route_after_intent, ["incident_lookup", "inventory_lookup", "retrieve"]
 )
