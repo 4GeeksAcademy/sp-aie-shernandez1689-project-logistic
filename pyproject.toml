@@ -40,3 +40,4 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["services/user-api", "services/api", "."]
 addopts = "--cov=app.api.auth --cov-report=term-missing --cov-fail-under=70"
+asyncio_mode = "auto"
