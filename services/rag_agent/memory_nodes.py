@@ -154,12 +154,22 @@ def _thread_id() -> str:
 
 
 def _user_id(state: dict[str, Any]) -> str | None:
-    """Extrae el user_id del estado si existe."""
+    """Extrae el user_id del estado si existe.
+
+    Orden de resolución:
+    1. ``state["user_id"]`` (pasado en el estado inicial)
+    2. ``state["configurable"]["user_id"]``
+    3. ``get_config()["configurable"]["user_id"]`` (permanece entre checkpoints)
+    """
     user_id = state.get("user_id")
     if user_id:
         return user_id
     configurable = state.get("configurable") or {}
-    return configurable.get("user_id")
+    uid = configurable.get("user_id")
+    if uid:
+        return uid
+    cfg = get_config()
+    return cfg.get("configurable", {}).get("user_id")
 
 
 # ── Helper síncrono para llamadas asíncronas ─────────────────────────

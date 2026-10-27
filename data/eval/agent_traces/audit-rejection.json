@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "thread_id": "audit-rejection",
+  "started_at": "2026-10-27T16:54:43+00:00",
+  "completed_at": "2026-10-27T16:54:43+00:00",
+  "question": "no",
+  "steps": [
+    {
+      "seq": 1,
+      "node": "validate",
+      "started_at": "2026-10-27T16:54:43+00:00",
+      "output": {
+        "question": "no"
+      }
+    },
+    {
+      "seq": 2,
+      "node": "remember",
+      "started_at": "2026-10-27T16:54:43+00:00",
+      "output": {
+        "n_prefs": 0,
+        "n_semantic_hits": 0,
+        "has_episode": false,
+        "processed_proposal": true,
+        "intent_classification": "reject"
+      }
+    }
+  ],
+  "final_state": {
+    "question": "no",
+    "context": [],
+    "answer": "Entendido. No guardo nada.",
+    "incident_query": null,
+    "inventory_query": null,
+    "use_rag": true,
+    "tool_answers": [],
+    "tool_context": [],
+    "memory_context": {
+      "prefs": {},
+      "episode": null,
+      "semantic_hits": [],
+      "facts": []
+    },
+    "_memory_loaded": true,
+    "_memorized": {
+      "proposal_type": "fact",
+      "proposed": true
+    },
+    "_memory_proposal": null,
+    "_memory_intent_classification": "reject",
+    "consolidation_pending": false,
+    "_consolidation_report": {
+      "synced_orphans": 0,
+      "dedup_removed": 0,
+      "dedup_kept": 0,
+      "episodes_compressed": 0,
+      "low_relevance_pruned": 0,
+      "duration_ms": 0.0,
+      "errors": []
+    }
+  },
+  "routing": {
+    "decision": "none",
+    "used_rag": false,
+    "tools": [],
+    "order": []
+  }
+}
