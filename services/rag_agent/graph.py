@@ -1,65 +1,47 @@
 """Grafo de agente RAG con LangGraph (TrackFlow).
 
-Estado mínimo del grafo
------------------------
+Estado del grafo
+----------------
 - question: pregunta del usuario (entrada).
 - context:  chunks recuperados por el nodo retrieve (salida -> entrada).
 - answer:   respuesta final generada o mensaje honesto de fallback.
 - incident_query: petición de consulta de ticket (salida de intent).
 - inventory_query: petición de consulta de inventario (salida de intent).
-- tool_answers / tool_context: resúmenes de las tools para componer la
-  respuesta final (acumulados con reductor si corren dos tools).
+- tool_answers / tool_context: resúmenes de las tools (acumulados con reductor).
+- memory_context: contexto recuperado de la memoria persistente (preferencias,
+  hechos aprobados, episodios anteriores). NO es el historial de la
+  conversación — el grafo sigue siendo stateless por corrida.
 
-No se incluye el historial completo de la conversación: el grafo es
-stateless por corrida y cada corrida se inspecciona/retoma vía
-checkpointing (thread_id), por lo que el historial no es necesario en
-el estado.
+ACTUALIZACIÓN — Memoria persistente (2026-10-27)
+-------------------------------------------------
+Se añaden dos nodos para manejo explícito de memoria:
 
-Nodos y aristas
----------------
-  START -> validate -> (pregunta vacía?) -> error -> finalize -> END
+- ``remember``: Al inicio de la corrida (tras validate), recupera memoria
+  relevante de los stores KV (Redis) y vectorial (Qdrant ``trackflow_agent_memory``)
+  y la inyecta en ``memory_context``. El nodo ``generate`` usa este contexto
+  para personalizar la respuesta.
 
-  intent  decide de forma AUTOMÁTICA (sin que el usuario indique la fuente)
-  si la pregunta necesita el RAG, una tool o ambos:
+- ``memorize``: Después de ``generate`` (antes de ``finalize``), extrae hechos
+  memorizables de la interacción (preferencias, hechos aprobados, resúmenes
+  de sesión) y los persiste. Nunca memoriza datos de tools, credenciales o
+  información no verificada.
 
-  - Solo RAG -> retrieve -> (context?) -> generate -> finalize -> END
-                                   -> no_context -> finalize
-    - Solo tool -> tool(s) -> generate -> finalize -> END
-  - RAG + tool -> tool(s) -> retrieve -> generate (compone tool+context)
-    -> finalize -> END
+El agente NUNCA acumula estado inyectándolo al system prompt. Toda la
+memoria se gestiona a través de la interfaz explícita del servicio.
 
-tools para comprobar si la knowledge base aporta contexto; el resultado de
-El nodo ``intent`` detecta la intención de ticket/incidencia y/o de
-stock/inventario de forma independiente: puede decidir 0, 1 o 2 tools, y
-cada tool hace UNA sola cosa. Las consultas operativas van solo a las tools;
-las preguntas documentales van solo al RAG; una pregunta que pide ambas
-fuentes ejecuta las tools y después ``retrieve``. El trace registra las
-fuentes realmente ejecutadas y su orden. El usuario nunca indica qué fuente
-usar: lo decide el grafo.
+Nodos y aristas (con memoria)
+-------------------------------
+  START -> validate -> (error?) -> remember -> intent -> ...
+  ... -> generate -> memorize -> finalize -> END
 
-Si una tool no puede confirmar el dato (timeout, fallo o inexistencia), el nodo
-produce una respuesta honesta sin inventar un estado ni una cifra.
-
-Contrato: retrieve_node llama a retrieve() y generate_node llama a
-generate_answer(question, context) con el contexto que retrieve_node
-produjo y, si hubo consulta de tool, con un contexto extra que resume el
-resultado de la tool. Nunca se usa query() (evitaría doble recuperación).
-
-El grafo se compila al importar el módulo: un error estructural (nodo
-sin conexión, estado mal tipado) falla de forma clara antes de cualquier
-ejecución.
+  El resto del flujo (intent → tools → retrieve → generate) permanece
+  igual. Los detalles de las aristas están documentados más abajo.
 
 ACTUALIZACIÓN — Migración a MCP (2026-10-27)
 ---------------------------------------------
 Los nodos ``incident_lookup`` e ``inventory_lookup`` ya no importan las
-tools directas en-proceso (``services/rag_agent/tools/incident_lookup.py``
-y ``inventory_lookup.py``). En su lugar se conectan al TrackFlow MCP
+tools directas en-proceso. En su lugar se conectan al TrackFlow MCP
 Server (``mcps/trackflow-server``) via ``langchain-mcp-adapters``.
-
-El contrato de salida (dict JSON-serializable con campos ``resolved``,
-``error``, ``ticket_id``/``product``, etc.) se mantiene idéntico para que
-los nodos ``generate`` / ``tracing`` y las aristas condicionales no
-requieran cambios.
 
 Las tools directas antiguas están marcadas como ``DEPRECATED`` y no deben
 usarse. Ver ``services/rag_agent/tools/DEPRECATED.md``.
@@ -78,6 +60,10 @@ from langgraph.graph import END, START, StateGraph
 from data.pipelines.rag import DEFAULT_MIN_SCORE, generate_answer, retrieve
 from services.rag_agent import tracing
 from services.rag_agent import mcp_client
+from services.rag_agent.memory_nodes import (
+    memorize_node,
+    remember_node,
+)
 
 DEFAULT_K = 5
 
@@ -153,7 +139,15 @@ def _extract_ticket_id(question: str) -> str | None:
 
 
 class AgentState(TypedDict, total=False):
-    """Información mínima que un nodo necesita para decidir el siguiente paso."""
+    """Información mínima que un nodo necesita para decidir el siguiente paso.
+
+    Nodos de memoria:
+    - memory_context: contexto recuperado de los stores KV/vectorial
+      (preferencias, hechos aprobados, episodios anteriores). Lo produce
+      el nodo ``remember`` y lo consume ``generate``.
+    - _memory_loaded: flag interno (remember ejecutado).
+    - _memorized: metadatos de lo guardado por ``memorize``.
+    """
 
     question: str
     context: list[dict[str, Any]]
@@ -170,6 +164,10 @@ class AgentState(TypedDict, total=False):
     # Reductores de lista: si corren dos tools, ambas aportan al acumulado.
     tool_answers: Annotated[list[str], operator.add]
     tool_context: Annotated[list[dict[str, Any]], operator.add]
+    # Memoria persistente (nodos remember / memorize).
+    memory_context: dict[str, Any]
+    _memory_loaded: bool
+    _memorized: dict[str, Any]
 
 
 # ── Nodos ───────────────────────────────────────────────────────────────
@@ -213,20 +211,60 @@ def generate_node(state: AgentState) -> dict[str, Any]:
 
     Decide de forma automática qué hay que componer según lo que corrió:
     - Tool(s) sin contexto KB   -> usa el resumen de la tool (sin LLM).
-    - KB (con o sin tool)       -> LLC compone tool(s) + contexto KB en una
+    - KB (con o sin tool)       -> LLM compone tool(s) + contexto KB en una
       única respuesta ("RAG y/o tool" según lo que haya aportado).
+
+    Si el nodo ``remember`` cargó ``memory_context`` (preferencias, hechos
+    aprobados, episodios anteriores), se inyecta en la respuesta como
+    contexto adicional para personalización.
     """
     tool_context = state.get("tool_context") or []
     kb_context = state.get("context") or []
     tool_answers = state.get("tool_answers") or []
+    memory_ctx = state.get("memory_context") or {}
+
+    # Inyectar memoria como prefacio contextual si existe.
+    memory_lines = []
+    if memory_ctx.get("user_prefs"):
+        prefs = memory_ctx["user_prefs"]
+        if isinstance(prefs, dict):
+            pref_strs = [f"  - {k}: {v}" for k, v in prefs.items()]
+            memory_lines.append("Preferencias del usuario:\n" + "\n".join(pref_strs))
+    if memory_ctx.get("episodes"):
+        episodes = memory_ctx["episodes"]
+        if isinstance(episodes, list) and episodes:
+            last = episodes[-1]
+            if isinstance(last, dict) and last.get("summary"):
+                memory_lines.append(
+                    f"Resumen del episodio anterior: {last['summary']}"
+                )
+    if memory_ctx.get("semantic_hits"):
+        hits = memory_ctx["semantic_hits"]
+        if isinstance(hits, list) and hits:
+            memory_lines.append(
+                "Hechos recordados relevantes:\n"
+                + "\n".join(f"  - {h}" for h in hits[:3])
+            )
 
     if tool_answers and not kb_context:
         # Tool-only: no hay KB para anclar; la respuesta ES el resumen honesto
         # de la tool (no se inventa contexto).
-        answer = "\n".join(tool_answers)
+        if memory_lines:
+            answer = "\n".join(memory_lines + [""] + tool_answers)
+        else:
+            answer = "\n".join(tool_answers)
     else:
         # RAG (y tool si la hubo): el LLM compone una única respuesta.
-        answer = generate_answer(question=state["question"], context=tool_context + kb_context)
+        combined_context = tool_context + kb_context
+        if memory_lines:
+            combined_context = (
+                [{"text": "\n".join(memory_lines), "source_document": "agent_memory", "section": "memoria"}]
+                + combined_context
+            )
+        answer = generate_answer(
+            question=state["question"],
+            context=combined_context,
+        )
 
     tracing.add_step("generate", {"answer": answer})
     return {"answer": answer}
@@ -427,6 +465,11 @@ def finalize(state: AgentState) -> dict[str, Any]:
 def route_after_validate(state: AgentState) -> str:
     if state.get("error"):
         return "error"
+    return "remember"
+
+
+def route_after_remember(state: AgentState) -> str:
+    """Tras cargar memoria, sigue al intent para decidir fuentes."""
     return "intent"
 
 
@@ -465,23 +508,36 @@ def route_after_retrieve(state: AgentState) -> str:
     return "no_context"
 
 
+def route_after_generate(state: AgentState) -> str:
+    """Tras generar la respuesta, se memoriza la interacción."""
+    return "memorize"
+
+
+def route_after_no_context(state: AgentState) -> str:
+    """Tras no_context también se memoriza (por si hay preferencias)."""
+    return "memorize"
+
+
 # ── Construcción y compilación (antes de cualquier ejecución) ───────────
 
 _builder = StateGraph(AgentState)
 _builder.add_node("validate", validate)
+_builder.add_node("remember", remember_node)
 _builder.add_node("intent", intent_node)
 _builder.add_node("incident_lookup", incident_lookup_node)
 _builder.add_node("inventory_lookup", inventory_lookup_node)
 _builder.add_node("retrieve", retrieve_node)
 _builder.add_node("generate", generate_node)
 _builder.add_node("no_context", no_context)
+_builder.add_node("memorize", memorize_node)
 _builder.add_node("error", error_node)
 _builder.add_node("finalize", finalize)
 
 _builder.add_edge(START, "validate")
 _builder.add_conditional_edges(
-    "validate", route_after_validate, ["error", "intent"]
+    "validate", route_after_validate, ["error", "remember"]
 )
+_builder.add_edge("remember", "intent")
 _builder.add_conditional_edges(
     "intent", route_after_intent, ["incident_lookup", "inventory_lookup", "retrieve"]
 )
@@ -494,8 +550,13 @@ _builder.add_conditional_edges("inventory_lookup", route_after_inventory_lookup,
 _builder.add_conditional_edges(
     "retrieve", route_after_retrieve, ["generate", "no_context"]
 )
-_builder.add_edge("generate", "finalize")
-_builder.add_edge("no_context", "finalize")
+_builder.add_conditional_edges(
+    "generate", route_after_generate, ["memorize"]
+)
+_builder.add_conditional_edges(
+    "no_context", route_after_no_context, ["memorize"]
+)
+_builder.add_edge("memorize", "finalize")
 _builder.add_edge("error", "finalize")
 _builder.add_edge("finalize", END)
 
