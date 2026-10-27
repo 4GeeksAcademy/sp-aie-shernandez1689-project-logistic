@@ -15,6 +15,33 @@ Usage
     python -m mcps.trackflow-server.main
 
 The server listens on ``0.0.0.0:8100`` by default (override via HOST / PORT).
+
+Error codes
+-----------
+All error responses use a consistent JSON body with ``error`` and
+``error_description`` fields, aligned with RFC 6750 / RFC 6749.
+
+HTTP 401 (Autenticación fallida):
+  ``missing_auth_header`` — No Bearer token present.
+  ``invalid_token``       — Token expirado, malformado, o firma inválida.
+  ``invalid_issuer``      — El issuer del token no coincide con el esperado.
+
+HTTP 403 (Autorización insuficiente):
+  ``insufficient_scope``  — El token es válido pero no tiene el scope
+                             requerido por la tool.
+
+HTTP 422 (Error de validación):
+  ``invalid_input``       — Parámetros de la tool inválidos (tipo, rango,
+                             formato).
+
+HTTP 500 (Error interno):
+  ``internal_error``      — Error inesperado del servidor. Contactar al
+                             administrador.
+
+Tool-call logging format
+------------------------
+Every tool invocation is logged at INFO level:
+  TOOL_CALL  tool=<name>  client=<sub>  status=ok|denied|error  ...
 """
 
 from __future__ import annotations
@@ -22,6 +49,7 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
+import time
 from collections.abc import AsyncIterator
 from contextvars import ContextVar
 from typing import Any
@@ -33,6 +61,65 @@ from fastmcp import FastMCP
 from fastmcp.server.lifespan import lifespan as lifespan_decorator
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
+
+
+# =====================================================================
+# Structured error codes (RFC 6750 compliant)
+# =====================================================================
+
+
+class ErrorCode:
+    """An OAuth/HTTP error code with its HTTP status and description."""
+
+    __slots__ = ("status", "code", "description")
+
+    def __init__(self, status: int, code: str, description: str) -> None:
+        self.status = status
+        self.code = code
+        self.description = description
+
+
+class Errors:
+    """Catalog of all error codes returned by the MCP server."""
+
+    # 401 — Authentication
+    MISSING_AUTH_HEADER = ErrorCode(
+        401, "missing_auth_header",
+        "Missing `Authorization` header. Please provide a valid Bearer token.",
+    )
+    INVALID_TOKEN = ErrorCode(
+        401, "invalid_token",
+        "The access token is expired, malformed, or has an invalid signature.",
+    )
+    INVALID_ISSUER = ErrorCode(
+        401, "invalid_issuer",
+        "The token issuer claim does not match the expected authorization "
+        "server.",
+    )
+
+    # 403 — Authorization
+    INSUFFICIENT_SCOPE = ErrorCode(
+        403, "insufficient_scope",
+        "The access token does not have the required scope for this "
+        "operation.",
+    )
+
+    # 422 — Validation
+    INVALID_INPUT = ErrorCode(
+        422, "invalid_input",
+        "One or more tool parameters are invalid (type, range, or format).",
+    )
+
+    # 500 — Internal
+    INTERNAL_ERROR = ErrorCode(
+        500, "internal_error",
+        "An unexpected internal error occurred. Contact the administrator.",
+    )
+
+
+# =====================================================================
+# AuthInfo
+# =====================================================================
 
 
 class AuthInfo:
@@ -104,6 +191,9 @@ PORT = int(os.getenv("PORT", "8100"))
 auth_context: ContextVar[AuthInfo | None] = ContextVar(
     "mcp_auth_context", default=None
 )
+client_ip_context: ContextVar[str] = ContextVar(
+    "mcp_client_ip", default=""
+)
 
 
 # ---------------------------------------------------------------------------
@@ -128,13 +218,20 @@ def _verify_token(token: str) -> AuthInfo:
     except jwt.InvalidTokenError as e:
         raise ValueError(f"Invalid token: {e}")
 
+    # Parse scopes from token — MCP Auth typically sends them as a
+    # space-separated string in the "scope" claim.
+    raw_scopes = payload.get("scope", "")
+    scopes: list[str] = raw_scopes.split() if isinstance(raw_scopes, str) else (
+        list(raw_scopes) if isinstance(raw_scopes, (list, tuple)) else []
+    )
+
     return AuthInfo(
         token=token,
         issuer=str(payload.get("iss", ISSUER)),
         client_id=payload.get("azp"),
         subject=str(payload.get("sub", "")),
         audience=payload.get("aud", RESOURCE_ID),
-        scopes=[],
+        scopes=scopes,
         claims=payload,
     )
 
@@ -234,6 +331,16 @@ def _build_http_app() -> Starlette:
         from starlette.datastructures import Headers
 
         headers = Headers(scope=scope)
+
+        # Capture client IP for audit logging
+        client_ip = (
+            headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or scope.get("client")
+            and (scope["client"][0] if isinstance(scope.get("client"), (list, tuple)) else "")
+            or ""
+        )
+        client_ip_context.set(client_ip)
+
         auth_header = headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             await _send_401(send, "missing_auth_header",
@@ -373,21 +480,40 @@ async def create_incident(
     branch: str,
 ) -> dict[str, Any]:
     """Create a new incident ticket."""
-    payload = {
-        "title": title,
-        "description": description,
-        "category": category,
-        "origin": origin,
-        "branch": branch,
-    }
-    client = _get_client()
-    resp = await client.post(
-        f"{API_BASE_URL}/api/incidents",
-        json=payload,
-        headers=_auth_headers(),
-    )
-    resp.raise_for_status()
-    return resp.json()
+    _require_scope("write:incidents")
+    _t0 = time.monotonic_ns()
+    _subject = _auth_subject()
+    try:
+        client = _get_client()
+        resp = await client.post(
+            f"{API_BASE_URL}/api/incidents",
+            json={
+                "title": title,
+                "description": description,
+                "category": category,
+                "origin": origin,
+                "branch": branch,
+            },
+            headers=_auth_headers(),
+        )
+        if resp.status_code >= 400:
+            detail = await _safe_error_detail(resp)
+            raise _denied(Errors.INVALID_INPUT,
+                          upstream_status=resp.status_code,
+                          upstream_body=detail)
+        result = resp.json()
+        _ToolLogger.log("create_incident", "ok",
+                        subject=_subject,
+                        duration_ms=_elapsed_ms(_t0))
+        return result
+    except MCPError:
+        raise
+    except Exception as exc:
+        _ToolLogger.log("create_incident", "error",
+                        subject=_subject,
+                        duration_ms=_elapsed_ms(_t0),
+                        detail=str(exc))
+        raise _denied(Errors.INTERNAL_ERROR, detail=str(exc)) from exc
 
 
 @mcp.tool(
@@ -410,15 +536,39 @@ dict
 )
 async def get_incident(incident_id: str) -> dict[str, Any]:
     """Get incident by ID."""
-    client = _get_client()
-    resp = await client.get(
-        f"{API_BASE_URL}/api/incidents/{incident_id}",
-        headers=_auth_headers(),
-    )
-    if resp.status_code == 404:
-        return {"error": f"Incident {incident_id} not found"}
-    resp.raise_for_status()
-    return resp.json()
+    _require_scope("read:incidents")
+    _t0 = time.monotonic_ns()
+    _subject = _auth_subject()
+    try:
+        client = _get_client()
+        resp = await client.get(
+            f"{API_BASE_URL}/api/incidents/{incident_id}",
+            headers=_auth_headers(),
+        )
+        if resp.status_code == 404:
+            _ToolLogger.log("get_incident", "not_found",
+                            subject=_subject,
+                            duration_ms=_elapsed_ms(_t0),
+                            detail=f"incident_id={incident_id}")
+            return {"error": f"Incident {incident_id} not found"}
+        if resp.status_code >= 400:
+            detail = await _safe_error_detail(resp)
+            raise _denied(Errors.INVALID_INPUT,
+                          upstream_status=resp.status_code,
+                          upstream_body=detail)
+        result = resp.json()
+        _ToolLogger.log("get_incident", "ok",
+                        subject=_subject,
+                        duration_ms=_elapsed_ms(_t0))
+        return result
+    except MCPError:
+        raise
+    except Exception as exc:
+        _ToolLogger.log("get_incident", "error",
+                        subject=_subject,
+                        duration_ms=_elapsed_ms(_t0),
+                        detail=str(exc))
+        raise _denied(Errors.INTERNAL_ERROR, detail=str(exc)) from exc
 
 
 @mcp.tool(
@@ -453,24 +603,44 @@ async def list_incidents(
     category: str | None = None,
 ) -> list[dict[str, Any]]:
     """List incidents with optional filters."""
-    params: dict[str, str] = {}
-    if status:
-        params["status"] = status
-    if origin:
-        params["origin"] = origin
-    if branch:
-        params["branch"] = branch
-    if category:
-        params["category"] = category
+    _require_scope("read:incidents")
+    _t0 = time.monotonic_ns()
+    _subject = _auth_subject()
+    try:
+        params: dict[str, str] = {}
+        if status:
+            params["status"] = status
+        if origin:
+            params["origin"] = origin
+        if branch:
+            params["branch"] = branch
+        if category:
+            params["category"] = category
 
-    client = _get_client()
-    resp = await client.get(
-        f"{API_BASE_URL}/api/incidents",
-        params=params,
-        headers=_auth_headers(),
-    )
-    resp.raise_for_status()
-    return resp.json()
+        client = _get_client()
+        resp = await client.get(
+            f"{API_BASE_URL}/api/incidents",
+            params=params,
+            headers=_auth_headers(),
+        )
+        if resp.status_code >= 400:
+            detail = await _safe_error_detail(resp)
+            raise _denied(Errors.INVALID_INPUT,
+                          upstream_status=resp.status_code,
+                          upstream_body=detail)
+        result = resp.json()
+        _ToolLogger.log("list_incidents", "ok",
+                        subject=_subject,
+                        duration_ms=_elapsed_ms(_t0))
+        return result
+    except MCPError:
+        raise
+    except Exception as exc:
+        _ToolLogger.log("list_incidents", "error",
+                        subject=_subject,
+                        duration_ms=_elapsed_ms(_t0),
+                        detail=str(exc))
+        raise _denied(Errors.INTERNAL_ERROR, detail=str(exc)) from exc
 
 
 @mcp.tool(
@@ -508,14 +678,34 @@ async def update_incident_status(
     Calls ``PATCH /api/incidents/{id}/status`` — the dedicated lifecycle
     endpoint, **not** a generic resource PATCH.
     """
-    client = _get_client()
-    resp = await client.patch(
-        f"{API_BASE_URL}/api/incidents/{incident_id}/status",
-        json={"status": new_status},
-        headers=_auth_headers(),
-    )
-    resp.raise_for_status()
-    return resp.json()
+    _require_scope("write:incidents")
+    _t0 = time.monotonic_ns()
+    _subject = _auth_subject()
+    try:
+        client = _get_client()
+        resp = await client.patch(
+            f"{API_BASE_URL}/api/incidents/{incident_id}/status",
+            json={"status": new_status},
+            headers=_auth_headers(),
+        )
+        if resp.status_code >= 400:
+            detail = await _safe_error_detail(resp)
+            raise _denied(Errors.INVALID_INPUT,
+                          upstream_status=resp.status_code,
+                          upstream_body=detail)
+        result = resp.json()
+        _ToolLogger.log("update_incident_status", "ok",
+                        subject=_subject,
+                        duration_ms=_elapsed_ms(_t0))
+        return result
+    except MCPError:
+        raise
+    except Exception as exc:
+        _ToolLogger.log("update_incident_status", "error",
+                        subject=_subject,
+                        duration_ms=_elapsed_ms(_t0),
+                        detail=str(exc))
+        raise _denied(Errors.INTERNAL_ERROR, detail=str(exc)) from exc
 
 
 # =====================================================================
@@ -553,15 +743,39 @@ dict
 )
 async def get_product(product_id: int) -> dict[str, Any]:
     """Get product by ID (read-only)."""
-    client = _get_client()
-    resp = await client.get(
-        f"{INVENTORY_API_BASE_URL}/inventory/products/{product_id}",
-        headers=_auth_headers(),
-    )
-    if resp.status_code == 404:
-        return {"error": f"Product {product_id} not found"}
-    resp.raise_for_status()
-    return resp.json()
+    _require_scope("read:inventory")
+    _t0 = time.monotonic_ns()
+    _subject = _auth_subject()
+    try:
+        client = _get_client()
+        resp = await client.get(
+            f"{INVENTORY_API_BASE_URL}/inventory/products/{product_id}",
+            headers=_auth_headers(),
+        )
+        if resp.status_code == 404:
+            _ToolLogger.log("get_product", "not_found",
+                            subject=_subject,
+                            duration_ms=_elapsed_ms(_t0),
+                            detail=f"product_id={product_id}")
+            return {"error": f"Product {product_id} not found"}
+        if resp.status_code >= 400:
+            detail = await _safe_error_detail(resp)
+            raise _denied(Errors.INVALID_INPUT,
+                          upstream_status=resp.status_code,
+                          upstream_body=detail)
+        result = resp.json()
+        _ToolLogger.log("get_product", "ok",
+                        subject=_subject,
+                        duration_ms=_elapsed_ms(_t0))
+        return result
+    except MCPError:
+        raise
+    except Exception as exc:
+        _ToolLogger.log("get_product", "error",
+                        subject=_subject,
+                        duration_ms=_elapsed_ms(_t0),
+                        detail=str(exc))
+        raise _denied(Errors.INTERNAL_ERROR, detail=str(exc)) from exc
 
 
 @mcp.tool(
@@ -591,18 +805,38 @@ async def list_products(
     warehouse: str | None = None,
 ) -> list[dict[str, Any]]:
     """List products, optionally filtered by warehouse (read-only)."""
-    params: dict[str, str] = {}
-    if warehouse:
-        params["warehouse"] = warehouse
+    _require_scope("read:inventory")
+    _t0 = time.monotonic_ns()
+    _subject = _auth_subject()
+    try:
+        params: dict[str, str] = {}
+        if warehouse:
+            params["warehouse"] = warehouse
 
-    client = _get_client()
-    resp = await client.get(
-        f"{INVENTORY_API_BASE_URL}/inventory/products",
-        params=params,
-        headers=_auth_headers(),
-    )
-    resp.raise_for_status()
-    return resp.json()
+        client = _get_client()
+        resp = await client.get(
+            f"{INVENTORY_API_BASE_URL}/inventory/products",
+            params=params,
+            headers=_auth_headers(),
+        )
+        if resp.status_code >= 400:
+            detail = await _safe_error_detail(resp)
+            raise _denied(Errors.INVALID_INPUT,
+                          upstream_status=resp.status_code,
+                          upstream_body=detail)
+        result = resp.json()
+        _ToolLogger.log("list_products", "ok",
+                        subject=_subject,
+                        duration_ms=_elapsed_ms(_t0))
+        return result
+    except MCPError:
+        raise
+    except Exception as exc:
+        _ToolLogger.log("list_products", "error",
+                        subject=_subject,
+                        duration_ms=_elapsed_ms(_t0),
+                        detail=str(exc))
+        raise _denied(Errors.INTERNAL_ERROR, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -620,6 +854,124 @@ def _auth_headers() -> dict[str, str]:
     if info is not None:
         return {"Authorization": f"Bearer {info.token}"}
     return {}
+
+
+class MCPError(Exception):
+    """Exception that FastMCP converts to an MCP JSON-RPC error response.
+
+    The ``status`` field maps to the JSON-RPC error code range we reserve:
+    - -32000 … -32099  (server errors, we use -32000 = auth denied,
+        -32001 = forbidden, -32002 = validation)
+    - ``message`` is the human-readable error title.
+    - ``data`` carries the structured ``{error, error_description}`` body.
+    """
+
+    def __init__(
+        self,
+        status: int,
+        message: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        self.status = status
+        self.message = message
+        self.data = data or {}
+        super().__init__(self.message)
+
+
+_MCP_RPC_AUTH_ERROR = -32000
+_MCP_RPC_FORBIDDEN = -32001
+_MCP_RPC_VALIDATION = -32002
+_MCP_RPC_INTERNAL = -32003
+
+
+def _denied(
+    err: ErrorCode,
+    **extra: Any,
+) -> MCPError:
+    """Build an MCPError from a canned ErrorCode with optional extras."""
+    return MCPError(
+        status={
+            401: _MCP_RPC_AUTH_ERROR,
+            403: _MCP_RPC_FORBIDDEN,
+            422: _MCP_RPC_VALIDATION,
+            500: _MCP_RPC_INTERNAL,
+        }.get(err.status, _MCP_RPC_INTERNAL),
+        message=err.code,
+        data={"error": err.code, "error_description": err.description,
+              **extra},
+    )
+
+
+def _require_scope(*required: str) -> None:
+    """Check that the authenticated client has *at least one* of the
+    required scopes.
+
+    Raises ``MCPError`` (→ JSON-RPC error) if the token lacks all of them.
+    Must be called from within a tool handler (where ``auth_context`` is
+    set by the ASGI middleware).
+    """
+    info = auth_context.get()
+    if info is None:
+        raise _denied(Errors.MISSING_AUTH_HEADER)
+    if not required:
+        return  # no scope requirement = allowed
+    if not any(s in info.scopes for s in required):
+        raise _denied(
+            Errors.INSUFFICIENT_SCOPE,
+            required_scopes=list(required),
+            token_scopes=info.scopes,
+        )
+
+
+class _ToolLogger:
+    """Structured logger for tool-call audit trail."""
+
+    @staticmethod
+    def log(
+        tool_name: str,
+        status: str,
+        *,
+        subject: str | None = None,
+        duration_ms: int | None = None,
+        detail: str | None = None,
+    ) -> None:
+        """Emit a structured INFO log line for a tool invocation."""
+        ip = client_ip_context.get() or "-"
+        parts = [
+            f"TOOL_CALL  tool={tool_name}",
+            f"client={subject or 'unknown'}",
+            f"ip={ip}",
+            f"status={status}",
+        ]
+        if duration_ms is not None:
+            parts.append(f"duration_ms={duration_ms}")
+        if detail:
+            parts.append(f"detail={detail}")
+        logger.info("  ".join(parts))
+
+
+def _auth_subject() -> str:
+    """Return the ``sub`` claim from the current request context,
+    or ``"unknown"`` if no auth context exists."""
+    info = auth_context.get()
+    return info.subject if info else "unknown"
+
+
+def _elapsed_ms(start_ns: int) -> int:
+    """Return elapsed wall-clock time in milliseconds since *start_ns*."""
+    return (time.monotonic_ns() - start_ns) // 1_000_000
+
+
+async def _safe_error_detail(resp: httpx.Response) -> str:
+    """Safely extract a short error detail from an HTTP error response."""
+    try:
+        body = resp.json()
+        if isinstance(body, dict):
+            return str(body.get("detail") or body.get("error") or
+                       body.get("message") or str(body))
+        return str(body)
+    except Exception:
+        return resp.text[:500] if resp.text else f"HTTP {resp.status_code}"
 
 
 # ---------------------------------------------------------------------------
