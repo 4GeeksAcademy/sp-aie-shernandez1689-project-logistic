@@ -1,8 +1,8 @@
 """Genera los traces-fixture que consumen los evals del agente RAG.
 
 Cada escenario ejecuta el grafo real (services.rag_agent.graph) con las
-dependencias externas mockeadas (Qdrant y LLM), igual que tests/pipelines/
-test_rag.py. El resultado es un trace JSON persistido en
+dependencias externas mockeadas (Qdrant, LLM y MCP tools), igual que
+tests/pipelines/test_rag.py. El resultado es un trace JSON persistido en
 data/eval/agent_traces/<thread_id>.json con el mismo schema que produciría
 una corrida con servicios vivos.
 
@@ -13,10 +13,15 @@ Escenarios:
   3. eval_no_context      — retrieve sin hits -> no_context, sin generate.
   4. eval_ticket_lookup — consulta de ticket usando el gestor TinyDB real,
       resuelta solo con tool (sin retrieve).
-  5. eval_inventory_lookup — consulta de stock usando el InventoryReader y
-      modelos SQLModel reales sobre SQLite aislada (sin mock de la tool).
+  5. eval_inventory_lookup — consulta de stock usando el gestor SQLModel
+      real sobre SQLite aislada (sin mock de la tool).
   6. eval_routing_tool_only_ticket — eval nuevo de enrutamiento tool-only.
   7. eval_routing_rag_only_returns — eval nuevo de enrutamiento RAG-only.
+
+NOTA: Las tools del MCP se parchean con las implementaciones en-proceso
+(``tools/incident_lookup``, ``tools/inventory_lookup``) porque el grafo ya
+no las importa directamente. Así la generación de traces eval sigue
+funcionando sin un MCP Server vivo.
 
 Ejecución: uv run python tests/pipelines/_gen_agent_traces.py
 """
@@ -34,8 +39,39 @@ from sqlmodel import SQLModel, Session, create_engine
 
 from services.rag_agent.graph import graph
 from services.rag_agent import tracing
+from services.rag_agent.mcp_client import reset_mcp_client
 from services.rag_agent.tools import inventory_lookup as inventory_tool
 from services.rag_agent.tools.inventory_lookup import InventoryReader, _import_inventory_manager
+# NOTA: tools/incident_lookup e inventory_lookup se siguen usando aquí para
+# sembrar datos y crear wrappers de compatibilidad (wrap_* abajo) porque el
+# generador de traces no puede depender de un MCP Server vivo.
+
+from services.rag_agent.tools.incident_lookup import lookup_incidents, IncidentQuery
+
+
+# ── Wrappers de compatibilidad: redirigen MCP -> tools en-proceso ────────
+# El grafo ahora usa lookup_incidents_mcp / lookup_inventory_mcp, pero el
+# generador de traces eval necesita alimentar las tools con datos reales
+# (TinyDB / SQLite aislada). Estos wrappers convierten la llamada MCP a la
+# vieja tool directa y normalizan la salida a un dict plano (el mismo schema
+# que devolvería el MCP Server).
+
+
+def _wrap_incident_lookup_mcp(query: dict) -> dict:
+    """Wrapper que llama lookup_incidents() y normaliza a dict plano."""
+    q = IncidentQuery(**query)
+    result = lookup_incidents(q)
+    return result.model_dump(mode="json")
+
+
+def _wrap_inventory_lookup_mcp(query: dict) -> dict:
+    """Wrapper que llama lookup_inventory() y normaliza a dict plano."""
+    from services.rag_agent.tools.inventory_lookup import lookup_inventory, InventoryQuery
+
+    q = InventoryQuery(**query)
+    result = lookup_inventory(q)
+    return result.model_dump(mode="json")
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KB_DOC = REPO_ROOT / "docs" / "company-knowledge-base" / "trackflow-storage-pricing.es.md"
@@ -93,6 +129,7 @@ def _seeded_incident_manager(tmp: Path):
         yield database
     finally:
         database.DB_PATH = original
+        reset_mcp_client()
 
 
 @contextlib.contextmanager
@@ -132,6 +169,7 @@ def _seeded_inventory_manager():
         inventory_tool._reader = original_reader
         session.close()
         engine.dispose()
+        reset_mcp_client()
 
 
 def _policy_chunk() -> dict:
@@ -182,6 +220,14 @@ def _run(question: str, thread_id: str, *, hits: list | None, llm_answer: str | 
         patch("data.pipelines.rag.embed", return_value=[0.1] * 8),
         patch("data.pipelines.rag._get_qdrant", return_value=client),
         patch("data.pipelines.rag.httpx.Client", return_value=llm_client),
+        patch(
+            "services.rag_agent.mcp_client.lookup_incidents_mcp",
+            side_effect=_wrap_incident_lookup_mcp,
+        ),
+        patch(
+            "services.rag_agent.mcp_client.lookup_inventory_mcp",
+            side_effect=_wrap_inventory_lookup_mcp,
+        ),
     ):
         graph.invoke({"question": question}, {"configurable": {"thread_id": thread_id}})
 
@@ -224,9 +270,7 @@ def main() -> None:
     #    sea reproducible sin tocar services/api/data/tinydb.json.
     with tempfile.TemporaryDirectory() as tmp:
         with _seeded_incident_manager(Path(tmp)):
-            from services.rag_agent.tools.incident_lookup import reset_reader
-
-            reset_reader()  # el reader perezoso usa DB_PATH actual
+            reset_mcp_client()
             t4 = _run(
                 f"¿cuál es el estado del ticket {EVAL_TICKET_ID}?",
                 "eval_ticket_lookup",
@@ -257,9 +301,7 @@ def main() -> None:
     # real; la base temporal hace reproducible la corrida.
     with tempfile.TemporaryDirectory() as tmp:
         with _seeded_incident_manager(Path(tmp)):
-            from services.rag_agent.tools.incident_lookup import reset_reader
-
-            reset_reader()
+            reset_mcp_client()
             t6 = _run(
                 f"¿Cuál es el estado del ticket {EVAL_TICKET_ID}?",
                 "eval_routing_tool_only_ticket",

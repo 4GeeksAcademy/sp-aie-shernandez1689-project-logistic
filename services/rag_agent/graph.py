@@ -48,6 +48,21 @@ resultado de la tool. Nunca se usa query() (evitaría doble recuperación).
 El grafo se compila al importar el módulo: un error estructural (nodo
 sin conexión, estado mal tipado) falla de forma clara antes de cualquier
 ejecución.
+
+ACTUALIZACIÓN — Migración a MCP (2026-10-27)
+---------------------------------------------
+Los nodos ``incident_lookup`` e ``inventory_lookup`` ya no importan las
+tools directas en-proceso (``services/rag_agent/tools/incident_lookup.py``
+y ``inventory_lookup.py``). En su lugar se conectan al TrackFlow MCP
+Server (``mcps/trackflow-server``) via ``langchain-mcp-adapters``.
+
+El contrato de salida (dict JSON-serializable con campos ``resolved``,
+``error``, ``ticket_id``/``product``, etc.) se mantiene idéntico para que
+los nodos ``generate`` / ``tracing`` y las aristas condicionales no
+requieran cambios.
+
+Las tools directas antiguas están marcadas como ``DEPRECATED`` y no deben
+usarse. Ver ``services/rag_agent/tools/DEPRECATED.md``.
 """
 
 from __future__ import annotations
@@ -62,16 +77,7 @@ from langgraph.graph import END, START, StateGraph
 
 from data.pipelines.rag import DEFAULT_MIN_SCORE, generate_answer, retrieve
 from services.rag_agent import tracing
-from services.rag_agent.tools.incident_lookup import (
-    IncidentLookupResult,
-    IncidentQuery,
-    lookup_incidents,
-)
-from services.rag_agent.tools.inventory_lookup import (
-    InventoryLookupResult,
-    InventoryQuery,
-    lookup_inventory,
-)
+from services.rag_agent import mcp_client
 
 DEFAULT_K = 5
 
@@ -273,37 +279,46 @@ def intent_node(state: AgentState) -> dict[str, Any]:
 
 
 def incident_lookup_node(state: AgentState) -> dict[str, Any]:
-    """Ejecuta la tool de consulta de tickets (solo lectura).
+    """Ejecuta la tool de consulta de tickets via MCP (solo lectura).
 
-    Lee del gestor de incidencias real via lookup_incidents(). Si el
-    resultado no está resuelto (timeout, fallo o ticket inexistente),
+    Se conecta al TrackFlow MCP Server (``mcps/trackflow-server``) via
+    ``langchain-mcp-adapters`` para obtener la información de tickets.
+    Sustituye a la antigua tool directa ``services/rag_agent/tools/incident_lookup.py``
+    (DEPRECATED — ver ``services/rag_agent/tools/DEPRECATED.md``).
+
+    Si el resultado no está resuelto (timeout, fallo o ticket inexistente),
     produce una respuesta honesta; nunca inventa un estado.
 
-    La tool devuelve un IncidentLookupResult (Pydantic); aquí se guarda
-    en el estado como dict JSON-serializable (tracing y checkpointer
-    persisten solo JSON) y se añade un resumen en ``tool_context`` para
-    que generate pueda componer una respuesta con KB si procede.
+    El resultado se guarda como dict JSON-serializable (tracing y
+    checkpointer persisten solo JSON) y se añade un resumen en
+    ``tool_context`` para que generate pueda componer una respuesta
+    con KB si procede.
+
+    Contrato de salida: idéntico al anterior (campos ``resolved``,
+    ``ticket_id``, ``status``, ``origin``, ``branch``, ``error``, etc.)
+    para que el resto del grafo no requiera cambios.
     """
     query = state.get("incident_query") or {}
     try:
-        result = lookup_incidents(query)
-    except Exception as exc:  # la tool ya convierte fallos, por si acaso
-        result = IncidentLookupResult(resolved=False, error=str(exc))
+        result = mcp_client.lookup_incidents_mcp(query)
+    except Exception as exc:
+        result = {"resolved": False, "error": str(exc)}
 
-    incident_result = result.model_dump(mode="json")
+    incident_result = result
     # Resumen honesto (sin inventar estado) que generate usará para componer.
-    if result.resolved and result.ticket_id:
+    if result.get("resolved") and result.get("ticket_id"):
         answer = (
-            f"El ticket {result.ticket_id} está "
-            f"{result.status} (origen: {result.origin}, "
-            f"sucursal: {result.branch})."
+            f"El ticket {result['ticket_id']} está "
+            f"{result.get('status', 'desconocido')} "
+            f"(origen: {result.get('origin', 'desconocido')}, "
+            f"sucursal: {result.get('branch', 'desconocida')})."
         )
-    elif result.resolved:
-        answer = result.description or "Consulta de incidencias completada."
+    elif result.get("resolved"):
+        answer = result.get("description") or "Consulta de incidencias completada."
     else:
         answer = (
             "No pude confirmar el estado de ese ticket ahora mismo. "
-            + (result.error or "Inténtalo de nuevo más tarde.")
+            + (result.get("error") or "Inténtalo de nuevo más tarde.")
         )
 
     out = {
@@ -322,38 +337,47 @@ def incident_lookup_node(state: AgentState) -> dict[str, Any]:
 
 
 def inventory_lookup_node(state: AgentState) -> dict[str, Any]:
-    """Ejecuta la tool de consulta de inventario (solo lectura).
+    """Ejecuta la tool de consulta de inventario via MCP (solo lectura).
 
-    Lee del gestor de inventario real via lookup_inventory(). Si el
-    resultado no está resuelto (timeout, fallo o producto inexistente),
+    Se conecta al TrackFlow MCP Server (``mcps/trackflow-server``) via
+    ``langchain-mcp-adapters`` para obtener la información de stock.
+    Sustituye a la antigua tool directa
+    ``services/rag_agent/tools/inventory_lookup.py``
+    (DEPRECATED — ver ``services/rag_agent/tools/DEPRECATED.md``).
+
+    Si el resultado no está resuelto (timeout, fallo o producto inexistente),
     produce una respuesta honesta; nunca inventa una cifra de stock.
 
-    La tool devuelve un InventoryLookupResult (Pydantic); aquí se guarda
-    en el estado como dict JSON-serializable (tracing y checkpointer
-    persisten solo JSON) y se añade un resumen en ``tool_context`` para
-    que generate pueda componer una respuesta con KB si procede.
+    El resultado se guarda como dict JSON-serializable (tracing y
+    checkpointer persisten solo JSON) y se añade un resumen en
+    ``tool_context`` para que generate pueda componer una respuesta
+    con KB si procede.
+
+    Contrato de salida: idéntico al anterior (campos ``resolved``,
+    ``product``, ``error``, etc.) para que el resto del grafo no
+    requiera cambios.
     """
     query = state.get("inventory_query") or {}
     try:
-        result = lookup_inventory(query)
-    except Exception as exc:  # la tool ya convierte fallos, por si acaso
-        result = InventoryLookupResult(resolved=False, error=str(exc))
+        result = mcp_client.lookup_inventory_mcp(query)
+    except Exception as exc:
+        result = {"resolved": False, "error": str(exc)}
 
-    inventory_result = result.model_dump(mode="json")
+    inventory_result = result
     # Resumen honesto (sin inventar stock) que generate usará para componer.
-    if result.resolved and result.product:
-        product = result.product
+    if result.get("resolved") and result.get("product"):
+        product = result["product"]
         answer = (
             f"El producto {product['sku']} ({product['name']}) tiene "
             f"{product['current_stock']} unidades en stock "
             f"(almacén {product['warehouse']}, categoría {product['category']})."
         )
-    elif result.resolved:
-        answer = result.description or "Consulta de inventario completada."
+    elif result.get("resolved"):
+        answer = result.get("description") or "Consulta de inventario completada."
     else:
         answer = (
             "No pude consultar el stock de ese producto ahora mismo. "
-            + (result.error or "Inténtalo de nuevo más tarde.")
+            + (result.get("error") or "Inténtalo de nuevo más tarde.")
         )
 
     out = {

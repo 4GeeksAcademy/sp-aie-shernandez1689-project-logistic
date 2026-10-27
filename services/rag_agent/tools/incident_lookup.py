@@ -1,40 +1,18 @@
-"""Tool: consulta de tickets de soporte (incidencias).
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║  DEPRECATED — 2026-10-27                                          ║
+# ║  Esta tool directa en-proceso ya NO la usa el agente LangGraph.   ║
+# ║  El agente se conecta al TrackFlow MCP Server via                 ║
+# ║  ``langchain-mcp-adapters`` (ver ``services/rag_agent/mcp_client.py``).  ║
+# ║  Este módulo se conserva solo para compatibilidad con tests       ║
+# ║  existentes. No usar en nuevo código.                             ║
+# ╚════════════════════════════════════════════════════════════════════╝
 
-Contrato tipado de entrada/salida
----------------------------------
-Entrada (``IncidentQuery``):
-  - ``ticket_id``  : id de ticket concreto (GET /api/incidents/{id}).
-  - filtros        : status, category, origin, branch — igual que los
-                     query params de GET /api/incidents.
+"""Tool: consulta de tickets de soporte (incidencias). [DEPRECATED]
 
-Salida (``IncidentLookupResult``):
-  - ``ticket_id``, ``status``, ``category``, ``origin``, ``branch``,
-    ``title``, ``description``, ``created_at``, ``updated_at``,
-    ``resolved`` — los MISMOOS campos que expone la API de incidencias
-    (models.Incident / IncidentListResponse).
+DEPRECATED desde 2026-10-27. El agente ya no usa esta tool.
+Ver ``services/rag_agent/tools/DEPRECATED.md`` para detalles.
 
-Transporte
-----------
-Lee de forma **en-proceso** el gestor de incidencias real del monorepo
-(``services/api``): reutiliza la misma función de repositorio
-(``database.get_incidents_table``) y los mismos modelos Pydantic
-(``models.Incident``, ``models.IncidentListResponse``) que sirven los
-endpoints GET /api/incidents y GET /api/incidents/{id}. No existe un
-dataset paralelo: es la misma tabla TinyDB que expone la API.
-
-Solo lectura
-------------
-La tool únicamente consulta: nunca crea, actualiza ni elimina tickets.
-No hay ninguna rama de escritura en este módulo (a diferencia del
-gestor, que sí expone POST/PATCH — no se tocan aquí).
-
-Timeout y fallback
-------------------
-``INCIDENT_TIMEOUT_SECONDS`` (default 4.0 s) limita la operación de
-lectura; si el gestor no responde a tiempo, falla o el ticket no existe,
-el resultado se entrega con ``resolved=False`` y ``error`` poblado para
-que el agente responda algo honesto ("no pude confirmar el estado de ese
-ticket ahora mismo") en lugar de inventar un estado.
+This module is kept for test compatibility only. Do not use in new code.
 """
 
 from __future__ import annotations

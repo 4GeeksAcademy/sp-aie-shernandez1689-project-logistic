@@ -37,8 +37,20 @@ import database
 from models import Incident
 from services.rag_agent import tracing
 from services.rag_agent.graph import graph
-from services.rag_agent.tools.incident_lookup import reset_reader
-from services.rag_agent.tools.inventory_lookup import InventoryLookupResult
+from services.rag_agent.mcp_client import reset_mcp_client
+from services.rag_agent.tools.incident_lookup import lookup_incidents, IncidentQuery, reset_reader as reset_incident_reader
+
+
+# ── Wrapper de compatibilidad: redirige lookup_incidents_mcp a la tool
+#    en-proceso para que los tests puedan leer TinyDB temporal sin
+#    necesidad de un MCP Server vivo.
+
+
+def _wrap_incident_mcp(query: dict) -> dict:
+    """Llama lookup_incidents() y normaliza la salida a dict plano."""
+    q = IncidentQuery(**query)
+    result = lookup_incidents(q)
+    return result.model_dump(mode="json")
 
 SEED = [
     {
@@ -87,15 +99,16 @@ def incident_table(tmp_path, monkeypatch):
             table.insert(Incident(**payload).model_dump(mode="json"))
     finally:
         db.close()
-    reset_reader()
+    reset_incident_reader()
+    reset_mcp_client()
     return database
 
 
 @pytest.fixture
 def live_graph(tmp_path, monkeypatch):
-    """Grafo compilado con traces a tmp_path y reader recién creado."""
+    """Grafo compilado con traces a tmp_path y cliente MCP reiniciado."""
     monkeypatch.setattr(tracing, "TRACES_DIR", tmp_path / "traces")
-    reset_reader()
+    reset_mcp_client()
     return graph
 
 
@@ -142,17 +155,19 @@ def _fake_rag(*, context: list | None = None, answer: str = "respuesta RAG"):
     return _FakeRAG(context=context, answer=answer)
 
 
-def _fake_inventory(*, product: dict | None = None, description: str | None = None) -> InventoryLookupResult:
-    """Devuelve un InventoryLookupResult para mockear lookup_inventory.
+def _fake_inventory(*, product: dict | None = None, description: str | None = None) -> dict:
+    """Devuelve un dict (mismo schema que el antiguo InventoryLookupResult)
+    para mockear lookup_inventory_mcp.
 
     El routing del grafo NO depende de la base de inventario (no se abre
     DATABASE_URL en tests): se sustituye la tool por este resultado.
     """
-    return InventoryLookupResult(
-        product=product,
-        description=description,
-        resolved=product is not None or description is not None,
-    )
+    return {
+        "product": product,
+        "description": description,
+        "resolved": product is not None or description is not None,
+        "error": None,
+    }
 
 
 # ── Tool de tickets: tool-only sin retrieve ──────────────────────────────
@@ -167,10 +182,14 @@ def test_ticket_question_runs_tool_and_checks_kb(live_graph, incident_table):
         db.close()
 
     with _fake_rag() as (mock_retrieve, mock_generate):
-        trace = _run_thread(
-            "test_ticket_lookup",
-            f"¿Cuál es el estado del ticket {real_id}?",
-        )
+        with patch(
+            "services.rag_agent.mcp_client.lookup_incidents_mcp",
+            side_effect=_wrap_incident_mcp,
+        ):
+            trace = _run_thread(
+                "test_ticket_lookup",
+                f"¿Cuál es el estado del ticket {real_id}?",
+            )
 
     order = _node_order(trace)
     assert "intent" in order
@@ -190,7 +209,11 @@ def test_ticket_question_runs_tool_and_checks_kb(live_graph, incident_table):
 def test_missing_ticket_is_honest_without_rag(live_graph, incident_table):
     """Ticket inexistente -> fallback honesto sin consultar el RAG."""
     with _fake_rag() as (mock_retrieve, mock_generate):
-        trace = _run_thread("test_ticket_missing", "¿Estado del ticket INC-999999?")
+        with patch(
+            "services.rag_agent.mcp_client.lookup_incidents_mcp",
+            side_effect=_wrap_incident_mcp,
+        ):
+            trace = _run_thread("test_ticket_missing", "¿Estado del ticket INC-999999?")
 
     order = _node_order(trace)
     assert "incident_lookup" in order
@@ -205,7 +228,11 @@ def test_missing_ticket_is_honest_without_rag(live_graph, incident_table):
 def test_filter_multiple_matches_is_honest_without_rag(live_graph, incident_table):
     """Filtro con varios hits -> la tool pide ticket_id (sin inventar)."""
     with _fake_rag() as (mock_retrieve, _):
-        trace = _run_thread("test_ticket_filter_multi", "ver ticket")
+        with patch(
+            "services.rag_agent.mcp_client.lookup_incidents_mcp",
+            side_effect=_wrap_incident_mcp,
+        ):
+            trace = _run_thread("test_ticket_filter_multi", "ver ticket")
 
     order = _node_order(trace)
     assert "incident_lookup" in order
@@ -240,7 +267,11 @@ def test_tool_plus_kb_composes_combined_answer(live_graph, incident_table):
     }
     combined = f"El ticket {real_id} está open y, según la política de TrackFlow, se aplica devolución."
     with _fake_rag(context=[kb_chunk], answer=combined) as (mock_retrieve, mock_generate):
-        trace = _run_thread(
+        with patch(
+            "services.rag_agent.mcp_client.lookup_incidents_mcp",
+            side_effect=_wrap_incident_mcp,
+        ):
+            trace = _run_thread(
             "test_ticket_plus_kb",
             f"¿Cuál es el estado del ticket {real_id} y qué política de devoluciones aplica?",
         )
@@ -308,7 +339,11 @@ def test_trace_schema_holds_for_incident_run(live_graph, incident_table):
         db.close()
 
     with _fake_rag():
-        trace = _run_thread("test_ticket_schema", f"¿estado del ticket {real_id}?")
+        with patch(
+            "services.rag_agent.mcp_client.lookup_incidents_mcp",
+            side_effect=_wrap_incident_mcp,
+        ):
+            trace = _run_thread("test_ticket_schema", f"¿estado del ticket {real_id}?")
 
     assert trace["schema_version"] == 2
     assert trace["thread_id"] == "test_ticket_schema"
@@ -344,7 +379,7 @@ def test_inventory_question_runs_tool_without_rag(live_graph):
 
     with _fake_rag() as (mock_retrieve, mock_generate):
         with patch(
-            "services.rag_agent.graph.lookup_inventory",
+            "services.rag_agent.mcp_client.lookup_inventory_mcp",
             return_value=fake_result,
         ) as mock_inventory:
             trace = _run_thread(
@@ -374,7 +409,7 @@ def test_inventory_question_without_sku_runs_tool_anyway(live_graph):
     fake_result = _fake_inventory(description="3 productos registrados")
     with _fake_rag() as (mock_retrieve, _):
         with patch(
-            "services.rag_agent.graph.lookup_inventory",
+            "services.rag_agent.mcp_client.lookup_inventory_mcp",
             return_value=fake_result,
         ) as mock_inventory:
             trace = _run_thread(
@@ -393,13 +428,15 @@ def test_inventory_question_without_sku_runs_tool_anyway(live_graph):
 
 def test_inventory_fallback_is_honest_without_rag(live_graph):
     """Fallo en inventario -> respuesta honesta, sin fallback a RAG."""
-    fake_result = InventoryLookupResult(
-        resolved=False,
-        error="el producto 'ZZZ-NOPE-99' no existe",
-    )
+    fake_result = {
+        "resolved": False,
+        "product": None,
+        "description": None,
+        "error": "el producto 'ZZZ-NOPE-99' no existe",
+    }
     with _fake_rag() as (mock_retrieve, mock_generate):
         with patch(
-            "services.rag_agent.graph.lookup_inventory",
+            "services.rag_agent.mcp_client.lookup_inventory_mcp",
             return_value=fake_result,
         ) as mock_inventory:
             trace = _run_thread(
@@ -432,7 +469,7 @@ def test_inventory_result_is_consultable_in_trace(live_graph):
     fake_result = _fake_inventory(product=product)
     with _fake_rag():
         with patch(
-            "services.rag_agent.graph.lookup_inventory",
+            "services.rag_agent.mcp_client.lookup_inventory_mcp",
             return_value=fake_result,
         ):
             trace = _run_thread("test_inventory_schema", "¿stock de TEC-EAR-001?")
@@ -456,7 +493,7 @@ def test_rag_question_does_not_run_inventory_lookup(live_graph):
         _,
     ):
         with patch(
-            "services.rag_agent.graph.lookup_inventory",
+            "services.rag_agent.mcp_client.lookup_inventory_mcp",
             return_value=_fake_inventory(product={}),
         ) as mock_inventory:
             trace = _run_thread(
@@ -491,10 +528,16 @@ def test_ticket_and_inventory_run_both_tools(live_graph, incident_table):
         description="El producto CLT-SNK-W-42 tiene 40 unidades en stock"
     )
     with _fake_rag() as (mock_retrieve, _):
-        with patch(
-            "services.rag_agent.graph.lookup_inventory",
-            return_value=fake_inv,
-        ) as mock_inventory:
+        with (
+            patch(
+                "services.rag_agent.mcp_client.lookup_inventory_mcp",
+                return_value=fake_inv,
+            ) as mock_inventory,
+            patch(
+                "services.rag_agent.mcp_client.lookup_incidents_mcp",
+                side_effect=_wrap_incident_mcp,
+            ),
+        ):
             trace = _run_thread(
                 "test_both_tools",
                 f"problema de stock del ticket {real_id} del producto CLT-SNK-W-42 y qué política de devoluciones aplica",

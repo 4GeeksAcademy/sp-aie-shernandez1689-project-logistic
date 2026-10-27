@@ -1,47 +1,18 @@
-"""Tool: consulta de inventario (stock por producto).
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║  DEPRECATED — 2026-10-27                                          ║
+# ║  Esta tool directa en-proceso ya NO la usa el agente LangGraph.   ║
+# ║  El agente se conecta al TrackFlow MCP Server via                 ║
+# ║  ``langchain-mcp-adapters`` (ver ``services/rag_agent/mcp_client.py``).  ║
+# ║  Este módulo se conserva solo para compatibilidad con tests       ║
+# ║  existentes. No usar en nuevo código.                             ║
+# ╚════════════════════════════════════════════════════════════════════╝
 
-Contrato tipado de entrada/salida
----------------------------------
-Entrada (``InventoryQuery``):
-  - ``sku_id``  : id entero del producto (GET /inventory/products/{id}).
-  - ``sku``     : código de producto exacto (p. ej. "CLT-SNK-W-42").
-  - filtros     : category, warehouse, client_name — igual que los campos
-                  de SKUResponse en GET /inventory/products.
+"""Tool: consulta de inventario (stock por producto). [DEPRECATED]
 
-Salida (``InventoryLookupResult``):
-  - ``product`` los campos de ``SKUResponse`` (id, name, sku, client_name,
-    category, warehouse, current_stock) + metadatos de consulta
-    (``resolved``/``error``/``matched_filters``).
+DEPRECATED desde 2026-10-27. El agente ya no usa esta tool.
+Ver ``services/rag_agent/tools/DEPRECATED.md`` para detalles.
 
-Transporte
-----------
-Lee de forma **en-proceso** el gestor de inventario real del monorepo
-(``services/user-api``): reutiliza los mismos modelos SQLModel
-(``app.models.SKU``, ``StockEntry``, ``StockExit``) y el mismo esquema de
-salida (``app.schemas.SKUResponse``) que sirve GET /inventory/products,
-junto con la misma fórmula de stock disponible
-(``current_stock = Σ entradas − Σ salidas``) que usa
-``app.routers.inventory``. No existe un dataset paralelo: son las mismas
-tablas (SQLModel) que expone la API.
-
-Los modelos se importan por ruta (importlib) porque el paquete namespace
-``app`` del user-api colisiona con el módulo ``services/api/app.py`` (ver
-nota al revisor). El lector crea una sesión SQLModel contra la misma base
-que la API (vía ``app.db`` / ``DATABASE_URL``) o acepta una sesión
-inyectada en tests para leer de una base aislada.
-
-Solo lectura
-------------
-La tool únicamente consulta (SELECT): nunca crea, actualiza ni elimina
-productos, entradas o salidas. No hay ninguna rama de escritura.
-
-Timeout y fallback
-------------------
-``INVENTORY_TIMEOUT_SECONDS`` (default 4.0 s) limita la operación de
-lectura; si el gestor no responde a tiempo, falla o el producto no
-existe, el resultado se entrega con ``resolved=False`` y ``error``
-poblado para que el agente responda algo honesto ("no pude consultar el
-stock ahora mismo") en lugar de inventar una cifra.
+This module is kept for test compatibility only. Do not use in new code.
 """
 
 from __future__ import annotations
