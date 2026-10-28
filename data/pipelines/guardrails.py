@@ -52,8 +52,10 @@ class GuardrailState(str, Enum):
     """Estado de guardarraíl decidido por ``classify_bounds``."""
 
     JAILBREAK = "jailbreak"
+    PERSONAL_TASK = "personal_task"
     OFF_DOMAIN = "off_domain"
     DOMAIN = "domain"
+    CASUAL = "casual"
     SMALL_TALK = "small_talk"
 
 
@@ -312,7 +314,13 @@ def match_kind(question: str) -> str | None:
     for name, compiled in _JAILBREAK_RE:
         if compiled.search(text):
             return name
+    for name, compiled in _PERSONAL_TASK_RE:
+        if compiled.search(text):
+            return name
     for name, compiled in _DOMAIN_RE:
+        if compiled.search(text):
+            return name
+    for name, compiled in _CASUAL_RE:
         if compiled.search(text):
             return name
     for name, compiled in _SMALL_TALK_RE:
@@ -345,8 +353,12 @@ def classify_bounds(question: str) -> GuardrailState:
         return GuardrailState.OFF_DOMAIN
     if any(name == kind for name, _ in _JAILBREAK_PATTERNS):
         return GuardrailState.JAILBREAK
+    if any(name == kind for name, _ in _PERSONAL_TASK_PATTERNS):
+        return GuardrailState.PERSONAL_TASK
     if any(name == kind for name, _ in _DOMAIN_PATTERNS):
         return GuardrailState.DOMAIN
+    if any(name == kind for name, _ in _CASUAL_PATTERNS):
+        return GuardrailState.CASUAL
     return GuardrailState.SMALL_TALK
 
 
@@ -364,3 +376,193 @@ def is_off_domain(question: str) -> bool:
 def redirect_response() -> str:
     """Devuelve la respuesta de redirección/rechazo estándar del agente."""
     return REDIRECT_MESSAGE + " ¿En qué puedo ayudarte con tus operaciones hoy?"
+
+
+# ── Solicitudes de uso personal (ajenas al dominio de la empresa) ───────
+#
+# Tareas concretas de la vida personal (poemas, tareas universitarias,
+# currículums, chistes, canciones, redacciones...). Son ORACIONES EXPLÍCITAS
+# con verbo imperativo + artefacto personal: no sueltan palabras sueltas que
+# puedan robar preguntas legítimas del dominio (p. ej. "informe semanal" sigue
+# siendo de dominio; "escríbeme un poema" NO).
+
+_PERSONAL_TASK_PATTERNS: list[tuple[str, str]] = [
+    (
+        "poema",
+        r"escr[íi]beme?\s+(?:un\s+)?poema|redacta\s+(?:un\s+)?poema|"
+        r"poema\s+de\s+amor|write\s+me\s+a\s+poem|compose\s+a\s+poem",
+    ),
+    (
+        "tarea_universitaria",
+        r"ay[uú]dame\s+con\s+(?:la|mi|mis|las)\s+(?:tarea|tareas|deberes|"
+        r"ejercicios|ex[aa]menes)|hazme?\s+(?:la|mi)\s+tarea|"
+        r"tarea\s+(?:de|para)\s+(?:mi\s+)?(?:la\s+)?universidad|"
+        r"deberes\s+de\s+(?:la\s+)?universidad|"
+        r"help\s+me\s+with\s+(?:my\s+)?(?:homework|assignment|schoolwork|exam)|"
+        r"do\s+my\s+homework|tarea\s+de\s+mi\s+universidad",
+    ),
+    (
+        "curriculum",
+        r"hazme?\s+(?:un\s+)?(?:curr[íi]culum|cv|curriculum|curr[ií]culo)|"
+        r"redacta\s+(?:mi|un)\s+curr[íi]culum|"
+        r"write\s+me\s+a\s+(?:r[ée]sum[ée]|cv)|"
+        r"make\s+me\s+a\s+(?:resume|cv)",
+    ),
+    (
+        "chiste",
+        r"cu[ée]ntame\s+un\s+chiste|dime\s+un\s+chiste|tell\s+me\s+a\s+joke",
+    ),
+    (
+        "cancion",
+        r"escr[íi]beme?\s+(?:una|la)\s+canci[óo]n|comp[óo]n?\s+(?:una|la)\s+"
+        r"canci[óo]n|write\s+me\s+a\s+song|compose\s+a\s+song",
+    ),
+    (
+        "carta_personal",
+        r"carta\s+de\s+amor|escr[íi]beme?\s+(?:una|la)\s+carta\s+de\s+amor|"
+        r"love\s+letter",
+    ),
+    (
+        "ensayo_escolar",
+        r"escr[íi]be\s+(?:mi|un|el)\s+ensayo|escribe\s+mi\s+(?:redacci[óo]n|"
+        r"composici[óo]n)|escribe\s+una\s+redacci[óo]n\s+para\s+(?:mi\s+)?"
+        r"(?:clase|colegio|instituto|universidad)|redacta\s+(?:mi|un)\s+ensayo|"
+        r"write\s+(?:my|an|a)\s+essay",
+    ),
+    (
+        "cuento_novela",
+        r"escr[íi]beme?\s+un\s+cuento|escr[íi]be\s+(?:un|mi)\s+cuento\s+"
+        r"(?:infantil|para\s+m[íi]|de\s+ficci[óo]n|corto)|"
+        r"escr[íi]be\s+una\s+novela",
+    ),
+    (
+        "horoscopo_personal",
+        r"dime\s+mi\s+hor[óo]scopo|qu[ée]\s+dice\s+mi\s+hor[óo]scopo|"
+        r"tell\s+me\s+my\s+horoscope",
+    ),
+]
+
+_PERSONAL_TASK_RE = [
+    (name, re.compile(pattern, re.IGNORECASE))
+    for name, pattern in _PERSONAL_TASK_PATTERNS
+]
+
+
+# ── Preguntas generales/casuales PERMITIDAS (se responden, con redirección) ──
+#
+# Dato factual benigno y breve (hora, fecha, día, conversión sencilla). Se
+# responde con LLM y la respuesta CIERRA redirigiendo al contexto empresa.
+# Son patrones ESTRECHOS para no capturar preguntas de opinión abierta (esas
+# siguen siendo OFF_DOMAIN) ni preguntas del dominio.
+
+_CASUAL_PATTERNS: list[tuple[str, str]] = [
+    (
+        "que_hora_es",
+        r"\bqu[ée]\s+hora\s+es(?:\s+en\s+[a-záéíóúñü\s]+)?\?|"
+        r"\bwhat\s+time\s+is\s+it(?:\s+in\s+[a-z\s]+)?\?",
+    ),
+    (
+        "que_dia_es",
+        r"\bqu[ée]\s+(?:d[ií]a|fecha)\s+es\s+hoy\s*[?¡¿!]?|"
+        r"\bwhat\s+(?:day|date)\s+is\s+(?:it|today)",
+    ),
+    (
+        "que_hora_en_ciudad",
+        r"\bqu[ée]\s+hora\s+es\s+en\s+(?:tokio|tokyo|nueva\s+york|m[ée]xico|"
+        r"madrid|londres|l[óo]ndres|berl[ií]n|par[ií]s|roma|buenos\s+aires)|\b"
+        r"what\s+time\s+is\s+it\s+in\s+(?:tokyo|tokio|new\s+york|mexico|"
+        r"madrid|london|berlin|paris|rome)",
+    ),
+    (
+        "conversion_simple",
+        r"cu[áa]nt[oa]s?\s+(?:horas|minutos|kil[óo]metros|metros|gramos|"
+        r"libras|grados)\s+(?:tiene|tienen|son|hay|equivale|equivalen)",
+    ),
+]
+
+_CASUAL_RE = [
+    (name, re.compile(pattern, re.IGNORECASE))
+    for name, pattern in _CASUAL_PATTERNS
+]
+
+
+# =====================================================================
+# Validación de salida del modelo (guardarraíl de contenido)
+# =====================================================================
+#
+# Antes de devolver al usuario la respuesta generada, se comprueba que no
+# filtre:
+#   (a) instrucciones internas / system prompt / reglas del agente,
+#   (b) secretos o credenciales (API keys, correos, contraseñas),
+#   (c) referencias a la implementación interna (módulos, variables, tools).
+# Si la respuesta no es válida, ``validate_output`` devuelve (False, motivo)
+# y la capa que la consume (generate_node) la sustituye por la redirección
+# segura.
+
+# Señales de fuga de instrucciones internas o implementación.
+_INTERNAL_LEAK_RE = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"system\s*prompt",
+        r"reglas?\s*(?:internas|del\s*sistema)",
+        r"AUTORIDAD Y JERARQU[ÍI]A",
+        r"TRACKFLOW-AGENT",
+        r"ignore\s+(?:your|all\s+the|the)\s+(?:rules|instructions|prompt)",
+        r"instrucciones\s+internas",
+        r"guardrails\.py|guardrail_node|classify_bounds|validate_output|"
+        r"match_kind|redirect_response",
+        r"LLM_BASE_URL|LLM_API_KEY|LLM_MODEL_ID|DEFAULT_MIN_SCORE|DEFAULT_K\b",
+        r"qdrant|huggingface|monkeypatch|nemoguardrails|langgraph\s*\.",
+    ),
+]
+
+# Señales de datos sensibles que no deben exponerse.
+_SENSITIVE_DATA_RE = [
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"[\w.+-]+@[\w-]+\.[\w.-]+",  # correo electrónico
+        r"api[_-]?key|apikey|password|contrase[ñn]a|secret\s*[:=]|"
+        r"bearer\s+[A-Za-z0-9._-]{8,}",
+        r"[0-9a-f]{32,64}",  # hash/token largo
+    )
+]
+
+
+def validate_output(answer: str) -> tuple[bool, str]:
+    """Valida una respuesta generada antes de devolverla al usuario.
+
+    Parameters
+    ----------
+    answer : str
+        Respuesta en bruto generada por el LLM.
+
+    Returns
+    -------
+    tuple[bool, str]
+        (True, "") si es válida; (False, motivo) si debe sustituirse por una
+        respuesta segura. Motivos: "vacía", "fuga_instrucciones",
+        "dato_sensible".
+    """
+    text = (answer or "").strip()
+    if not text:
+        return False, "vacía"
+
+    for leak in _INTERNAL_LEAK_RE:
+        if leak.search(text):
+            return False, "fuga_instrucciones"
+
+    for sensitive in _SENSITIVE_DATA_RE:
+        if sensitive.search(text):
+            return False, "dato_sensible"
+
+    return True, ""
+
+
+def is_personal_task(question: str) -> bool:
+    """Atajo booleano: True si es una solicitud de uso personal."""
+    return classify_bounds(question) is GuardrailState.PERSONAL_TASK
+
+
+def is_casual(question: str) -> bool:
+    """Atajo booleano: True si es una pregunta general permitida."""
+    return classify_bounds(question) is GuardrailState.CASUAL

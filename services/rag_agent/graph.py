@@ -68,6 +68,12 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.config import get_config
 from langgraph.graph import END, START, StateGraph
 
+from data.pipelines.guardrails import (
+    GuardrailState,
+    classify_bounds,
+    redirect_response,
+    validate_output,
+)
 from data.pipelines.rag import DEFAULT_MIN_SCORE, generate_answer, retrieve
 from services.rag_agent import tracing
 from services.rag_agent import mcp_client
@@ -78,6 +84,14 @@ from services.rag_agent.memory_nodes import (
 )
 
 DEFAULT_K = 5
+
+# Respuesta de respaldo (defense-in-depth) cuando generate_node se alcanza con
+# un estado de guardarraíl bloqueado (jailbreak / off_domain / personal_task).
+GUARDRAIL_DOMAIN_REDIRECT = (
+    "Solo puedo ayudarte con asuntos de TrackFlow — SLAs, devoluciones, "
+    "transportistas, tarifas, tickets e inventario. "
+    "¿En qué puedo ayudarte con tus operaciones hoy?"
+)
 
 # Detección heurística de intención de consulta de ticket de soporte.
 _INCIDENT_INTENT_RE = re.compile(
@@ -197,6 +211,10 @@ class AgentState(TypedDict, total=False):
     # Consolidación de memoria.
     consolidation_pending: bool
     _consolidation_report: dict[str, Any]
+    # Guardarraíl: resultado de classify_bounds sobre la pregunta.
+    # Valores: "jailbreak" | "off_domain" | "domain" | "small_talk" |
+    #          "personal_task" | "casual"
+    guardrail_state: str
 
 # ── Nodos ───────────────────────────────────────────────────────────────
 # Cada nodo registra su salida en el trace (tracing.add_step) para que la
@@ -251,6 +269,19 @@ def generate_node(state: AgentState) -> dict[str, Any]:
     tool_answers = state.get("tool_answers") or []
     memory_ctx = state.get("memory_context") or {}
 
+    # Defense-in-depth: si por cualquier camino futuro el flujo llega aquí con
+    # un estado de guardarraíl bloqueante, NUNCA se abre el LLM: se devuelve
+    # la redirección (o la respuesta ya fijada por el nodo guardrail).
+    gr_state = state.get("guardrail_state")
+    if gr_state in (
+        GuardrailState.JAILBREAK.value,
+        GuardrailState.OFF_DOMAIN.value,
+        GuardrailState.PERSONAL_TASK.value,
+    ):
+        answer = state.get("answer") or GUARDRAIL_DOMAIN_REDIRECT
+        tracing.add_step("generate", {"answer": answer})
+        return {"answer": answer}
+
     # Inyectar memoria como prefacio contextual si existe.
     memory_lines = []
 
@@ -299,6 +330,27 @@ def generate_node(state: AgentState) -> dict[str, Any]:
             question=state["question"],
             context=combined_context,
         )
+
+    # Validación de salida (guardarraíl de contenido):
+    #  - Si la pregunta es casual (permitida), se fuerza un cierre con
+    #    redirección al contexto de la empresa.
+    #  - Se valida que la respuesta no filtre instrucciones internas, datos
+    #    sensibles del BRIEFING ni formato malformado; si no es válida, se
+    #    sustituye por una respuesta segura.
+    if gr_state == GuardrailState.CASUAL.value:
+        answer = (answer or "").strip()
+        if not answer:
+            answer = GUARDRAIL_DOMAIN_REDIRECT
+        else:
+            answer = answer.rstrip() + (
+                "\n\nY hablando de logística: solo puedo ayudarte con asuntos "
+                "de TrackFlow — SLAs, devoluciones, transportistas, tarifas, "
+                "tickets e inventario. ¿En qué puedo ayudarte hoy?"
+            )
+    else:
+        valid, _reason = validate_output(answer)
+        if not valid:
+            answer = GUARDRAIL_DOMAIN_REDIRECT
 
     tracing.add_step("generate", {"answer": answer})
     return {"answer": answer}
@@ -493,13 +545,124 @@ def finalize(state: AgentState) -> dict[str, Any]:
     return {}
 
 
-# ── Aristas condicionales ───────────────────────────────────────────────
+# ── Nodo guardarraíl ────────────────────────────────────────────────────
+#
+# Primera línea de defensa DETERMINISTA (sin LLM): clasifica la pregunta con
+# ``classify_bounds`` ANTES de abrir el LLM, retrieve o tools. Según el estado:
+#
+#   - jailbreak     -> rechazo firme + redirección (el LLM NUNCA se abre).
+#   - personal_task -> rechazo: solicitud de uso personal ajena al dominio de
+#                      TrackFlow + redirección al propósito del agente.
+#   - off_domain    -> fuera del dominio comercial -> redirección (sin LLM).
+#   - small_talk    -> saludo cortés -> respuesta breve + redirección suave.
+#   - casual        -> pregunta general permitida -> se responde con LLM y
+#                      la respuesta cierra redirigiendo al contexto empresa.
+#   - domain        -> dentro del dominio -> flujo normal (LLM + tools).
+
+
+def guardrail_node(state: AgentState) -> dict[str, Any]:
+    """Clasifica la pregunta y, si es bloqueante, produce la respuesta final.
+
+    Reglas de prioridad:
+    - El jailbreak SIEMPRE es bloqueante (aunque haya propuesta de memoria
+      pendiente): nunca se trata como confirmación.
+    - personal_task y off_domain bloquean la corrida (sin LLM ni tools).
+    - small_talk se responde breve y se redirige suavemente (sin LLM).
+    - casual se marca como permisible (el LLM responderá y un post-proceso
+      añadirá la redirección al cierre).
+    - domain continúa con el flujo normal.
+    """
+    question = state.get("question") or ""
+    gr_state = classify_bounds(question)
+
+    pending = state.get("_memory_proposal") or {}
+    proposal_type = pending.get("type")
+    has_pending_proposal = proposal_type not in (None, "none", "")
+
+    out: dict[str, Any] = {"guardrail_state": gr_state.value}
+
+    # Respuestas con redirección (cortan la corrida, salvo la propuesta de
+    # memoria que se procesa primero en el estado "recuerda").
+    if gr_state is GuardrailState.JAILBREAK:
+        out["answer"] = (
+            "No puedo ignorar mis instrucciones ni cambiar mi rol: soy el "
+            "asistente de TrackFlow. " + redirect_response()
+        )
+        tracing.add_step("guardrail", {"state": gr_state.value, "answer": out["answer"]})
+        return out
+
+    if gr_state is GuardrailState.PERSONAL_TASK:
+        out["answer"] = (
+            "No puedo ayudarte con esa tarea: es un uso personal ajeno a mi "
+            "propósito. " + redirect_response()
+        )
+        tracing.add_step("guardrail", {"state": gr_state.value, "answer": out["answer"]})
+        return out
+
+    if gr_state is GuardrailState.OFF_DOMAIN:
+        out["answer"] = redirect_response()
+        tracing.add_step("guardrail", {"state": gr_state.value, "answer": out["answer"]})
+        return out
+
+    if gr_state is GuardrailState.SMALL_TALK:
+        out["answer"] = "¡Hola!" if "hola" in question.lower() else redirect_response()
+        # Si hay propuesta de memoria pendiente, la respuesta final la genera
+        # remember_node al procesar la propuesta (no esta redirección suave).
+        tracing.add_step("guardrail", {"state": gr_state.value, "answer": out["answer"]})
+        return out
+
+    if gr_state is GuardrailState.CASUAL:
+        # Pregunta general permitida: NUNCA bloquea (el LLM responde). La
+        # redirección al cierre la añade generate_node (validate_output).
+        out["answer"] = ""  # limpiar cualquier respuesta obsoleta del estado.
+        tracing.add_step("guardrail", {"state": gr_state.value, "answer": "casual_allowed"})
+        return out
+
+    # DOMAIN (y cualquier otro estado no bloqueante): limpiar respuestas
+    # obsoletas del checkpoint y continuar el flujo normal.
+    out["answer"] = ""
+    tracing.add_step("guardrail", {"state": gr_state.value, "answer": "continue"})
+    return out
+
+
+def route_after_guardrail(state: AgentState) -> str:
+    """Tras el guardarraíl decide: continuar (remember) o finalizar.
+
+    - jailbreak / personal_task / off_domain: respuesta ya generada -> finalize
+      (pero si hay propuesta de memoria pendiente y es small_talk/off_domain,
+      primero se procesa en remember; el jailbreak y personal_task siempre
+      rechazan y cortan).
+    - small_talk con propuesta pendiente -> remember (procesa la propuesta).
+    - small_talk sin propuesta -> finalize.
+    - casual -> remember (continúa; el LLM responderá y redirigirá al cierre).
+    - domain -> remember (flujo normal).
+    """
+    gr_state = state.get("guardrail_state")
+
+    if gr_state == GuardrailState.JAILBREAK.value:
+        return "finalize"
+    if gr_state in (GuardrailState.PERSONAL_TASK.value, GuardrailState.OFF_DOMAIN.value):
+        # Si hay propuesta de memoria pendiente, se procesa primero (remember)
+        # y la nueva respuesta bloqueada será la de la propuesta resuelta.
+        pending = state.get("_memory_proposal") or {}
+        proposal_type = pending.get("type")
+        if proposal_type not in (None, "none", ""):
+            return "remember"
+        return "finalize"
+    if gr_state == GuardrailState.SMALL_TALK.value:
+        pending = state.get("_memory_proposal") or {}
+        proposal_type = pending.get("type")
+        if proposal_type not in (None, "none", ""):
+            return "remember"
+        return "finalize"
+    # domain, casual y resto -> flujo normal.
+    return "remember"
 
 
 def route_after_validate(state: AgentState) -> str:
     if state.get("error"):
         return "error"
-    return "remember"
+    return "guardrail"
 
 
 def route_after_remember(state: AgentState) -> str:
@@ -601,6 +764,7 @@ def route_after_consolidate(state: AgentState) -> str:
 
 _builder = StateGraph(AgentState)
 _builder.add_node("validate", validate)
+_builder.add_node("guardrail", guardrail_node)
 _builder.add_node("remember", remember_node)
 _builder.add_node("intent", intent_node)
 _builder.add_node("incident_lookup", incident_lookup_node)
@@ -615,7 +779,10 @@ _builder.add_node("finalize", finalize)
 
 _builder.add_edge(START, "validate")
 _builder.add_conditional_edges(
-    "validate", route_after_validate, ["error", "remember"]
+    "validate", route_after_validate, ["error", "guardrail"]
+)
+_builder.add_conditional_edges(
+    "guardrail", route_after_guardrail, ["remember", "finalize"]
 )
 _builder.add_conditional_edges(
     "remember", route_after_remember, ["intent", "finalize"]
