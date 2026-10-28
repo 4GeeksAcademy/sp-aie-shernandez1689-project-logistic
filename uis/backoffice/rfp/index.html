@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4efe7" />
+    <title>TrackFlow | Intake de RFPs</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../../application/app/suppliers/styles.css" />
+    <link rel="stylesheet" href="./rfp.css" />
+  </head>
+  <body>
+    <div class="backdrop" aria-hidden="true"></div>
+    <main class="page">
+      <header class="topbar" role="banner">
+        <div>
+          <p class="eyebrow">TrackFlow Backoffice · Intake</p>
+          <h1>Recepción de RFP (Hito 9, Parte 1)</h1>
+        </div>
+        <nav class="menu-links" aria-label="Navegación principal">
+          <a href="../application/app/incidents/panel.html">Panel incidencias</a>
+          <a href="../application/app/suppliers/index.html">Proveedores</a>
+          <a href="../../index.html">Inicio</a>
+        </nav>
+      </header>
+
+      <section class="panel" aria-labelledby="upload-title">
+        <div class="panel-head">
+          <h2 id="upload-title">Subir RFP (PDF)</h2>
+          <p>
+            Ejecuta el pipeline de intake: clasificación, metadatos y secciones
+            por departamento vía <code>POST /rfp/upload</code>.
+          </p>
+        </div>
+        <form id="uploadForm" class="rfp-upload-form">
+          <label>
+            Archivo PDF de la RFP
+            <input id="fileInput" name="file" type="file" accept="application/pdf,.pdf" required />
+          </label>
+          <label>
+            API base
+            <input id="apiBase" type="text" placeholder="http://127.0.0.1:8000" />
+          </label>
+          <button id="uploadBtn" class="primary" type="submit">Procesar RFP</button>
+        </form>
+        <p class="feedback" id="uploadFeedback" role="status"></p>
+      </section>
+
+      <section class="panel" aria-labelledby="result-title">
+        <div class="panel-head">
+          <h2 id="result-title">Resultado del último análisis</h2>
+          <p id="resultSummary">Sin análisis todavía.</p>
+        </div>
+        <div id="resultDetail" hidden>
+          <div id="uploadLoading" class="summary-state" role="status" aria-live="polite" hidden>
+            <span class="loading-spinner" aria-hidden="true"></span>
+            <p>Procesando la RFP…</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="tickets-title">
+        <div class="panel-head">
+          <h2 id="tickets-title">Tickets de intake</h2>
+          <p>
+            Consume <code>GET /rfp/tickets</code> (más recientes primero).
+          </p>
+        </div>
+        <div id="ticketsLoading" class="summary-state" role="status" aria-live="polite">
+          <span class="loading-spinner" aria-hidden="true"></span>
+          <p>Cargando tickets…</p>
+        </div>
+        <div id="ticketsError" class="summary-state summary-error" role="alert" hidden>
+          <p id="ticketsErrorMessage">No se pudieron cargar los tickets.</p>
+          <button id="ticketsRetryButton" type="button">Reintentar</button>
+        </div>
+        <div class="table-wrap" role="region" aria-live="polite">
+          <table>
+            <thead>
+              <tr>
+                <th>Ticket</th>
+                <th>Estado</th>
+                <th>Cliente</th>
+                <th>País</th>
+                <th>Moneda</th>
+                <th>Volumen</th>
+                <th>Departamentos</th>
+              </tr>
+            </thead>
+            <tbody id="ticketsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="detail-title">
+        <div class="panel-head">
+          <h2 id="detail-title">Detalle del ticket</h2>
+          <p>
+            Consume <code>GET /rfp/tickets/{ticket_id}</code>.
+          </p>
+        </div>
+        <div id="detailLoading" class="summary-state" role="status" aria-live="polite" hidden>
+          <span class="loading-spinner" aria-hidden="true"></span>
+          <p>Cargando detalle…</p>
+        </div>
+        <div id="detailError" class="summary-state summary-error" role="alert" hidden>
+          <p id="detailErrorMessage">No se pudo cargar el detalle.</p>
+          <button id="detailRetryButton" type="button">Cerrar</button>
+        </div>
+        <div id="detailContent" aria-live="polite"></div>
+      </section>
+    </main>
+    <script src="./rfp.js"></script>
+  </body>
+</html>

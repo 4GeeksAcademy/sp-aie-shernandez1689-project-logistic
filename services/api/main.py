@@ -16,6 +16,12 @@ from routes.telemetry import router as telemetry_router
 # Router de reporting — separado de telemetry (Brifing-pipeline.md §6-§7).
 from services.reporting import router as reporting_router  # noqa: E402
 
+# RFP Intake router — tramo de recepción de RFPs (Hito 9, Parte 1).
+#  POST /rfp/upload              — sube PDF y procesa: ticket analizado/descartado
+#  GET  /rfp/tickets             — lista tickets de intake
+#  GET  /rfp/tickets/{ticket_id} — detalle con metadatos + departamentos
+from routes.rfp import router as rfp_router  # noqa: E402
+
 # RAG router — base de conocimiento de TrackFlow.
 from routes.rag import router as rag_router  # noqa: E402
 
@@ -47,6 +53,7 @@ app.include_router(incidents_router)
 app.include_router(suppliers_router)
 app.include_router(telemetry_router)
 app.include_router(tasks_router)
+app.include_router(rfp_router)
 
 # Endpoints de reporting del pipeline (weekly warehouse client performance).
 # Contrato exacto definido en data/pipelines/PIPELINE_DESIGN.md §5.2.

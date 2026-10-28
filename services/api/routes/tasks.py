@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from celery import AsyncResult
+from celery.result import AsyncResult
 from fastapi import APIRouter, Depends
 
 # ── Asegurar que raíz del monorepo y services/api están en sys.path ──
