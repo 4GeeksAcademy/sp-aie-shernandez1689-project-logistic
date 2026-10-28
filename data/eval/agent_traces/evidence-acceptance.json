@@ -1,14 +1,14 @@
 {
   "schema_version": 2,
   "thread_id": "evidence-acceptance",
-  "started_at": "2026-10-28T14:29:28+00:00",
-  "completed_at": "2026-10-28T14:29:28+00:00",
+  "started_at": "2026-10-28T14:58:27+00:00",
+  "completed_at": "2026-10-28T14:58:27+00:00",
   "question": "¿Cuál es el límite de stock?",
   "steps": [
     {
       "seq": 1,
       "node": "validate",
-      "started_at": "2026-10-28T14:29:28+00:00",
+      "started_at": "2026-10-28T14:58:27+00:00",
       "output": {
         "question": "¿Cuál es el límite de stock?"
       }
@@ -16,7 +16,7 @@
     {
       "seq": 2,
       "node": "guardrail",
-      "started_at": "2026-10-28T14:29:28+00:00",
+      "started_at": "2026-10-28T14:58:27+00:00",
       "output": {
         "state": "domain",
         "answer": "continue"
@@ -25,7 +25,7 @@
     {
       "seq": 3,
       "node": "remember",
-      "started_at": "2026-10-28T14:29:28+00:00",
+      "started_at": "2026-10-28T14:58:27+00:00",
       "output": {
         "n_prefs": 0,
         "n_semantic_hits": 1,
@@ -37,7 +37,7 @@
     {
       "seq": 4,
       "node": "intent",
-      "started_at": "2026-10-28T14:29:28+00:00",
+      "started_at": "2026-10-28T14:58:27+00:00",
       "output": {
         "incident_query": null,
         "inventory_query": {
@@ -49,7 +49,7 @@
     {
       "seq": 5,
       "node": "inventory_lookup",
-      "started_at": "2026-10-28T14:29:28+00:00",
+      "started_at": "2026-10-28T14:58:27+00:00",
       "output": {
         "inventory_result": {
           "product": null,
@@ -72,7 +72,7 @@
     {
       "seq": 6,
       "node": "generate",
-      "started_at": "2026-10-28T14:29:28+00:00",
+      "started_at": "2026-10-28T14:58:27+00:00",
       "output": {
         "answer": "Hechos recordados relevantes:\n  - {'id': 'fact-001', 'text': 'límite de stock es 100 unidades', 'memory_type': 'fact', 'metadata': {'key': 'fact:limite_de_stock'}, 'score': 0.92, 'created_at': '2026-10-27T10:00:00'}\n\nNo pude consultar el stock de ese producto ahora mismo. Inténtalo de nuevo más tarde.\nNo pude consultar el stock de ese producto ahora mismo. Inténtalo de nuevo más tarde."
       }
@@ -80,7 +80,7 @@
     {
       "seq": 7,
       "node": "memorize",
-      "started_at": "2026-10-28T14:29:28+00:00",
+      "started_at": "2026-10-28T14:58:27+00:00",
       "output": {
         "proposal_type": "none",
         "proposal_text": null

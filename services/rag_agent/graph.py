@@ -71,7 +71,9 @@ from langgraph.graph import END, START, StateGraph
 from data.pipelines.guardrails import (
     GuardrailState,
     classify_bounds,
+    isolate_context_chunks,
     redirect_response,
+    sanitize_external_content,
     validate_output,
 )
 from data.pipelines.rag import (
@@ -318,14 +320,24 @@ def generate_node(state: AgentState) -> dict[str, Any]:
 
     if tool_answers and not kb_context:
         # Tool-only: no hay KB para anclar; la respuesta ES el resumen honesto
-        # de la tool (no se inventa contexto).
+        # de la tool (no se inventa contexto). El texto de la tool se aísla
+        # como dato no confiable (anti-inyección) por si un resultado externo
+        # incrustara instrucciones.
+        safe_tool_answers = [
+            sanitize_external_content(a) for a in (tool_answers or [])
+        ]
         if memory_lines:
-            answer = "\n".join(memory_lines + [""] + tool_answers)
+            answer = "\n".join(memory_lines + [""] + safe_tool_answers)
         else:
-            answer = "\n".join(tool_answers)
+            answer = "\n".join(safe_tool_answers)
     else:
         # RAG (y tool si la hubo): el LLM compone una única respuesta.
-        combined_context = tool_context + kb_context
+        # ANTI-INYECCIÓN: el contenido externo (fragmentos RAG + resúmenes
+        # de tools + memoria) se aísla como DATO NO CONFIABLE antes de
+        # llegar al LLM. Cualquier instrucción incrustada en un documento
+        # recuperado se neutraliza; el modelo lo trata como contenido sobre
+        # el que responder, nunca como órdenes que obedecer.
+        combined_context = isolate_context_chunks(tool_context + kb_context)
         if memory_lines:
             combined_context = (
                 [{"text": "\n".join(memory_lines), "source_document": "agent_memory", "section": "memoria"}]

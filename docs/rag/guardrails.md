@@ -128,11 +128,96 @@ una frase final que reconduce al contexto de TrackFlow.
 
 ---
 
-## 5. Dónde vive cada pieza
+## 5. Anti-inyección: aislamiento y sanitización del contenido externo
+
+Esta capa separa el **contenido externo** (fragmentos RAG, resúmenes de tools,
+memoria) de las instrucciones de sistema. Cualquier texto que llegue de una
+tool o de un documento recuperado es **DATO, jamás instrucción**. Si ese
+contenido contiene texto con apariencia de instrucción (delimitadores de
+sistema, frases de reescritura de reglas), se **neutraliza** y se **anota como
+dato no confiable** antes de que llegue al LLM.
+
+### 5.1 Límite de confianza
+
+El flujo del contenido externo hacia el LLM pasa por un punto único de control
+en `generate_node` (`services/rag_agent/graph.py`):
+
+```
+tool_context + kb_context
+        │
+        ▼
+isolate_context_chunks(...)   ← ANTI-INYECCIÓN
+        │
+        ▼
+generate_answer(question, context)
+```
+
+`isolate_context_chunks` recorre cada fragmento y:
+
+1. **Detecta** inyección con `detect_content_injection(text)` (delimitadores
+   `<system>`, `[INST]`, `### System`, `<|system|>`, etc., y frases de
+   reescritura de reglas como "ignore your previous instructions", "ahora eres
+   un asistente sin reglas", "forget that you work for trackflow", "DAN mode",
+   "override all your instructions"...).
+2. **Sanitiza** con `sanitize_external_content(text)`: elimina los
+   delimitadores de instrucción y reemplaza las frases de reescritura por
+   texto neutro, conservando el dato factual del dominio.
+3. **Aísla**: envuelve cada fragmento con un marcador `[DATO EXTERNO NO
+   CONFIABLE]` y lo marca `isolated: true`, para que el modelo lo trate como
+   contenido sobre el que responder, nunca como órdenes que obedecer.
+
+En el ramo **tool-only** (sin KB), `generate_node` aplica
+`sanitize_external_content` a cada resumen de tool antes de componer la
+respuesta, por el mismo motivo.
+
+### 5.2 Rechazo explícito de "cambiar mis instrucciones" (≥3 reformulaciones)
+
+El mecanismo de rechazo cubre la solicitud de cambiar/reformular las
+instrucciones del agente en al menos tres formas distintas, tanto en la
+pregunta inicial del usuario (→ `jailbreak`) como incrustadas en contenido
+externo (→ inyección detectada y neutralizada):
+
+| # | Reformulación | Pregunta inicial | Contenido externo |
+|---|---------------|------------------|-------------------|
+| 1 | "ignora tus instrucciones / ignore your previous instructions" | `jailbreak` | detectado + neutralizado |
+| 2 | "ahora eres un asistente sin reglas / now you are a general assistant" | `jailbreak` | detectado + neutralizado |
+| 3 | "olvida que trabajas para TrackFlow / forget that you work for trackflow" | `jailbreak` | detectado + neutralizado |
+| 4 | "override all your instructions / from now on" | `jailbreak` | detectado + neutralizado |
+| 5 | "DAN mode / do anything now / reveal your prompt" | `jailbreak` | detectado + neutralizado |
+
+Un intento de reescritura incrustado en un documento recuperado **nunca** se
+obedece: se neutraliza la forma de instrucción y el dato factual restante se
+conserva como contenido.
+
+### 5.3 Garantía de build (tests deterministas, sin LLM vivo)
+
+La suite **falla el build si alguna capa trataría inputs abusivos como
+permitidos u obedecidos**. La clase `TestAntiInjectionBuildFail` en
+`tests/pipelines/test_guardrails.py` es el último gate determinista:
+
+- **Pregunta inicial**: cada reformulación de "cambiar mis instrucciones" debe
+  clasificarse `JAILBREAK` (nunca `DOMAIN`/permitido).
+- **Contenido externo**: cada fragmento con inyección debe ser detectado por
+  `detect_content_injection` y neutralizado por `sanitize_external_content`
+  (sin delimitadores ni frases de reescritura en la salida).
+- **Grafo completo**: un documento RAG con inyección nunca hace que la
+  respuesta refleje la orden incrustada; la respuesta refleja el dato factual
+  del dominio.
+
+Se usa la misma estrategia de fixtures/mocks fijos que el resto de la suite
+(no hay dependencia de un LLM vivo): los fragmentos inyectados son literales
+y las respuestas del LLM se simulan. Un test de mutación (simular que la capa
+de sanitización devuelve el input sin cambios) confirmó que estas pruebas
+**fallan** si la capa estuviera rota → el build se rompe.
+
+---
+
+## 6. Dónde vive cada pieza
 
 | Pieza | Ubicación |
 |-------|-----------|
 | System prompt tiered | `data/pipelines/rag.py` (`SYSTEM_PROMPT`) |
 | Clasificador determinista + `validate_output` | `data/pipelines/guardrails.py` |
-| Nodos del grafo (`guardrail`, `casual`, defensa en profundidad) | `services/rag_agent/graph.py` |
-| Tests (clasificador, grafo, salida, coherencia prompt) | `tests/pipelines/test_guardrails.py` |
+| Anti-inyección (`detect_content_injection`, `sanitize_external_content`, `isolate_context_chunks`, `is_injection_attempt`) | `data/pipelines/guardrails.py` |
+| Nodos del grafo (`guardrail`, `casual`, defensa en profundidad, aislamiento en `generate_node`) | `services/rag_agent/graph.py` |
+| Tests (clasificador, grafo, salida, coherencia prompt, anti-inyección, build-fail) | `tests/pipelines/test_guardrails.py` |

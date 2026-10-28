@@ -1,14 +1,14 @@
 {
   "schema_version": 2,
   "thread_id": "audit-rejection",
-  "started_at": "2026-10-28T14:29:28+00:00",
-  "completed_at": "2026-10-28T14:29:28+00:00",
+  "started_at": "2026-10-28T14:58:27+00:00",
+  "completed_at": "2026-10-28T14:58:27+00:00",
   "question": "no",
   "steps": [
     {
       "seq": 1,
       "node": "validate",
-      "started_at": "2026-10-28T14:29:28+00:00",
+      "started_at": "2026-10-28T14:58:27+00:00",
       "output": {
         "question": "no"
       }
@@ -16,7 +16,7 @@
     {
       "seq": 2,
       "node": "guardrail",
-      "started_at": "2026-10-28T14:29:28+00:00",
+      "started_at": "2026-10-28T14:58:27+00:00",
       "output": {
         "state": "off_domain",
         "answer": "Solo puedo ayudarte con asuntos de TrackFlow — SLAs, devoluciones, transportistas, tarifas, tickets e inventario. ¿En qué puedo ayudarte con tus operaciones hoy?"
@@ -25,7 +25,7 @@
     {
       "seq": 3,
       "node": "remember",
-      "started_at": "2026-10-28T14:29:28+00:00",
+      "started_at": "2026-10-28T14:58:27+00:00",
       "output": {
         "n_prefs": 0,
         "n_semantic_hits": 0,
