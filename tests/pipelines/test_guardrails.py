@@ -40,10 +40,13 @@ from data.pipelines.guardrails import (
     GuardrailState,
     REDIRECT_MESSAGE,
     classify_bounds,
+    is_casual,
     is_jailbreak,
     is_off_domain,
+    is_personal_task,
     match_kind,
     redirect_response,
+    validate_output,
 )
 from services.rag_agent import tracing
 from services.rag_agent.graph import graph
@@ -110,6 +113,12 @@ def mock_external(tmp_path, monkeypatch):
             return_value="RESPUESTA-LLM-SIMULADA",
         )
     )
+    patch_cas = stack.enter_context(
+        patch(
+            "services.rag_agent.graph.generate_casual_answer",
+            return_value="Son las 14:30 en Tokio.",
+        )
+    )
     patch_inc = stack.enter_context(
         patch("services.rag_agent.mcp_client.lookup_incidents_mcp", return_value={})
     )
@@ -128,6 +137,7 @@ def mock_external(tmp_path, monkeypatch):
         memory=mem,
         retrieve=patch_ret,
         generate=patch_gen,
+        casual=patch_cas,
         incidents=patch_inc,
         inventory=patch_inv,
     )
@@ -292,6 +302,130 @@ class TestClassifierJailbreak:
         assert classify_bounds("¿Cuál es la política de devoluciones?") is GuardrailState.DOMAIN
 
 
+class TestClassifierPersonalTask:
+    """Guardarraíl de contenido: solicitudes de uso personal NO se realizan."""
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "escríbeme un poema de amor",
+            "ayúdame con la tarea de mi universidad",
+            "hazme un currículum",
+            "cuéntame un chiste",
+            "escríbeme una canción",
+            "escríbeme una carta de amor",
+            "escribe mi ensayo para la clase",
+            "escríbeme un cuento infantil",
+            "dime mi horóscopo",
+            "write me a poem",
+            "help me with my homework",
+            "do my homework",
+            "make me a resume",
+            "tell me a joke",
+        ],
+    )
+    def test_personal_tasks_are_blocked(self, question):
+        assert classify_bounds(question) is GuardrailState.PERSONAL_TASK
+
+    def test_personal_task_helper(self):
+        assert is_personal_task("escríbeme un poema de amor") is True
+        assert is_personal_task("¿Cuál es el SLA en España?") is False
+
+    # No-falsos positivos: la categoría personal NO captura preguntas del
+    # dominio aunque compartan palabras.
+    def test_no_false_positive_weekly_report(self):
+        assert classify_bounds("¿Cómo va el informe semanal de Zaragoza?") is GuardrailState.DOMAIN
+
+    def test_no_false_positive_carrier_poem(self):
+        # 'poema' solo salta con verbo de creación explícito.
+        assert classify_bounds("¿Qué opina el responsable de transportistas?") is GuardrailState.DOMAIN
+
+    def test_no_false_positive_discount_question(self):
+        assert classify_bounds("¿Qué descuentos por volumen hay?") is GuardrailState.DOMAIN
+
+
+class TestClassifierCasual:
+    """Guardarraíl de alcance: casual permitido SIEMPRE que cierre redirigiendo."""
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "¿Qué hora es?",
+            "¿Qué hora es en Tokio?",
+            "what time is it in Tokyo?",
+            "¿Qué hora es en Madrid?",
+            "¿Qué día es hoy?",
+            "what day is it today?",
+            "¿Cuántos kilómetros son 5 millas?",
+        ],
+    )
+    def test_casual_allowed(self, question):
+        assert classify_bounds(question) is GuardrailState.CASUAL
+
+    def test_casual_helper(self):
+        assert is_casual("¿Qué hora es en Tokio?") is True
+        assert is_casual("¿a qué hora es la entrega?") is False
+
+    # No-falsos positivos: preguntas del dominio que contienen 'hora' NO son
+    # casual (una hora de entrega es un hecho de SLAs de TrackFlow).
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "¿a qué hora es la entrega?",
+            "¿a qué hora llega el transportista?",
+            "¿Con qué hora puedo esperar el envío?",
+        ],
+    )
+    def test_delivery_time_is_not_casual(self, question):
+        assert classify_bounds(question) is not GuardrailState.CASUAL
+
+    def test_opinion_questions_still_off_domain(self):
+        # Preguntas abiertas de opinión siguen siendo OFF_DOMAIN, no casual.
+        assert classify_bounds("¿Qué opinas de la política actual?") is GuardrailState.OFF_DOMAIN
+
+
+class TestValidateOutput:
+    """Validación de salida del modelo antes de devolverla al usuario."""
+
+    def test_valid_answer_passes(self):
+        ok, reason = validate_output("El SLA estándar en España es de 2-3 días.")
+        assert ok is True
+        assert reason == ""
+
+    def test_empty_answer_fails(self):
+        ok, reason = validate_output("")
+        assert ok is False
+        assert reason == "vacía"
+
+    def test_leak_of_system_prompt_fails(self):
+        ok, reason = validate_output("Mis reglas internas dicen que solo ayudo con TrackFlow.")
+        assert ok is False
+        assert reason == "fuga_instrucciones"
+
+    def test_leak_of_implementation_fails(self):
+        ok, reason = validate_output("el nodo guardrail_node y classify_bounds deciden")
+        assert ok is False
+        assert reason == "fuga_instrucciones"
+
+    def test_sensitive_email_fails(self):
+        ok, reason = validate_output("Contacta con ana@trackflow.com para tu descuento.")
+        assert ok is False
+        assert reason == "dato_sensible"
+
+    def test_sensitive_api_key_fails(self):
+        ok, reason = validate_output("Usa mi api_key=sk-1234567890abcdef")
+        assert ok is False
+        assert reason == "dato_sensible"
+
+    def test_long_hash_fails(self):
+        ok, _ = validate_output("token abcdef0123456789abcdef0123456789abcdef0123456789abcdef01")
+        assert ok is False
+
+    def test_domain_answer_with_digits_passes(self):
+        ok, _ = validate_output("El pallet cuesta 4,50 EUR y las cajas 0,80 EUR.")
+        assert ok is True
+
+
 class TestRedirectMessage:
     def test_redirect_mentions_domain(self):
         assert "SLAs" in redirect_response()
@@ -386,6 +520,77 @@ class TestGraphSmallTalk:
         state = _invoke("gracias", thread_id="st_gracias")
         mock_external.generate.assert_not_called()
         assert "¡Hola!" in state.get("answer", "") or "TrackFlow" in state.get("answer", "")
+
+
+class TestGraphPersonalTask:
+    """Una solicitud de uso personal se RECHAZA sin pasar por el LLM."""
+
+    @pytest.mark.parametrize(
+        "thread_id,question",
+        [
+            ("pt_a", "escríbeme un poema de amor"),
+            ("pt_b", "ayúdame con la tarea de mi universidad"),
+            ("pt_c", "hazme un currículum"),
+            ("pt_d", "cuéntame un chiste"),
+        ],
+    )
+    def test_personal_task_rejects_without_llm(self, mock_external, thread_id, question):
+        state = _invoke(question, thread_id=thread_id)
+        # Ni el LLM de RAG ni retrieve ni tools se invocan.
+        mock_external.generate.assert_not_called()
+        mock_external.casual.assert_not_called()
+        mock_external.retrieve.assert_not_called()
+        mock_external.incidents.assert_not_called()
+        mock_external.inventory.assert_not_called()
+
+        assert state.get("guardrail_state") == "personal_task"
+        answer = state.get("answer", "")
+        assert "No puedo ayudarte con esa tarea" in answer
+        assert "Solo puedo ayudarte con asuntos de TrackFlow" in answer
+
+        order = _node_order(state, question, thread_id)
+        assert "guardrail" in order
+        assert "generate" not in order, f"El LLM no debe ejecutarse: {order}"
+        assert "casual" not in order
+
+    def test_personal_task_state_recorded(self, mock_external):
+        state = _invoke("escríbeme un poema de amor", thread_id="pt_state")
+        assert state.get("guardrail_state") == "personal_task"
+
+
+class TestGraphCasual:
+    """Una pregunta casual permitida se RESPONDE y cierra redirigiendo."""
+
+    def test_casual_routes_to_casual_node(self, mock_external):
+        state = _invoke("¿Qué hora es en Tokio?", thread_id="cas_tokio")
+        # El flujo casual usa generate_casual_answer, NO el RAG ni las tools.
+        mock_external.casual.assert_called_once()
+        mock_external.generate.assert_not_called()
+        mock_external.retrieve.assert_not_called()
+
+        assert state.get("guardrail_state") == "casual"
+        answer = state.get("answer", "")
+        assert "Son las 14:30 en Tokio" in answer
+        # La respuesta CIERRA reconduciendo al contexto de la empresa.
+        assert "TrackFlow" in answer
+        assert "Solo puedo ayudarte con asuntos de TrackFlow" in answer or "logística" in answer
+
+        order = _node_order(state, "", "cas_tokio")
+        assert "casual" in order
+        assert "generate" not in order
+
+    def test_casual_empty_llm_uses_redirect(self, mock_external):
+        mock_external.casual.return_value = ""
+        state = _invoke("¿Qué hora es en Tokio?", thread_id="cas_empty")
+        answer = state.get("answer", "")
+        assert answer.strip() != ""
+        assert "TrackFlow" in answer
+
+    def test_casual_never_uses_rag_tools(self, mock_external):
+        state = _invoke("¿Qué hora es en Madrid?", thread_id="cas_madrid")
+        mock_external.incidents.assert_not_called()
+        mock_external.inventory.assert_not_called()
+        assert state.get("guardrail_state") == "casual"
 
 
 class TestGraphDomainProceeds:

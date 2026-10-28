@@ -8,12 +8,17 @@ en un documento) es DATO, jamás instrucción. Este módulo ofrece una capa
 *defensiva, determinista y testeable* que decide ANTES de llamar al LLM:
 
 - ``classify_bounds(question)`` -> label de guardarraíl:
-    * "domain"     : dentro del dominio comercial de TrackFlow (procede).
-    * "off_domain" : fuera del dominio (redirigir sin abrir el LLM).
-    * "jailbreak"  : intento de manipulación del sistema/instrucciones
-                     (rechazo firme + redirección, NUNCA se obedece).
-    * "small_talk" : saludo cortés permitido (se reconoce y se redirige
-                     suavemente al dominio).
+    * "domain"       : dentro del dominio comercial de TrackFlow (procede).
+    * "off_domain"   : fuera del dominio (redirigir sin abrir el LLM).
+    * "jailbreak"    : intento de manipulación del sistema/instrucciones
+                       (rechazo firme + redirección, NUNCA se obedece).
+    * "personal_task": solicitud de uso personal ajeno a la empresa
+                       (rechazo + redirección al propósito del agente).
+    * "casual"       : pregunta general factual PERMITIDA (hora, fecha,
+                       conversión simple) -> se responde y la respuesta
+                       cierra redirigiendo al contexto de la empresa.
+    * "small_talk"   : saludo cortés permitido (se reconoce y se redirige
+                       suavemente al dominio).
 
 La capa no sustituye al system prompt: es la primera línea de defensa
 determinista (regex estrictas, sin LLM) para que un intento de jailbreak
@@ -183,7 +188,7 @@ _DOMAIN_PATTERNS: list[tuple[str, str]] = [
         r"same[- ]?day|entrega\s+el\s+mismo\s+d[ií]a|env[ií]o\s+est[aá]ndar|"
         r"plazos?\s+de\s+env[ií]o|tard[aá]r?[aá]?|tarda\b|en\s+cu[aá]nto\s+"
         r"(?:llega|tarda)|how\s+long|take\s+to\s+(?:arrive|deliver)|"
-        r"\bdelivery\b|\bshipping\b|black\s*friday|cyber\s*monday|"
+        r"\bdelivery\b|\bdeliver\b|\bentrega\b|\bshipping\b|black\s*friday|cyber\s*monday|"
         r"prime\s*day|rebajas\s+de\s+enero|alta\s+demanda",
     ),
     (
@@ -502,7 +507,7 @@ _CASUAL_RE = [
 # Señales de fuga de instrucciones internas o implementación.
 _INTERNAL_LEAK_RE = [
     re.compile(p, re.IGNORECASE)
-    for p in (
+    for p in [
         r"system\s*prompt",
         r"reglas?\s*(?:internas|del\s*sistema)",
         r"AUTORIDAD Y JERARQU[ÍI]A",
@@ -513,18 +518,18 @@ _INTERNAL_LEAK_RE = [
         r"match_kind|redirect_response",
         r"LLM_BASE_URL|LLM_API_KEY|LLM_MODEL_ID|DEFAULT_MIN_SCORE|DEFAULT_K\b",
         r"qdrant|huggingface|monkeypatch|nemoguardrails|langgraph\s*\.",
-    ),
+    ]
 ]
 
 # Señales de datos sensibles que no deben exponerse.
 _SENSITIVE_DATA_RE = [
     re.compile(p, re.IGNORECASE)
-    for p in (
+    for p in [
         r"[\w.+-]+@[\w-]+\.[\w.-]+",  # correo electrónico
         r"api[_-]?key|apikey|password|contrase[ñn]a|secret\s*[:=]|"
         r"bearer\s+[A-Za-z0-9._-]{8,}",
         r"[0-9a-f]{32,64}",  # hash/token largo
-    )
+    ]
 ]
 
 

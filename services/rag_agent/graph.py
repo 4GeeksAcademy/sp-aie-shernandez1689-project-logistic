@@ -74,7 +74,12 @@ from data.pipelines.guardrails import (
     redirect_response,
     validate_output,
 )
-from data.pipelines.rag import DEFAULT_MIN_SCORE, generate_answer, retrieve
+from data.pipelines.rag import (
+    DEFAULT_MIN_SCORE,
+    generate_answer,
+    generate_casual_answer,
+    retrieve,
+)
 from services.rag_agent import tracing
 from services.rag_agent import mcp_client
 from services.rag_agent.memory_nodes import (
@@ -575,10 +580,6 @@ def guardrail_node(state: AgentState) -> dict[str, Any]:
     question = state.get("question") or ""
     gr_state = classify_bounds(question)
 
-    pending = state.get("_memory_proposal") or {}
-    proposal_type = pending.get("type")
-    has_pending_proposal = proposal_type not in (None, "none", "")
-
     out: dict[str, Any] = {"guardrail_state": gr_state.value}
 
     # Respuestas con redirección (cortan la corrida, salvo la propuesta de
@@ -634,7 +635,8 @@ def route_after_guardrail(state: AgentState) -> str:
       rechazan y cortan).
     - small_talk con propuesta pendiente -> remember (procesa la propuesta).
     - small_talk sin propuesta -> finalize.
-    - casual -> remember (continúa; el LLM responderá y redirigirá al cierre).
+    - casual -> casual (nodo dedicado: responde con LLM + redirección al
+      cierre; sin retrieve/tools porque la KB no contiene esos datos).
     - domain -> remember (flujo normal).
     """
     gr_state = state.get("guardrail_state")
@@ -655,8 +657,40 @@ def route_after_guardrail(state: AgentState) -> str:
         if proposal_type not in (None, "none", ""):
             return "remember"
         return "finalize"
-    # domain, casual y resto -> flujo normal.
+    if gr_state == GuardrailState.CASUAL.value:
+        return "casual"
+    # domain y resto -> flujo normal.
     return "remember"
+
+
+def casual_node(state: AgentState) -> dict[str, Any]:
+    """Responde una pregunta general/casual PERMITIDA y cierra redirigiendo.
+
+    Solo se alcanza cuando ``guardrail_node`` clasificó la pregunta como
+    ``GuardrailState.CASUAL`` (hora, fecha, conversión simple). La base de
+    conocimiento de TrackFlow NO contiene estos datos, por lo que se consulta
+    el LLM directamente (``generate_casual_answer``) sin retrieve() ni tools.
+
+    La respuesta es la del LLM + una frase final que redirige al contexto de
+    la empresa (requisito de la tarea: "permite preguntas casuales pero
+    cierra la respuesta reconduciendo hacia el contexto de la empresa").
+    """
+    question = state.get("question") or ""
+    answer = generate_casual_answer(question)
+    answer = (answer or "").strip()
+    if not answer:
+        answer = GUARDRAIL_DOMAIN_REDIRECT
+    else:
+        # Asegurar el cierre con redirección al dominio (si el LLM no lo hizo).
+        if "TrackFlow" not in answer:
+            answer = answer.rstrip() + (
+                "\n\nY hablando de logística: solo puedo ayudarte con asuntos "
+                "de TrackFlow — SLAs, devoluciones, transportistas, tarifas, "
+                "tickets e inventario. ¿En qué puedo ayudarte hoy?"
+            )
+    out = {"answer": answer}
+    tracing.add_step("casual", out)
+    return out
 
 
 def route_after_validate(state: AgentState) -> str:
@@ -765,6 +799,7 @@ def route_after_consolidate(state: AgentState) -> str:
 _builder = StateGraph(AgentState)
 _builder.add_node("validate", validate)
 _builder.add_node("guardrail", guardrail_node)
+_builder.add_node("casual", casual_node)
 _builder.add_node("remember", remember_node)
 _builder.add_node("intent", intent_node)
 _builder.add_node("incident_lookup", incident_lookup_node)
@@ -782,8 +817,9 @@ _builder.add_conditional_edges(
     "validate", route_after_validate, ["error", "guardrail"]
 )
 _builder.add_conditional_edges(
-    "guardrail", route_after_guardrail, ["remember", "finalize"]
+    "guardrail", route_after_guardrail, ["casual", "remember", "finalize"]
 )
+_builder.add_edge("casual", "finalize")
 _builder.add_conditional_edges(
     "remember", route_after_remember, ["intent", "finalize"]
 )
