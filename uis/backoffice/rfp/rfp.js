@@ -4,9 +4,15 @@
  * Vista de recepción de RFPs (Hito 9, Parte 1). Consume el router
  * ``/rfp/*`` del backend existente (services/api):
  *
- * - POST /rfp/upload          → procesa un PDF y devuelve estado del ticket.
+ * - POST /rfp/upload          → guarda el PDF y crea el ticket en ``analizando``
+ *                                (202); el pipeline corre en segundo plano.
  * - GET  /rfp/tickets         → lista tickets de intake (recientes primero).
  * - GET  /rfp/tickets/{id}    → detalle: metadatos + secciones por departamento.
+ *
+ * Modo ticket: cada PDF seleccionado se sube por separado (un ticket por
+ * archivo). La vista consulta ``GET /rfp/tickets/{id}`` cada pocos segundos
+ * hasta que el ticket sale de ``analizando`` y refresca la tabla mientras
+ * quede alguno en curso.
  *
  * Mismo convenio que telemetry/: API base y token desde localStorage sobre la
  * app de proveedores (sessionStorage compartida).
@@ -15,6 +21,12 @@
 const DEFAULT_API_BASE = "http://127.0.0.1:8000";
 const API_STORAGE_KEY = "trackflow_api_base";
 const TOKEN_STORAGE_KEY = "trackflow_access_token";
+const STATUS_ANALIZANDO = "analizando";
+const POLL_INTERVAL_MS = 2000;
+const POLL_TIMEOUT_MS = 120000;
+const TABLE_REFRESH_MS = 3000;
+
+let tableRefreshTimer = null;
 
 const dom = {
   uploadForm: document.getElementById("uploadForm"),
@@ -24,7 +36,7 @@ const dom = {
   uploadFeedback: document.getElementById("uploadFeedback"),
   resultSummary: document.getElementById("resultSummary"),
   resultDetail: document.getElementById("resultDetail"),
-  uploadLoading: document.getElementById("uploadLoading"),
+  uploadList: document.getElementById("uploadList"),
   ticketsBody: document.getElementById("ticketsBody"),
   ticketsLoading: document.getElementById("ticketsLoading"),
   ticketsError: document.getElementById("ticketsError"),
@@ -151,9 +163,9 @@ function renderTickets(records) {
   dom.ticketsBody.replaceChildren(fragment);
 }
 
-async function loadTickets() {
+async function loadTickets({ silent = false } = {}) {
   dom.ticketsError.hidden = true;
-  showLoading(dom.ticketsLoading);
+  if (!silent) showLoading(dom.ticketsLoading);
   try {
     const response = await fetch(`${getApiBase()}/rfp/tickets`, {
       headers: requestHeaders(),
@@ -162,8 +174,10 @@ async function loadTickets() {
     if (!response.ok || !result) {
       throw { status: response.status || 500 };
     }
-    renderTickets(result.tickets || []);
+    const tickets = result.tickets || [];
+    renderTickets(tickets);
     hideLoading(dom.ticketsLoading);
+    scheduleTableRefresh(tickets.some((t) => t.status === STATUS_ANALIZANDO));
   } catch (error) {
     hideLoading(dom.ticketsLoading);
     dom.ticketsError.hidden = false;
@@ -171,89 +185,162 @@ async function loadTickets() {
   }
 }
 
-function renderUploadResult(result) {
-  dom.resultDetail.hidden = false;
-  dom.resultSummary.textContent = "Último análisis: " + (result.ticket_id || "—");
+function scheduleTableRefresh(pending) {
+  clearTimeout(tableRefreshTimer);
+  tableRefreshTimer = pending
+    ? setTimeout(() => loadTickets({ silent: true }), TABLE_REFRESH_MS)
+    : null;
+}
 
-  const container = document.getElementById("resultDetail");
-  container.querySelectorAll(".rfp-result-grid").forEach((el) => el.remove());
-  container.querySelectorAll(".reason-block").forEach((el) => el.remove());
+async function fetchTicket(ticketId) {
+  const response = await fetch(`${getApiBase()}/rfp/tickets/${encodeURIComponent(ticketId)}`, {
+    headers: requestHeaders(),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result) {
+    throw { status: response.status || 500 };
+  }
+  return result;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Consulta el ticket hasta que sale de ``analizando`` (o vence el timeout). */
+async function pollTicket(ticketId, onUpdate) {
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const detail = await fetchTicket(ticketId);
+    onUpdate(detail);
+    if (detail.ticket?.status !== STATUS_ANALIZANDO) return detail;
+    await sleep(POLL_INTERVAL_MS);
+  }
+  throw { timeout: true };
+}
+
+function renderUploadRow(row, { filename, ticketId, status, note }) {
+  row.replaceChildren();
+  const name = document.createElement("strong");
+  name.textContent = filename;
+  const id = document.createElement("code");
+  id.textContent = ticketId || "—";
+  row.append(name, id);
+  if (status) {
+    const state = document.createElement("span");
+    state.innerHTML = pill(status);
+    row.append(state);
+  }
+  if (status === STATUS_ANALIZANDO) {
+    const spinner = document.createElement("span");
+    spinner.className = "loading-spinner";
+    spinner.setAttribute("aria-hidden", "true");
+    row.append(spinner);
+  }
+  if (note) {
+    const p = document.createElement("span");
+    p.className = "upload-note";
+    p.textContent = note;
+    row.append(p);
+  }
+}
+
+function renderUploadResult(detail) {
+  const ticket = detail.ticket || {};
+  const metadata = detail.metadata || {};
+  dom.resultSummary.textContent = "Último análisis: " + (ticket.ticket_id || "—");
+
+  const container = dom.resultDetail;
+  container.querySelectorAll(".rfp-result-grid, .reason-block").forEach((el) => el.remove());
 
   const grid = document.createElement("dl");
   grid.className = "rfp-result-grid";
-
-  const kv = (dt, dd) => {
-    const div = document.createElement("div");
-    div.className = "kv";
-    const dtEl = document.createElement("dt");
-    dtEl.textContent = dt;
-    const ddEl = document.createElement("dd");
-    ddEl.innerHTML = dd;
-    div.append(dtEl, ddEl);
-    return div;
-  };
-
-  const classification = result.classification || {};
-  const metadata = result.metadata || {};
-  const ticketId = (result.ticket_id || "").slice(0, 12) + "…";
+  const statusKv = createKv("Estado", "");
+  statusKv.querySelector("dd").innerHTML = pill(ticket.status);
   grid.append(
-    kv("Ticket", `<code>${ticketId}</code>`),
-    kv("Estado", pill(result.status)),
-    kv("Tipo", classification.doc_type || "—"),
-    kv("Cliente", classification.client_name || "—"),
-    kv("País", classification.client_country || "—"),
-    kv("Moneda", result.currency || "—"),
-    kv("Volumen", fmtNumber(metadata.monthly_volume)),
-    kv("Presupuesto", metadata.budget_range || "—"),
-    kv("Deadline", metadata.deadline || "—")
+    createKv("Ticket", ticket.ticket_id || "—"),
+    statusKv,
+    createKv("Tipo", metadata.doc_type || "—"),
+    createKv("Cliente", metadata.client_name || "—"),
+    createKv("País", metadata.client_country || "—"),
+    createKv("Moneda", metadata.currency || "—"),
+    createKv("Volumen", fmtNumber(metadata.monthly_volume)),
+    createKv("Presupuesto", metadata.budget_range || "—"),
+    createKv("Deadline", metadata.deadline || "—")
   );
   container.append(grid);
 
-  if (result.reason) {
+  if (ticket.reason) {
     const reason = document.createElement("p");
     reason.className = "reason-block";
-    reason.innerHTML = `<strong>Motivo:</strong> <code>${result.reason}</code>`;
+    const label = document.createElement("strong");
+    label.textContent = "Motivo: ";
+    const code = document.createElement("code");
+    code.textContent = ticket.reason;
+    reason.append(label, code);
     container.append(reason);
   }
 }
 
-async function submitUpload(event) {
-  event.preventDefault();
-  const file = dom.fileInput.files[0];
-  if (!file) {
-    setFeedback(dom.uploadFeedback, "Selecciona un archivo PDF primero.", "error");
-    return;
-  }
-  localStorage.setItem(API_STORAGE_KEY, dom.apiBase.value.trim());
+async function uploadOne(file) {
+  const row = document.createElement("li");
+  row.className = "upload-row";
+  dom.uploadList.append(row);
+  renderUploadRow(row, { filename: file.name, status: "", note: "Subiendo…" });
 
   const formData = new FormData();
   formData.append("file", file);
-  setFeedback(dom.uploadFeedback, "Subiendo y analizando…");
-  dom.uploadBtn.disabled = true;
-  hideLoading(dom.uploadLoading);
-  dom.uploadLoading.hidden = false;
-  dom.uploadLoading.querySelector("p").textContent = "Procesando la RFP…";
-  dom.resultDetail.hidden = true;
-  dom.uploadLoading.hidden = false;
-  showLoading(dom.uploadLoading);
-
+  let ticketId = null;
   try {
     const response = await fetch(`${getApiBase()}/rfp/upload`, {
       method: "POST",
       headers: requestHeaders(),
       body: formData,
     });
-    const result = await response.json().catch(() => null);
-    if (!response.ok || !result) {
+    const ticket = await response.json().catch(() => null);
+    if (!response.ok || !ticket) {
       throw { status: response.status || 500 };
     }
-    hideLoading(dom.uploadLoading);
-    setFeedback(dom.uploadFeedback, "RFP procesada correctamente.", "ok");
-    renderUploadResult(result);
-    await loadTickets();
+    ticketId = ticket.ticket_id;
+    renderUploadRow(row, { filename: file.name, ticketId, status: ticket.status });
+    loadTickets({ silent: true });
+
+    const detail = await pollTicket(ticketId, (d) =>
+      renderUploadRow(row, { filename: file.name, ticketId, status: d.ticket?.status })
+    );
+    renderUploadResult(detail);
+    return true;
   } catch (error) {
-    hideLoading(dom.uploadLoading);
-    setFeedback(dom.uploadFeedback, friendlyError(error.status || 0), "error");
+    const note = error.timeout
+      ? "Sigue en análisis; la tabla se actualizará sola."
+      : friendlyError(error.status || 0);
+    renderUploadRow(row, { filename: file.name, ticketId, status: ticketId ? STATUS_ANALIZANDO : "", note });
+    return false;
+  }
+}
+
+async function submitUpload(event) {
+  event.preventDefault();
+  const files = Array.from(dom.fileInput.files);
+  if (files.length === 0) {
+    setFeedback(dom.uploadFeedback, "Selecciona al menos un archivo PDF.", "error");
+    return;
+  }
+  localStorage.setItem(API_STORAGE_KEY, dom.apiBase.value.trim());
+
+  dom.uploadBtn.disabled = true;
+  dom.resultDetail.hidden = false;
+  setFeedback(dom.uploadFeedback, `Subiendo ${files.length} RFP… cada una crea su ticket.`);
+
+  try {
+    const results = await Promise.all(files.map(uploadOne));
+    const failed = results.filter((ok) => !ok).length;
+    if (failed) {
+      setFeedback(dom.uploadFeedback, `${failed} de ${files.length} subidas con incidencias.`, "error");
+    } else {
+      setFeedback(dom.uploadFeedback, "Análisis terminado.", "ok");
+    }
+    dom.uploadForm.reset();
+    dom.apiBase.value = getApiBase();
+    await loadTickets();
   } finally {
     dom.uploadBtn.disabled = false;
   }
@@ -273,9 +360,17 @@ function renderAspects(node, sections, title) {
     const ul = document.createElement("ul");
     for (const section of sections) {
       const li = document.createElement("li");
-      const label = section.key_aspects || JSON.stringify(section);
       li.className = "aspect";
-      li.textContent = label;
+      const head = document.createElement("strong");
+      const owner = section.department_owner ? ` · ${section.department_owner}` : "";
+      head.textContent = departmentLabel(section.department_id) + owner;
+      const aspects = document.createElement("ul");
+      for (const aspect of section.key_aspects || []) {
+        const item = document.createElement("li");
+        item.textContent = aspect;
+        aspects.append(item);
+      }
+      li.append(head, aspects);
       ul.append(li);
     }
     box.append(ul);
@@ -288,13 +383,7 @@ async function loadDetail(ticketId) {
   dom.detailContent.replaceChildren();
   showLoading(dom.detailLoading);
   try {
-    const response = await fetch(`${getApiBase()}/rfp/tickets/${encodeURIComponent(ticketId)}`, {
-      headers: requestHeaders(),
-    });
-    const result = await response.json().catch(() => null);
-    if (!response.ok || !result) {
-      throw { status: response.status || 500 };
-    }
+    const result = await fetchTicket(ticketId);
     hideLoading(dom.detailLoading);
 
     const container = dom.detailContent;
@@ -310,7 +399,8 @@ async function loadDetail(ticketId) {
     const metadata = result.metadata || {};
     meta.append(dl);
     dl.append(
-      createKv("Tipo", result.ticket?.doc_type || "—"),
+      createKv("Estado", result.ticket?.status || "—"),
+      createKv("Tipo", metadata.doc_type || "—"),
       createKv("Cliente", metadata.client_name || "—"),
       createKv("País", metadata.client_country || "—"),
       createKv("Moneda", metadata.currency || "—"),
@@ -361,7 +451,7 @@ function createTextSection(title, text) {
 function init() {
   dom.apiBase.value = localStorage.getItem(API_STORAGE_KEY) || DEFAULT_API_BASE;
   dom.uploadForm.addEventListener("submit", submitUpload);
-  dom.ticketsRetryButton.addEventListener("click", loadTickets);
+  dom.ticketsRetryButton.addEventListener("click", () => loadTickets());
   dom.detailRetryButton.addEventListener("click", () => {
     dom.detailError.hidden = true;
   });

@@ -7,8 +7,10 @@ Cubren, de abajo hacia arriba:
   "Servicios de Logística"), volumen ("3.000 pedidos al mes" → 3000).
 - **Orquestador** ``process_rfp_pdf``: flujo completo sobre los PDFs de
   muestra del BRIEFING §4 (sin persistir) usando ``persist=False``.
-- **Router HTTP** ``/rfp/*`` de ``services/api``: upload multipart,
-  listado y detalle con la dependencia de auth sobreescrita.
+- **Modo ticket**: ``register_upload`` deja el ticket ``analizando`` y el PDF
+  en ``data/raw/``; ``analyze_ticket`` (segundo plano) lo cierra.
+- **Router HTTP** ``/rfp/*`` de ``services/api``: upload multipart (202 +
+  análisis en ``BackgroundTasks``), listado y detalle.
 
 - **Persistencia** ``db.py``: roundtrip SQLModel de Ticket, metadatos y
   ``DepartmentSection.key_aspects`` contra SQLite en memoria (mismos modelos
@@ -36,7 +38,9 @@ if str(REPO_ROOT) not in sys.path:
 import data.pipelines.rfp_intake.classifier as classifier  # noqa: E402
 from data.pipelines.rfp_intake.classifier import classify  # noqa: E402
 from data.pipelines.rfp_intake.pipeline import (  # noqa: E402
+    analyze_ticket,
     process_rfp_pdf,
+    register_upload,
     resolve_currency,
 )
 
@@ -363,6 +367,107 @@ class TestPersistence:
             db_mod.list_tickets()
 
 
+class TestTicketMode:
+    """Recepción en modo ticket: ``register_upload`` + ``analyze_ticket``."""
+
+    def test_register_upload_creates_analizando(self, sqlite_db, tmp_path):
+        ticket = register_upload(b"%PDF-1.4 demo", raw_dir=tmp_path)
+        assert ticket["status"] == "analizando"
+        raw = Path(ticket["raw_pdf_path"])
+        assert raw.parent == tmp_path and raw.name == f"{ticket['ticket_id']}.pdf"
+        assert raw.read_bytes() == b"%PDF-1.4 demo"
+        assert sqlite_db.get_ticket(ticket["ticket_id"])["status"] == "analizando"
+
+    @needs_samples
+    def test_analyze_ticket_completes(self, sqlite_db, tmp_path):
+        ticket = register_upload(SAMPLE_PDFS[1].read_bytes(), raw_dir=tmp_path)
+        received_at = sqlite_db.get_ticket(ticket["ticket_id"])["created_at"]
+        result = analyze_ticket(ticket["ticket_id"])
+        assert result["status"] == "analisis_completo"
+        stored = sqlite_db.get_ticket(ticket["ticket_id"])
+        assert stored["status"] == "analisis_completo"
+        # created_at es el de la recepción; solo cambia updated_at.
+        assert stored["created_at"] == received_at
+        assert sqlite_db.get_rfp_metadata(ticket["ticket_id"])["currency"] == "EUR"
+
+    def test_analyze_ticket_error_never_stuck(self, sqlite_db, tmp_path, monkeypatch):
+        """Un fallo inesperado deja el ticket descartado, no en analizando."""
+        import data.pipelines.rfp_intake.pipeline as pipeline_mod
+
+        def _boom(_path):
+            raise ValueError("pdf corrupto")
+
+        monkeypatch.setattr(pipeline_mod, "extract_pdf_info", _boom)
+        ticket = register_upload(b"%PDF-1.4 roto", raw_dir=tmp_path)
+        result = analyze_ticket(ticket["ticket_id"])
+        assert result["status"] == "descartado"
+        stored = sqlite_db.get_ticket(ticket["ticket_id"])
+        assert stored["status"] == "descartado"
+        assert "ValueError" in stored["reason"]
+
+
+class TestAsyncUploadRoute:
+    """POST /rfp/upload responde 202 + analizando; el análisis corre en fondo."""
+
+    @pytest.fixture
+    def client(self, sqlite_db, tmp_path, monkeypatch):
+        API_DIR = REPO_ROOT / "services" / "api"
+        if str(API_DIR) not in sys.path:
+            sys.path.insert(0, str(API_DIR))
+        import data.pipelines.rfp_intake.pipeline as pipeline_mod
+        from auth import CurrentUser, get_current_user
+        from fastapi.testclient import TestClient
+        from main import app
+
+        monkeypatch.setattr(pipeline_mod, "raw_rfp_dir", lambda: tmp_path)
+        app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+            id="test-admin", email="admin@example.com", role="admin",
+        )
+        with TestClient(app) as test_client:
+            yield test_client
+        app.dependency_overrides.clear()
+
+    def _upload(self, client, pdf):
+        with pdf.open("rb") as handle:
+            return client.post(
+                "/rfp/upload", files={"file": (pdf.name, handle, "application/pdf")}
+            )
+
+    @needs_samples
+    @pytest.mark.parametrize("idx,final", [
+        (1, "analisis_completo"), (2, "analisis_completo"), (3, "descartado"),
+    ])
+    def test_upload_returns_analizando_then_final(self, client, tmp_path, idx, final):
+        resp = self._upload(client, SAMPLE_PDFS[idx])
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["status"] == "analizando"
+        assert body["filename"] == SAMPLE_PDFS[idx].name
+        assert (tmp_path / f"{body['ticket_id']}.pdf").exists()
+
+        # TestClient ejecuta las BackgroundTasks antes de devolver el control.
+        detail = client.get(f"/rfp/tickets/{body['ticket_id']}").json()
+        assert detail["ticket"]["status"] == final
+        if final == "analisis_completo":
+            assert detail["departments"]
+            assert all(d["key_aspects"] for d in detail["departments"])
+
+    def test_upload_one_ticket_per_pdf(self, client, tmp_path):
+        """Dos subidas → dos tickets distintos."""
+        pdf = tmp_path / "a.pdf"
+        pdf.write_bytes(b"%PDF-1.4 sin texto")
+        ids = {self._upload(client, pdf).json()["ticket_id"] for _ in range(2)}
+        assert len(ids) == 2
+        assert len(client.get("/rfp/tickets").json()["tickets"]) == 2
+
+    def test_upload_fake_pdf_rejected(self, client, tmp_path):
+        """Extensión .pdf sin cabecera %PDF- → 422 y sin ticket."""
+        fake = tmp_path / "fake.pdf"
+        fake.write_bytes(b"hola")
+        assert self._upload(client, fake).status_code == 422
+        assert client.get("/rfp/tickets").json()["count"] == 0
+
+
 # ===================================================================
 # Router HTTP — /rfp/upload, /rfp/tickets, /rfp/tickets/{id}
 # ===================================================================
@@ -379,16 +484,7 @@ class TestRfpRoutes:
         import data.pipelines.rfp_intake.db as db_mod
         from main import app
 
-        # No escribir en datos reales durante los tests de rutas.
-        monkeypatch.setattr(db_mod, "is_db_available", lambda: True)
-        monkeypatch.setattr(db_mod, "save_intake", lambda *a, **k: None)
-        monkeypatch.setattr(db_mod, "save_ticket", lambda *a, **k: None)
-        monkeypatch.setattr(
-            db_mod, "save_rfp_metadata", lambda *a, **k: None
-        )
-        monkeypatch.setattr(
-            db_mod, "save_department_section", lambda *a, **k: None
-        )
+        # Lecturas simuladas; la subida real se prueba en TestAsyncUploadRoute.
         # Simula almacenes separados: el ticket solo tiene id/status; los
         # campos de display viven en el registro de metadatos (es el contrato
         # real de db.py). El router las fusiona vía `_enrich_ticket`.
@@ -449,35 +545,6 @@ class TestRfpRoutes:
         with TestClient(app) as client:
             yield client
         app.dependency_overrides.clear()
-
-    @needs_samples
-    def test_upload_pdf_returns_ticket(self, api_env):
-        """POST /rfp/upload con la muestra 1 → analisis_completo + EUR."""
-        pdf = SAMPLE_PDFS[1]
-        with pdf.open("rb") as handle:
-            resp = api_env.post(
-                "/rfp/upload",
-                files={"file": (pdf.name, handle, "application/pdf")},
-            )
-        assert resp.status_code == 200, resp.text
-        body = resp.json()
-        assert body["status"] == "analisis_completo"
-        assert body["classification"]["client_name"] == "ModaViva Fashion S.L."
-        assert body["classification"]["client_country"] == "Spain"
-        assert body["currency"] == "EUR"
-        assert body["metadata"]["monthly_volume"] == 3000
-
-    @needs_samples
-    def test_upload_vendor_pitch_rejected(self, api_env):
-        """POST /rfp/upload con la muestra 3 → descartado."""
-        pdf = SAMPLE_PDFS[3]
-        with pdf.open("rb") as handle:
-            resp = api_env.post(
-                "/rfp/upload",
-                files={"file": (pdf.name, handle, "application/pdf")},
-            )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["status"] == "descartado"
 
     def test_upload_non_pdf_rejected(self, api_env, tmp_path):
         """POST /rfp/upload con .txt → 422."""

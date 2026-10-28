@@ -125,3 +125,38 @@
 .detail-section .aspect strong {
   color: var(--text, #2b241c);
 }
+.upload-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.upload-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 8px 12px;
+  border: 1px solid var(--border, #e6dfd3);
+  border-radius: 10px;
+  background: var(--surface, #fffdf8);
+}
+
+.upload-row code {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.upload-row .loading-spinner {
+  width: 14px;
+  height: 14px;
+}
+
+.upload-note {
+  flex-basis: 100%;
+  font-size: 0.85rem;
+  color: var(--text-muted, #6b6257);
+}

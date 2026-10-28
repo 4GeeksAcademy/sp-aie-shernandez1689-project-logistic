@@ -1,6 +1,13 @@
 # Progress
 
 ## Estado actual del desarrollo
+- RFP INTAKE — recepción en modo ticket (rama `feature/rfp-intake`, pendiente de commit):
+  - Decisión (aprobada por el desarrollador): async con FastAPI `BackgroundTasks` en el proceso del backend, no Celery (el worker de docker-compose no comparte `data/raw/` con el backend). Riesgo asumido: si el backend se reinicia a mitad, el ticket queda en `analizando` → reprocesar con `scripts/rfp_intake.py`.
+  - `pipeline.py`: `register_upload(bytes)` guarda `data/raw/rfp/<ticket_id>.pdf` + ticket `analizando`; `analyze_ticket(ticket_id)` corre el análisis y deja `analisis_completo`/`descartado` (conserva `created_at`; un error inesperado → `descartado` con motivo, nunca colgado). `process_rfp_pdf` (CLI) reutiliza ambos.
+  - `routes/rfp.py`: `POST /rfp/upload` → 202 inmediato `{ticket_id, status: analizando, ...}`, valida extensión + cabecera `%PDF-`, lanza `analyze_ticket` en `BackgroundTasks`. Ya no deja copias `upload-<filename>` en `data/raw/`.
+  - `uis/backoffice/rfp/`: subida múltiple (un ticket por PDF), lista de subidas con estado en vivo (polling `GET /rfp/tickets/{id}` cada 2 s, timeout 2 min), tabla que se refresca sola cada 3 s mientras haya tickets `analizando`, detalle con aspectos clave por departamento + responsable. Corregido: spinner de carga que nunca se veía (estaba dentro de un contenedor oculto) y `reason` vía `innerHTML`.
+  - Validación: tests RFP 42 → 48 passed; regresión `tests/pipelines` idéntica al baseline (52 fallos previos ajenos); smoke con uvicorn real + SQLite y análisis simulado de 1,5 s: 202 en 3–36 ms y `analizando → analisis_completo` (muestras 1 y 2) / `→ descartado` (muestra 3).
+  - Siguiente paso: probar la UI en navegador contra el backend con Supabase real (no hay navegador ni DATABASE_URL en este entorno).
 - RFP INTAKE — persistencia PostgreSQL (rama `feature/rfp-intake`, pendiente de commit):
   - Layout verificado: router en `services/api/routes/rfp.py` (sin API nueva) → `data/pipelines/rfp_intake/` (dedicado, no mezclado con el grafo CX); CLI de reproceso en `scripts/rfp_intake.py`.
   - `data/pipelines/rfp_intake/models.py` (nuevo): SQLModel `Ticket`, `RFPMetadata`, `DepartmentSection` (`key_aspects` JSONB) en esquema `rfp_intake`, 1:1 con `migrations/001_rfp_intake.sql`. Antes `db.py` importaba modelos inexistentes de `services/api/models.py` (rompía capas y el modo BD).

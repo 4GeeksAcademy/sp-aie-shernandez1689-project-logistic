@@ -3,8 +3,11 @@
 Extiende el backend existente de ``services/api`` (misma app / misma API)
 con los endpoints del tramo de recepción de RFPs:
 
-- ``POST /rfp/upload``    — sube un PDF de RFP (multipart), ejecuta el
-  pipeline de intake y devuelve el estado del ticket (analizado o descartado).
+- ``POST /rfp/upload``    — sube un PDF de RFP (multipart): guarda el PDF en
+  ``data/raw/rfp/``, crea el ticket en ``analizando`` y responde ``202`` al
+  instante. El análisis corre en segundo plano (``BackgroundTasks``); la UI
+  consulta ``GET /rfp/tickets/{ticket_id}`` hasta ``analisis_completo`` o
+  ``descartado``.
 - ``GET  /rfp/tickets``   — lista los tickets de intake (más recientes primero).
 - ``GET  /rfp/tickets/{ticket_id}`` — detalle: metadatos + secciones por
   departamento del ticket.
@@ -21,7 +24,15 @@ import sys
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    UploadFile,
+    status,
+)
 
 # ── Acceso al paquete data.pipelines (mismo patrón que routes/telemetry.py) ──
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -29,8 +40,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from auth import get_current_user  # noqa: E402
-from data.pipelines.rfp_intake import db, process_rfp_pdf  # noqa: E402
-from data.pipelines.rfp_intake.config import raw_rfp_dir  # noqa: E402
+from data.pipelines.rfp_intake import analyze_ticket, db, register_upload  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +48,8 @@ router = APIRouter(prefix="/rfp", tags=["RFP Intake"])
 
 # Extensiones admitidas al upload (rechazo temprano).
 _ALLOWED_EXTENSIONS = {".pdf"}
+# Cabecera mágica de todo PDF.
+_PDF_MAGIC = b"%PDF-"
 
 # Campos de metadatos que la UI de backoffice muestra en la tabla de tickets.
 _DISPLAY_FIELDS = (
@@ -84,23 +96,19 @@ def _ensure_pdf(upload: UploadFile) -> None:
         )
 
 
-@router.post("/upload", response_model=None)
+@router.post("/upload", status_code=status.HTTP_202_ACCEPTED, response_model=None)
 async def upload_rfp(
+    background_tasks: BackgroundTasks,
     file: Annotated[UploadFile, File(description="PDF de la RFP recibida")],
     _user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Sube un PDF de RFP y ejecuta el pipeline de intake (Parte 1).
+    """Recibe un PDF de RFP y crea su ticket en ``analizando`` (modo ticket).
 
-    Persiste una copia en ``data/raw/rfp/`` y devuelve el estado del ticket:
-    ``analisis_completo`` (con metadatos + departamentos activos) o
-    ``descartado`` (no es una RFP de cliente / sin servicios detectables).
+    Guarda el PDF en ``data/raw/rfp/<ticket_id>.pdf`` y responde de inmediato;
+    el pipeline de intake corre en segundo plano y deja el ticket en
+    ``analisis_completo`` o ``descartado``.
     """
     _ensure_pdf(file)
-
-    # Guardar en un archivo temporal dentro del dir runtime de recepción.
-    raw_dir = raw_rfp_dir()
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    target = raw_dir / f"upload-{file.filename}"
 
     content = await file.read()
     if not content:
@@ -108,20 +116,21 @@ async def upload_rfp(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="El archivo adjunto está vacío.",
         )
-    target.write_bytes(content)
+    if not content.startswith(_PDF_MAGIC):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="El archivo no es un PDF válido.",
+        )
 
     try:
-        result = process_rfp_pdf(target, raw_dir=raw_dir)
+        ticket = register_upload(content)
     except db.DatabaseNotConfiguredError as exc:
         raise _db_unavailable(exc) from exc
-    except Exception as exc:  # pragma: no cover - errores inesperados del pipeline
-        logger.exception("RFP intake falló para %s", file.filename)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al procesar la RFP: {exc}",
-        ) from exc
 
-    return result
+    # Función síncrona → Starlette la ejecuta en el threadpool tras responder.
+    background_tasks.add_task(analyze_ticket, ticket["ticket_id"])
+    logger.info("RFP %s recibida como %s", file.filename, ticket["ticket_id"])
+    return {**ticket, "filename": file.filename}
 
 
 @router.get("/tickets")

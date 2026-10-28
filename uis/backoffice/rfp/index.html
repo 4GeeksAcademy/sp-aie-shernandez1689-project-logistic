@@ -33,34 +33,33 @@
         <div class="panel-head">
           <h2 id="upload-title">Subir RFP (PDF)</h2>
           <p>
-            Ejecuta el pipeline de intake: clasificación, metadatos y secciones
-            por departamento vía <code>POST /rfp/upload</code>.
+            Cada PDF crea un ticket en <code>analizando</code> vía
+            <code>POST /rfp/upload</code>; el análisis (clasificación,
+            metadatos, departamentos) corre en segundo plano y el estado se
+            actualiza solo.
           </p>
         </div>
         <form id="uploadForm" class="rfp-upload-form">
           <label>
-            Archivo PDF de la RFP
-            <input id="fileInput" name="file" type="file" accept="application/pdf,.pdf" required />
+            Archivos PDF de RFP (uno o varios)
+            <input id="fileInput" name="file" type="file" accept="application/pdf,.pdf" multiple required />
           </label>
           <label>
             API base
             <input id="apiBase" type="text" placeholder="http://127.0.0.1:8000" />
           </label>
-          <button id="uploadBtn" class="primary" type="submit">Procesar RFP</button>
+          <button id="uploadBtn" class="primary" type="submit">Subir RFP</button>
         </form>
         <p class="feedback" id="uploadFeedback" role="status"></p>
       </section>
 
       <section class="panel" aria-labelledby="result-title">
         <div class="panel-head">
-          <h2 id="result-title">Resultado del último análisis</h2>
+          <h2 id="result-title">Subidas y resultado</h2>
           <p id="resultSummary">Sin análisis todavía.</p>
         </div>
         <div id="resultDetail" hidden>
-          <div id="uploadLoading" class="summary-state" role="status" aria-live="polite" hidden>
-            <span class="loading-spinner" aria-hidden="true"></span>
-            <p>Procesando la RFP…</p>
-          </div>
+          <ul id="uploadList" class="upload-list" aria-live="polite"></ul>
         </div>
       </section>
 
@@ -68,7 +67,8 @@
         <div class="panel-head">
           <h2 id="tickets-title">Tickets de intake</h2>
           <p>
-            Consume <code>GET /rfp/tickets</code> (más recientes primero).
+            Consume <code>GET /rfp/tickets</code> (más recientes primero). Se
+            refresca sola mientras haya tickets en <code>analizando</code>.
           </p>
         </div>
         <div id="ticketsLoading" class="summary-state" role="status" aria-live="polite">

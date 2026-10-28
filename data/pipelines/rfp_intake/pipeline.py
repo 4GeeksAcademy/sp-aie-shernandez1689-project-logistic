@@ -1,8 +1,11 @@
 """Orquestador del pipeline de intake de RFPs (Hito 9, Parte 1).
 
-Flujo de punta a punta (BRIEFING §2.2–§2.4):
+Flujo de punta a punta (BRIEFING §2.2–§2.4). En la API se parte en dos:
+``register_upload()`` (síncrono, rápido: PDF + ticket ``analizando``) y
+``analyze_ticket()`` (en segundo plano: el resto del flujo).
 
-    upload ──► store_pdf()              PDF → data/raw/rfp/<ticket_id>.pdf
+    upload ──► register_upload()        PDF → data/raw/rfp/<ticket_id>.pdf
+                                        ticket ``analizando``
            ──► extract_text()           PDF → texto
            ──► classify()               ¿es RFP de TrackFlow? metadatos,
                                         departamentos, país/moneda
@@ -21,8 +24,8 @@ y `scripts/` (CLI) invocan. No importa nada de `services/`.
 
 from __future__ import annotations
 
+import logging
 import shutil
-import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,6 +45,8 @@ from .config import (
 )
 from .extract import extract_pdf_info, extract_text
 from .readability_metrics import compute_readability_metrics
+
+logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
@@ -131,18 +136,80 @@ def _extract_department_sections(
 # ── Orquestador principal ───────────────────────────────────────────────────
 
 
+def _require_db() -> None:
+    """Falla antes de escribir el PDF: sin BD no hay dónde dejar el ticket."""
+    if not db.is_db_available():
+        raise db.DatabaseNotConfiguredError(
+            "DATABASE_URL no configurada: no se puede persistir el ticket."
+        )
+
+
+def register_upload(content: bytes, raw_dir: Path | None = None) -> dict[str, Any]:
+    """Recepción rápida (modo ticket): guarda el PDF y crea el ticket ``analizando``.
+
+    Escribe ``data/raw/rfp/<ticket_id>.pdf`` (BRIEFING §2.4) y persiste el
+    ticket. El análisis se lanza aparte con ``analyze_ticket(ticket_id)``.
+    """
+    _require_db()
+    ticket_id = _new_ticket_id()
+    target_dir = raw_dir or raw_rfp_dir()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    raw_pdf = target_dir / f"{ticket_id}.pdf"
+    raw_pdf.write_bytes(content)
+
+    ticket = _build_ticket(
+        ticket_id=ticket_id,
+        rfp_id=f"{ticket_id}-rfp",
+        status=STATUS_ANALIZANDO,
+        raw_pdf_path=str(raw_pdf),
+        reason="análisis en curso",
+    )
+    db.save_ticket(ticket)
+    return ticket
+
+
+def analyze_ticket(ticket_id: str) -> dict[str, Any]:
+    """Analiza el PDF de un ticket ``analizando`` y persiste el estado final.
+
+    Pensado para ejecutarse en segundo plano tras ``register_upload``. Un
+    error inesperado deja el ticket ``descartado`` con el motivo, para que
+    nunca quede colgado en ``analizando``.
+    """
+    ticket = db.get_ticket(ticket_id)
+    if ticket is None:
+        raise KeyError(f"Ticket no encontrado: {ticket_id}")
+
+    ids = {
+        "ticket_id": ticket_id,
+        "rfp_id": ticket["rfp_id"],
+        "raw_pdf_path": ticket["raw_pdf_path"],
+        "created_at": ticket.get("created_at"),
+    }
+    try:
+        return _analyze(Path(ticket["raw_pdf_path"]), persist=True, **ids)
+    except Exception as exc:
+        logger.exception("RFP intake: fallo analizando %s", ticket_id)
+        failed = _build_ticket(
+            status=STATUS_DESCARTADO,
+            reason=f"error interno durante el análisis: {type(exc).__name__}",
+            **ids,
+        )
+        db.save_ticket(failed)
+        return failed
+
+
 def process_rfp_pdf(
     pdf_path: str | Path,
     raw_dir: Path | None = None,
     *,
     persist: bool = True,
 ) -> dict[str, Any]:
-    """Ejecuta el intake de una RFP desde un PDF y devuelve el estado del ticket.
+    """Ejecuta el intake completo de una RFP de forma síncrona (CLI / tests).
 
     Parameters
     ----------
     pdf_path
-        Ruta al PDF recibido (local o copiado a data/raw antes de llamar).
+        Ruta al PDF recibido.
     raw_dir
         Directorio destino de la copia (por defecto ``data/raw/rfp``).
     persist
@@ -157,26 +224,44 @@ def process_rfp_pdf(
     pdf_path = Path(pdf_path)
     if not pdf_path.exists() or not pdf_path.is_file():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
-    if persist and not db.is_db_available():
-        # Falla antes de copiar el PDF: sin BD no hay dónde dejar el ticket.
-        raise db.DatabaseNotConfiguredError(
-            "DATABASE_URL no configurada: no se puede persistir el ticket."
-        )
+    if persist:
+        ticket = register_upload(pdf_path.read_bytes(), raw_dir)
+        return analyze_ticket(ticket["ticket_id"])
 
     ticket_id = _new_ticket_id()
-    rfp_id = f"{ticket_id}-rfp"
     raw_pdf = store_pdf(pdf_path, ticket_id, raw_dir)
+    return _analyze(
+        pdf_path,
+        ticket_id=ticket_id,
+        rfp_id=f"{ticket_id}-rfp",
+        raw_pdf_path=str(raw_pdf),
+        persist=False,
+    )
+
+
+def _analyze(
+    pdf_path: Path,
+    *,
+    ticket_id: str,
+    rfp_id: str,
+    raw_pdf_path: str,
+    created_at: str | None = None,
+    persist: bool,
+) -> dict[str, Any]:
+    """Extracción → clasificación → metadatos → secciones → estado final."""
+    ids = {
+        "ticket_id": ticket_id,
+        "rfp_id": rfp_id,
+        "raw_pdf_path": raw_pdf_path,
+        "created_at": created_at,
+    }
 
     # 1) Extracción
     extraction = extract_pdf_info(pdf_path)
     text = extraction["text"]
     if not text or not text.strip():
         ticket = _build_ticket(
-            ticket_id=ticket_id,
-            rfp_id=rfp_id,
-            status=STATUS_DESCARTADO,
-            raw_pdf_path=str(raw_pdf),
-            reason="documento sin texto extraíble",
+            status=STATUS_DESCARTADO, reason="documento sin texto extraíble", **ids
         )
         if persist:
             _persist(ticket, metadata=None, sections=[])
@@ -187,13 +272,7 @@ def process_rfp_pdf(
 
     # 3) ¿RFP de TrackFlow?
     if not classification.is_rfp:
-        ticket = _build_ticket(
-            ticket_id=ticket_id,
-            rfp_id=rfp_id,
-            status=STATUS_DESCARTADO,
-            raw_pdf_path=str(raw_pdf),
-            reason=classification.reason,
-        )
+        ticket = _build_ticket(status=STATUS_DESCARTADO, reason=classification.reason, **ids)
         if persist:
             _persist(ticket, metadata=None, sections=[])
         return ticket
@@ -207,11 +286,7 @@ def process_rfp_pdf(
 
     # 6) Ticket final (analizando → analisis_completo)
     ticket = _build_ticket(
-        ticket_id=ticket_id,
-        rfp_id=rfp_id,
-        status=STATUS_ANALISIS_COMPLETO,
-        raw_pdf_path=str(raw_pdf),
-        reason=classification.reason,
+        status=STATUS_ANALISIS_COMPLETO, reason=classification.reason, **ids
     )
 
     if persist:
@@ -237,6 +312,7 @@ def _build_ticket(
     status: str,
     raw_pdf_path: str,
     reason: str,
+    created_at: str | None = None,
 ) -> dict[str, Any]:
     now = _now_iso()
     return {
@@ -245,7 +321,7 @@ def _build_ticket(
         "status": status,
         "raw_pdf_path": raw_pdf_path,
         "reason": reason,
-        "created_at": now,
+        "created_at": created_at or now,
         "updated_at": now,
     }
 
@@ -314,6 +390,8 @@ def _compose_response(
 
 
 __all__ = [
+    "register_upload",
+    "analyze_ticket",
     "process_rfp_pdf",
     "resolve_currency",
     "store_pdf",
