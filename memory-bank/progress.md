@@ -1,6 +1,15 @@
 # Progress
 
 ## Estado actual del desarrollo
+- RFP INTAKE — orquestación por departamento (rama `feature/rfp-intake`, pendiente de commit):
+  - `data/pipelines/rfp_intake/graph.py` (nuevo): grafo LangGraph dedicado (aislado del grafo CX) orchestrator → `Send` a un worker por departamento activo (paralelo) → synthesizer. Workers deterministas, sin LLM (como el clasificador de Parte 1).
+  - Orchestrator: subtarea por `departments_needed` con metadatos compartidos + extractos del Markdown relevantes al depto (señales léxicas es/en, ≥ 3 palabras, máx. 6).
+  - Worker: `key_aspects` solo con datos de la RFP; `is_grounded()` descarta cualquier aspecto con una cifra que no esté en sus extractos/metadatos. Lo que falta (volumen, SKUs/pallets, destinos, SLA, tasa/plazo de devoluciones) va a `open_questions`, nunca como supuesto.
+  - Synthesizer: `sales_summary` (headline "pedir a <responsable> (<depto>): <qué aporta §2.1>", requests por responsable, preguntas al cliente deduplicadas) + `handoff` Parte 2 (`next_status=generando_borrador`, departamentos, section_ids, moneda, markdown_path, lineamientos §5). Ticket queda en `analisis_completo`.
+  - PostgreSQL: `department_sections.source_excerpts`, `open_questions` (JSONB); `rfp_metadata.sales_summary`, `handoff` (JSONB). Migración idempotente actualizada.
+  - API: `GET /rfp/tickets/{id}` devuelve `sales_summary` y `handoff`. UI: "Resumen para Ventas", aspectos + "Falta en la RFP" por depto, "Handoff a la Parte 2".
+  - Validación: tests RFP 58 → 64 passed (orchestrator/fan-out, ninguna cifra inventada en muestras 1-2, volumen ausente → pregunta, synthesizer/handoff, persistencia, E2E vía API); regresión `tests/pipelines` idéntica al baseline; smoke uvicorn + CLI OK.
+  - Siguiente paso: Parte 2 — consumir `handoff` (generadores por depto sobre key_aspects + source_excerpts, evaluadores con lineamientos §5).
 - RFP INTAKE — ingesta y conversión PDF → Markdown (rama `feature/rfp-intake`, pendiente de commit):
   - Bug encontrado: MarkItDown devolvía 0 caracteres en todos los PDF (faltaba el extra `[pdf]`/pdfminer) y el pipeline caía sin avisar a `pypdf` (texto plano). Corregido: dependencia `markitdown[pdf]>=0.1.9` en `pyproject.toml` + `uv.lock`.
   - `extract.py`: `convert_pdf_to_markdown()` con MarkItDown obligatorio, sin fallback silencioso (`ConversionUnavailableError` si falta). `pypdf` solo cuenta páginas. El `.md` se guarda junto al PDF (`data/raw/rfp/<ticket_id>.md`); clasificador y métricas leen el Markdown, nunca el PDF.

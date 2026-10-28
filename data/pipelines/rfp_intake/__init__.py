@@ -25,6 +25,7 @@ from .config import (
     samples_dir,
 )
 from .extract import ConversionUnavailableError, convert_pdf_to_markdown
+from .graph import department_graph, run_department_graph
 from .pipeline import (
     analyze_ticket,
     process_rfp_pdf,
@@ -39,6 +40,9 @@ __all__ = [
     "classify",
     "ConversionUnavailableError",
     "convert_pdf_to_markdown",
+    # grafo orchestrator → workers → synthesizer
+    "department_graph",
+    "run_department_graph",
     # orquestador
     "register_upload",
     "analyze_ticket",

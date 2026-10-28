@@ -9,8 +9,9 @@ con los endpoints del tramo de recepción de RFPs:
   consulta ``GET /rfp/tickets/{ticket_id}`` hasta ``analisis_completo`` o
   ``descartado``.
 - ``GET  /rfp/tickets``   — lista los tickets de intake (más recientes primero).
-- ``GET  /rfp/tickets/{ticket_id}`` — detalle: metadatos + secciones por
-  departamento del ticket.
+- ``GET  /rfp/tickets/{ticket_id}`` — detalle: metadatos, secciones por
+  departamento (``key_aspects``, extractos, preguntas abiertas), resumen
+  para Ventas y handoff hacia la Parte 2.
 
 Regla estricta de capas (Brifing-pipeline.md §5): este router **importa
 únicamente** funciones de ``data/pipelines/rfp_intake/`` (proceso, clasificador,
@@ -167,6 +168,9 @@ def get_ticket_detail(
         "ticket": _enrich_ticket(ticket),
         "metadata": metadata,
         "departments": db.get_department_sections(ticket_id),
+        # Synthesizer: qué pedir a quién (Ventas) + handoff a la Parte 2.
+        "sales_summary": metadata.get("sales_summary"),
+        "handoff": metadata.get("handoff"),
     }
 
 

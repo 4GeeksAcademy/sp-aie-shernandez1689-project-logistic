@@ -5,7 +5,8 @@ Reflejan 1:1 las tablas de ``migrations/001_rfp_intake.sql`` (esquema
 
 - ``Ticket``            → ``rfp_intake.tickets``
 - ``RFPMetadata``       → ``rfp_intake.rfp_metadata``
-- ``DepartmentSection`` → ``rfp_intake.department_sections`` (``key_aspects``)
+- ``DepartmentSection`` → ``rfp_intake.department_sections`` (``key_aspects``,
+  ``source_excerpts``, ``open_questions``)
 
 Viven en ``data/pipelines/`` (no en ``services/api/models.py``) para respetar
 la regla de capas: el pipeline no importa nada de ``services/``.
@@ -78,6 +79,8 @@ class RFPMetadata(SQLModel, table=True):
     estimated_tokens: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
     processing_cost: str | None = None
     readability: dict[str, Any] = _json_column({})
+    sales_summary: dict[str, Any] | None = Field(default=None, sa_column=Column(_JSON, nullable=True))
+    handoff: dict[str, Any] | None = Field(default=None, sa_column=Column(_JSON, nullable=True))
     created_at: datetime | None = _ts_column()
     updated_at: datetime | None = _ts_column()
 
@@ -95,6 +98,8 @@ class DepartmentSection(SQLModel, table=True):
     department_label: str | None = None
     department_owner: str | None = None
     key_aspects: list[str] = _json_column([])
+    source_excerpts: list[str] = _json_column([])
+    open_questions: list[str] = _json_column([])
     draft_content: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     evaluation_results: dict[str, Any] | None = Field(
         default=None, sa_column=Column(_JSON, nullable=True)

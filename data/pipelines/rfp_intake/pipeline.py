@@ -11,6 +11,9 @@ Flujo de punta a punta (BRIEFING §2.2–§2.4). En la API se parte en dos:
            ──► classify(markdown)       ¿es RFP de TrackFlow? metadatos,
                                         departamentos, país/moneda
            ──► compute_readability()    legibilidad + costo de procesamiento
+           ──► run_department_graph()   orchestrator → worker × depto → synthesizer
+                                        key_aspects por depto + resumen Ventas
+                                        + handoff a la Parte 2
            ──► persist                  Ticket + RFP metadata + DepartmentSection
            ──┴  estado final: ``analisis_completo`` | ``descartado``
 
@@ -36,8 +39,6 @@ from . import db
 from .classifier import ClassificationResult, classify
 from .config import (
     COUNTRY_CURRENCY,
-    DEPARTMENT_LABELS,
-    DEPARTMENT_OWNERS,
     REPO_ROOT,
     STATUS_ANALISIS_COMPLETO,
     STATUS_ANALIZANDO,
@@ -45,6 +46,7 @@ from .config import (
     raw_rfp_dir,
 )
 from .extract import convert_pdf_to_markdown, save_markdown
+from .graph import run_department_graph
 from .readability_metrics import compute_readability_metrics
 
 logger = logging.getLogger(__name__)
@@ -77,61 +79,6 @@ def store_pdf(pdf_path: Path, ticket_id: str, raw_dir: Path | None = None) -> Pa
     target = target_dir / f"{ticket_id}{pdf_path.suffix.lower() or '.pdf'}"
     shutil.copyfile(str(pdf_path), str(target))
     return target
-
-
-# ── Bloque de metadatos por departamento (Parte 1: key_aspects) ─────────────
-
-
-def _build_key_aspects_for(
-    department_id: str,
-    result: ClassificationResult,
-    currency: str,
-) -> list[str]:
-    """Aspectos clave iniciales de un departamento para esta RFP (Parte 1).
-
-    Se rellenan con datos reales del documento (servicio, país, volumen,
-    moneda). La redacción del borrador (draft_content) es de la Parte 2.
-    """
-    aspects = [f"Servicio solicitado: {department_id}"]
-    if result.client_country:
-        aspects.append(f"País del cliente: {result.client_country}")
-    if result.monthly_volume is not None:
-        aspects.append(f"Volumen mensual estimado: {result.monthly_volume} pedidos/mes")
-    if currency:
-        aspects.append(f"Moneda de la propuesta: {currency}")
-    if result.deadline:
-        aspects.append(f"Fecha límite: {result.deadline}")
-    return aspects
-
-
-def _extract_department_sections(
-    result: ClassificationResult,
-    currency: str,
-    rfp_id: str,
-    ticket_id: str,
-) -> list[dict[str, Any]]:
-    """Genera los DepartmentSection de la RFP (solo departamentos activos)."""
-    sections: list[dict[str, Any]] = []
-    for dep_id in result.departments_needed:
-        sections.append(
-            {
-                "id": f"{ticket_id}_{dep_id}",
-                "ticket_id": ticket_id,
-                "rfp_id": rfp_id,
-                "department_id": dep_id,
-                "department_label": DEPARTMENT_LABELS.get(dep_id, dep_id),
-                "department_owner": DEPARTMENT_OWNERS.get(dep_id),
-                "key_aspects": _build_key_aspects_for(dep_id, result, currency),
-                "draft_content": None,  # Parte 2 generará el borrador
-                "evaluation_results": None,  # Parte 2/3 evaluará el borrador
-                "approval_status": "pendiente",  # Parte 3 flujo de aprobación
-                "approver": None,
-                "approved_at": None,
-                "created_at": _now_iso(),
-                "updated_at": _now_iso(),
-            }
-        )
-    return sections
 
 
 # ── Orquestador principal ───────────────────────────────────────────────────
@@ -289,10 +236,20 @@ def _analyze(
     currency = resolve_currency(classification.client_country)
     metadata = _build_metadata(classification, extraction, currency, rfp_id, ticket_id)
 
-    # 5) Secciones por departamento (solo activos)
-    sections = _extract_department_sections(classification, currency, rfp_id, ticket_id)
+    # 5) Grafo orchestrator → workers (uno por departamento activo) → synthesizer
+    synthesis = run_department_graph(
+        ticket_id=ticket_id,
+        rfp_id=rfp_id,
+        markdown=markdown,
+        metadata=metadata,
+        markdown_path=extraction["markdown_path"],
+    )
+    sections = synthesis["sections"]
+    metadata["sales_summary"] = synthesis["sales_summary"]
+    metadata["handoff"] = synthesis["handoff"]
 
-    # 6) Ticket final (analizando → analisis_completo)
+    # 6) Ticket final (analizando → analisis_completo); handoff a la Parte 2
+    #    en metadata["handoff"] (next_status = generando_borrador).
     ticket = _build_ticket(
         status=STATUS_ANALISIS_COMPLETO, reason=classification.reason, **ids
     )
@@ -395,6 +352,8 @@ def _compose_response(
         "classification": classification.to_dict(),
         "metadata": metadata,
         "departments": sections,
+        "sales_summary": metadata.get("sales_summary"),
+        "handoff": metadata.get("handoff"),
         "currency": currency,
         "source_pdf": {
             "filename": extraction.get("filename"),

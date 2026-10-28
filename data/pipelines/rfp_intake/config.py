@@ -41,6 +41,24 @@ SERVICE_TO_DEPARTMENT: dict[str, str] = {
     "reverse": "reverse",
 }
 
+# Qué aporta cada departamento a la propuesta (BRIEFING §2.1): es lo que
+# Ventas debe pedir a cada responsable en el resumen del synthesizer.
+DEPARTMENT_ASKS: dict[str, str] = {
+    "warehouse": "capacidad de almacenamiento, costo por pallet/SKU y tiempo de onboarding",
+    "lastmile": "costo por envío, transportistas disponibles según destino y SLA de entrega",
+    "reverse": "costo y tiempo de procesamiento de devoluciones",
+}
+
+# Lineamientos de propuesta (BRIEFING §5) que la Parte 2 debe cumplir; viajan
+# en el handoff para que los generadores/evaluadores los reciban explícitos.
+PROPOSAL_GUIDELINES: tuple[str, ...] = (
+    "Precio en la moneda del país del cliente (US→USD, España→EUR).",
+    "Indicar el SLA de entrega a tiempo (%) comprometido.",
+    "No prometer procesamiento de devoluciones en menos de 48 horas.",
+    "Incluir una tabla de descuentos por volumen.",
+    "No revelar tarifas negociadas con transportistas; solo el costo final.",
+)
+
 # ── Países y moneda (BRIEFING §5 — la moneda se determina por client_country) ──
 
 COUNTRY_CURRENCY: dict[str, str] = {

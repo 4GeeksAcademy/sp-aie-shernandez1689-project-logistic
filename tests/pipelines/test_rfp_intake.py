@@ -373,6 +373,93 @@ class TestReadabilityMetrics:
 
 
 # ===================================================================
+# Grafo orchestrator → workers → synthesizer
+# ===================================================================
+
+
+def _sample_state(idx):
+    from data.pipelines.rfp_intake.extract import convert_pdf_to_markdown
+
+    markdown = convert_pdf_to_markdown(SAMPLE_PDFS[idx])["markdown"]
+    metadata = classify(markdown).to_dict()
+    metadata["currency"] = resolve_currency(metadata["client_country"])
+    return markdown, metadata
+
+
+class TestDepartmentGraph:
+    @needs_samples
+    def test_orchestrator_one_task_per_active_department(self):
+        from data.pipelines.rfp_intake.graph import fan_out, orchestrator
+
+        markdown, metadata = _sample_state(1)
+        state = {"ticket_id": "t", "rfp_id": "r", "markdown": markdown, "metadata": metadata}
+        tasks = orchestrator(state)["tasks"]
+        assert [t["department_id"] for t in tasks] == ["warehouse", "reverse"]
+        sends = fan_out({**state, "tasks": tasks})
+        assert [s.node for s in sends] == ["worker", "worker"]
+        # Cada worker recibe solo extractos de su departamento.
+        reverse = next(t for t in tasks if t["department_id"] == "reverse")
+        assert any("devoluciones" in e.lower() for e in reverse["excerpts"])
+        assert all(len(e.split()) >= 3 for t in tasks for e in t["excerpts"])
+        assert tasks[0]["shared"]["monthly_volume"] == 3000
+
+    @needs_samples
+    @pytest.mark.parametrize("idx", [1, 2])
+    def test_key_aspects_never_invent_numbers(self, idx):
+        """Toda cifra de un key_aspect existe en el Markdown de la RFP."""
+        from data.pipelines.rfp_intake.graph import is_grounded, run_department_graph
+
+        markdown, metadata = _sample_state(idx)
+        out = run_department_graph(ticket_id="t", rfp_id="r", markdown=markdown, metadata=metadata)
+        assert out["sections"]
+        for section in out["sections"]:
+            assert section["key_aspects"]
+            for aspect in section["key_aspects"]:
+                assert is_grounded(aspect, [markdown]), aspect
+
+    def test_worker_missing_volume_becomes_open_question(self):
+        from data.pipelines.rfp_intake.graph import worker
+
+        task = {
+            "ticket_id": "t", "rfp_id": "r", "department_id": "warehouse",
+            "shared": {"client_country": "Spain", "currency": "EUR", "monthly_volume": None},
+            "excerpts": ["Necesitamos almacenamiento en Zaragoza para nuestra marca"],
+        }
+        section = worker(task)["sections"][0]
+        assert not any("Volumen" in a for a in section["key_aspects"])
+        assert any("Volumen mensual" in q for q in section["open_questions"])
+        assert section["department_owner"] == "Ana Whitfield"
+        assert section["approval_status"] == "pendiente"
+
+    def test_is_grounded_rejects_fabricated_figures(self):
+        from data.pipelines.rfp_intake.graph import is_grounded
+
+        sources = ["Volumen estimado: 3.000 pedidos al mes."]
+        assert is_grounded("Volumen: 3000 pedidos/mes", sources)
+        assert not is_grounded("Capacidad: 1200 pallets", sources)
+
+    @needs_samples
+    def test_synthesizer_summary_and_handoff(self):
+        from data.pipelines.rfp_intake.graph import run_department_graph
+
+        markdown, metadata = _sample_state(2)
+        out = run_department_graph(
+            ticket_id="t", rfp_id="r", markdown=markdown, metadata=metadata,
+            markdown_path="/tmp/t.md",
+        )
+        summary, handoff = out["sales_summary"], out["handoff"]
+        owners = [r["owner"] for r in summary["requests"]]
+        assert owners == ["Ana Whitfield", "Carlos Vega"]
+        assert "Ana Whitfield" in summary["headline"] and "Carlos Vega" in summary["headline"]
+        assert summary["currency"] == "USD"
+        assert handoff["next_status"] == "generando_borrador"
+        assert handoff["departments"] == ["warehouse", "lastmile"]
+        assert handoff["section_ids"] == ["t_warehouse", "t_lastmile"]
+        assert handoff["markdown_path"] == "/tmp/t.md"
+        assert any("48 horas" in g for g in handoff["guidelines"])
+
+
+# ===================================================================
 # Persistencia — SQLModel (PostgreSQL en producción, SQLite en tests)
 # ===================================================================
 
@@ -456,6 +543,12 @@ class TestPersistence:
         secs = sqlite_db.get_department_sections(ticket_id)
         assert [s["department_id"] for s in secs] == ["lastmile", "warehouse"]
         assert all(s["key_aspects"] for s in secs)
+        assert all(s["source_excerpts"] for s in secs)
+        assert all(isinstance(s["open_questions"], list) for s in secs)
+        # Synthesizer + handoff persistidos junto al ticket (analisis_completo).
+        assert "Carlos Vega" in meta["sales_summary"]["headline"]
+        assert meta["handoff"]["next_status"] == "generando_borrador"
+        assert sqlite_db.get_ticket(ticket_id)["status"] == "analisis_completo"
 
     def test_persist_without_database_fails(self, monkeypatch, tmp_path):
         """Sin DATABASE_URL no hay fallback a archivos: se rechaza persistir."""
@@ -555,6 +648,11 @@ class TestAsyncUploadRoute:
         if final == "analisis_completo":
             assert detail["departments"]
             assert all(d["key_aspects"] for d in detail["departments"])
+            owners = {r["owner"] for r in detail["sales_summary"]["requests"]}
+            assert owners == {d["department_owner"] for d in detail["departments"]}
+            assert detail["handoff"]["next_status"] == "generando_borrador"
+        else:
+            assert detail["sales_summary"] is None
 
     def test_upload_one_ticket_per_pdf(self, client, tmp_path):
         """Dos subidas → dos tickets distintos."""

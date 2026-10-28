@@ -346,6 +346,37 @@ async function submitUpload(event) {
   }
 }
 
+function createList(items) {
+  const ul = document.createElement("ul");
+  for (const text of items) {
+    const li = document.createElement("li");
+    li.textContent = text;
+    ul.append(li);
+  }
+  return ul;
+}
+
+function createSubheading(text) {
+  const p = document.createElement("p");
+  p.className = "subheading";
+  p.textContent = text;
+  return p;
+}
+
+/** Synthesizer: qué pedir a cada responsable y qué preguntar al cliente. */
+function createSalesSummary(summary) {
+  const box = document.createElement("div");
+  box.className = "detail-section sales-summary";
+  const h4 = document.createElement("h4");
+  h4.textContent = "Resumen para Ventas";
+  box.append(h4, createSubheading("Qué pedir a quién"));
+  box.append(createList((summary.requests || []).map((r) => `${r.owner} (${departmentLabel(r.department_id)}): ${r.ask}`)));
+  const questions = summary.client_questions || [];
+  box.append(createSubheading(`Preguntas para el cliente (${questions.length})`));
+  box.append(questions.length ? createList(questions) : createSubheading("Ninguna: la RFP trae todo lo necesario."));
+  return box;
+}
+
 function renderAspects(node, sections, title) {
   const box = document.createElement("div");
   box.className = "detail-section";
@@ -364,18 +395,33 @@ function renderAspects(node, sections, title) {
       const head = document.createElement("strong");
       const owner = section.department_owner ? ` · ${section.department_owner}` : "";
       head.textContent = departmentLabel(section.department_id) + owner;
-      const aspects = document.createElement("ul");
-      for (const aspect of section.key_aspects || []) {
-        const item = document.createElement("li");
-        item.textContent = aspect;
-        aspects.append(item);
+      li.append(head, createList(section.key_aspects || []));
+      const questions = section.open_questions || [];
+      if (questions.length) {
+        li.append(createSubheading("Falta en la RFP:"), createList(questions));
       }
-      li.append(head, aspects);
       ul.append(li);
     }
     box.append(ul);
   }
   node.append(box);
+}
+
+function createHandoff(handoff) {
+  const box = document.createElement("div");
+  box.className = "detail-section";
+  const h4 = document.createElement("h4");
+  h4.textContent = `Handoff a la Parte ${handoff.part}`;
+  const dl = document.createElement("dl");
+  dl.className = "rfp-result-grid";
+  dl.append(
+    createKv("Siguiente estado", handoff.next_status || "—"),
+    createKv("Departamentos", (handoff.departments || []).map(departmentLabel).join(", ") || "—"),
+    createKv("Moneda", handoff.currency || "—"),
+    createKv("Preguntas pendientes", fmtNumber(handoff.pending_client_questions))
+  );
+  box.append(h4, dl, createSubheading("Lineamientos para el borrador (§5)"), createList(handoff.guidelines || []));
+  return box;
 }
 
 async function loadDetail(ticketId) {
@@ -419,7 +465,9 @@ async function loadDetail(ticketId) {
       (metadata.departments_needed || []).map(departmentLabel).join(", ") || "—"));
     container.append(createTextSection("Motivo", result.ticket?.reason || "—"));
 
-    renderAspects(container, result.departments || [], "Secciones por departamento");
+    if (result.sales_summary) container.append(createSalesSummary(result.sales_summary));
+    renderAspects(container, result.departments || [], "Aspectos clave por departamento");
+    if (result.handoff) container.append(createHandoff(result.handoff));
   } catch (error) {
     hideLoading(dom.detailLoading);
     dom.detailError.hidden = false;

@@ -160,3 +160,14 @@
   font-size: 0.85rem;
   color: var(--text-muted, #6b6257);
 }
+
+.detail-section .subheading {
+  margin: 8px 0 2px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text, #2b241c);
+}
+
+.sales-summary {
+  border-left: 4px solid #1e7e44;
+}

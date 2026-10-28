@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS rfp_intake.rfp_metadata (
     estimated_tokens   INTEGER,
     processing_cost    TEXT CHECK (processing_cost IN ('bajo', 'medio', 'alto')),
     readability        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    sales_summary      JSONB,
+    handoff            JSONB,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -67,6 +69,8 @@ ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS markdown_path TEXT;
 ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS converter TEXT;
 ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS estimated_tokens INTEGER;
 ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS processing_cost TEXT;
+ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS sales_summary JSONB;
+ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS handoff JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_rfp_metadata_ticket
     ON rfp_intake.rfp_metadata (ticket_id);
@@ -81,6 +85,10 @@ COMMENT ON COLUMN rfp_intake.rfp_metadata.processing_cost IS
     'Costo anticipado de procesamiento (bajo|medio|alto) por tokens estimados y densidad del texto.';
 COMMENT ON COLUMN rfp_intake.rfp_metadata.readability IS
     'Volumen (chars, palabras, frases, tokens estimados) + índices py-readability-metrics (null si < 100 palabras).';
+COMMENT ON COLUMN rfp_intake.rfp_metadata.sales_summary IS
+    'Synthesizer: resumen para Ventas — qué pedir a cada responsable y qué preguntar al cliente.';
+COMMENT ON COLUMN rfp_intake.rfp_metadata.handoff IS
+    'Handoff a la Parte 2: next_status=generando_borrador, departamentos, secciones, moneda, lineamientos §5.';
 COMMENT ON COLUMN rfp_intake.rfp_metadata.currency IS
     'Moneda de la propuesta según país (BRIEFING §5: US→USD, España→EUR).';
 
@@ -93,6 +101,8 @@ CREATE TABLE IF NOT EXISTS rfp_intake.department_sections (
     department_label   TEXT,
     department_owner   TEXT,
     key_aspects        JSONB NOT NULL DEFAULT '[]'::jsonb,
+    source_excerpts    JSONB NOT NULL DEFAULT '[]'::jsonb,
+    open_questions     JSONB NOT NULL DEFAULT '[]'::jsonb,
     draft_content      TEXT,
     evaluation_results JSONB,
     approval_status    TEXT NOT NULL DEFAULT 'pendiente',
@@ -102,6 +112,11 @@ CREATE TABLE IF NOT EXISTS rfp_intake.department_sections (
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE rfp_intake.department_sections
+    ADD COLUMN IF NOT EXISTS source_excerpts JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE rfp_intake.department_sections
+    ADD COLUMN IF NOT EXISTS open_questions JSONB NOT NULL DEFAULT '[]'::jsonb;
+
 CREATE INDEX IF NOT EXISTS idx_rfp_department_ticket
     ON rfp_intake.department_sections (ticket_id);
 CREATE INDEX IF NOT EXISTS idx_rfp_department_dep
@@ -109,5 +124,9 @@ CREATE INDEX IF NOT EXISTS idx_rfp_department_dep
 
 COMMENT ON TABLE rfp_intake.department_sections IS
     'Sección por departamento activo: key_aspects (Parte 1), draft_content (Parte 2), aprobación (Parte 3).';
+COMMENT ON COLUMN rfp_intake.department_sections.key_aspects IS
+    'Aspectos clave del worker del departamento: solo datos presentes en la RFP (cifras verificadas contra los extractos).';
+COMMENT ON COLUMN rfp_intake.department_sections.open_questions IS
+    'Información que el departamento necesita y la RFP no indica (preguntas para el cliente; nunca supuestos).';
 COMMENT ON COLUMN rfp_intake.department_sections.approval_status IS
     'Flujo de aprobación (Parte 3). Parte 1: siempre "pendiente".';
