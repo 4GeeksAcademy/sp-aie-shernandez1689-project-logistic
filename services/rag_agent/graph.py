@@ -71,6 +71,7 @@ from langgraph.graph import END, START, StateGraph
 from data.pipelines.guardrails import (
     GuardrailState,
     classify_bounds,
+    detect_content_injection,
     isolate_context_chunks,
     redirect_response,
     sanitize_external_content,
@@ -82,6 +83,7 @@ from data.pipelines.rag import (
     generate_casual_answer,
     retrieve,
 )
+from services.rag_agent import guardrail_observability as obs
 from services.rag_agent import tracing
 from services.rag_agent import mcp_client
 from services.rag_agent.memory_nodes import (
@@ -233,13 +235,30 @@ def validate(state: AgentState) -> dict[str, Any]:
     question = (state.get("question") or "").strip()
     # Abre el trace de la corrida en el primer paso (thread_id del run).
     tracing.ensure_started(_thread_id(), state.get("question") or "")
-    out = {"error": "La pregunta está vacía."} if not question else {"question": question}
+    if not question:
+        out = {"error": "La pregunta está vacía."}
+        tracing.add_step("validate", out)
+        obs.record(
+            state="structural_empty", kind="structural", node="validate",
+            thread_id=_thread_id(), detail="pregunta vacía / entrada malformada",
+        )
+        return out
+    out = {"question": question}
     tracing.add_step("validate", out)
     return out
 
 
 def _thread_id() -> str:
-    cfg = get_config()
+    """Devuelve el thread_id del run actual (o "default" fuera de un run).
+
+    ``get_config`` solo está disponible dentro de un runnable (LangGraph);
+    fuera de él (p. ej. tests que llaman a un nodo directamente) se
+    degrada a "default" sin lanzar.
+    """
+    try:
+        cfg = get_config()
+    except RuntimeError:
+        return "default"
     return cfg.get("configurable", {}).get("thread_id", "default")
 
 
@@ -287,6 +306,15 @@ def generate_node(state: AgentState) -> dict[str, Any]:
     ):
         answer = state.get("answer") or GUARDRAIL_DOMAIN_REDIRECT
         tracing.add_step("generate", {"answer": answer})
+        obs.record(
+            state=str(gr_state) if isinstance(gr_state, str) else "defense_in_depth",
+            kind="security"
+            if gr_state == GuardrailState.JAILBREAK.value
+            else "content",
+            node="generate",
+            thread_id=_thread_id(),
+            detail="defensa en profundidad: LLM nunca abierto con estado bloqueante",
+        )
         return {"answer": answer}
 
     # Inyectar memoria como prefacio contextual si existe.
@@ -338,6 +366,19 @@ def generate_node(state: AgentState) -> dict[str, Any]:
         # recuperado se neutraliza; el modelo lo trata como contenido sobre
         # el que responder, nunca como órdenes que obedecer.
         combined_context = isolate_context_chunks(tool_context + kb_context)
+        # Observabilidad: solo se cuenta como evento si se detectó una
+        # inyección real (delimitador de instrucción o reescritura de reglas
+        # incrustada en el contenido recuperado/tool); el aislamiento por sí
+        # solo (defensa normal) no es un bloqueo/redirección.
+        if any(
+            detect_content_injection(c.get("text", ""))
+            for c in (tool_context + kb_context)
+        ):
+            obs.record(
+                state="injection_neutralized", kind="content", node="generate",
+                thread_id=_thread_id(),
+                detail="instrucción incrustada en contenido externo neutralizada",
+            )
         if memory_lines:
             combined_context = (
                 [{"text": "\n".join(memory_lines), "source_document": "agent_memory", "section": "memoria"}]
@@ -368,6 +409,11 @@ def generate_node(state: AgentState) -> dict[str, Any]:
         valid, _reason = validate_output(answer)
         if not valid:
             answer = GUARDRAIL_DOMAIN_REDIRECT
+            obs.record(
+                state="validate_output", kind="content", node="generate",
+                thread_id=_thread_id(),
+                detail="respuesta no válida sustituida por redirección segura",
+            )
 
     tracing.add_step("generate", {"answer": answer})
     return {"answer": answer}
@@ -602,6 +648,10 @@ def guardrail_node(state: AgentState) -> dict[str, Any]:
             "asistente de TrackFlow. " + redirect_response()
         )
         tracing.add_step("guardrail", {"state": gr_state.value, "answer": out["answer"]})
+        obs.record(
+            state="jailbreak", kind="security", node="guardrail",
+            thread_id=_thread_id(), detail="intento de manipulación del sistema",
+        )
         return out
 
     if gr_state is GuardrailState.PERSONAL_TASK:
@@ -610,11 +660,19 @@ def guardrail_node(state: AgentState) -> dict[str, Any]:
             "propósito. " + redirect_response()
         )
         tracing.add_step("guardrail", {"state": gr_state.value, "answer": out["answer"]})
+        obs.record(
+            state="personal_task", kind="content", node="guardrail",
+            thread_id=_thread_id(), detail="uso personal rechazado y redirigido",
+        )
         return out
 
     if gr_state is GuardrailState.OFF_DOMAIN:
         out["answer"] = redirect_response()
         tracing.add_step("guardrail", {"state": gr_state.value, "answer": out["answer"]})
+        obs.record(
+            state="off_domain", kind="content", node="guardrail",
+            thread_id=_thread_id(), detail="fuera del dominio de TrackFlow",
+        )
         return out
 
     if gr_state is GuardrailState.SMALL_TALK:
@@ -622,6 +680,10 @@ def guardrail_node(state: AgentState) -> dict[str, Any]:
         # Si hay propuesta de memoria pendiente, la respuesta final la genera
         # remember_node al procesar la propuesta (no esta redirección suave).
         tracing.add_step("guardrail", {"state": gr_state.value, "answer": out["answer"]})
+        obs.record(
+            state="small_talk", kind="content", node="guardrail",
+            thread_id=_thread_id(), detail="saludo: redirección suave al dominio",
+        )
         return out
 
     if gr_state is GuardrailState.CASUAL:
@@ -629,6 +691,10 @@ def guardrail_node(state: AgentState) -> dict[str, Any]:
         # redirección al cierre la añade generate_node (validate_output).
         out["answer"] = ""  # limpiar cualquier respuesta obsoleta del estado.
         tracing.add_step("guardrail", {"state": gr_state.value, "answer": "casual_allowed"})
+        obs.record(
+            state="casual", kind="content", node="guardrail",
+            thread_id=_thread_id(), detail="casual permitido con cierre al dominio",
+        )
         return out
 
     # DOMAIN (y cualquier otro estado no bloqueante): limpiar respuestas

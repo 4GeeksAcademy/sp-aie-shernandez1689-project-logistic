@@ -220,4 +220,85 @@ de sanitización devuelve el input sin cambios) confirmó que estas pruebas
 | Clasificador determinista + `validate_output` | `data/pipelines/guardrails.py` |
 | Anti-inyección (`detect_content_injection`, `sanitize_external_content`, `isolate_context_chunks`, `is_injection_attempt`) | `data/pipelines/guardrails.py` |
 | Nodos del grafo (`guardrail`, `casual`, defensa en profundidad, aislamiento en `generate_node`) | `services/rag_agent/graph.py` |
+| Observabilidad de guardarraíles (contador + log JSONL + resumen CLI) | `services/rag_agent/guardrail_observability.py` |
+| Endpoint de resumen | `services/api/routes/agent.py` (`GET /agent/guardrails/summary`) |
+
+---
+
+## 7. Observabilidad mínima de los guardarraíles
+
+Cada vez que un guardarraíl **bloquea** o **redirige** una solicitud, la capa
+de observabilidad registra un evento **sin alterar la decisión** (es
+*best-effort*: si el log no se puede escribir, el bloqueo/redirección ya
+ocurrió y el flujo sigue igual).
+
+### 7.1 Qué se registra y dónde
+
+Un evento incluye: `timestamp` (UTC ISO), `thread_id`, `node` (qué nodo del
+grafo activó el guardarraíl), `state` (estado de guardarraíl), `kind` (tipo
+de fallo) y `detail` (motivo legible).
+
+Los eventos se persisten en **JSONL** en
+`data/audit/guardrail_events.jsonl` (por defecto; sobreescribible con la env
+`AGENT_GUARDRAIL_EVENTS_FILE`). El archivo está en `.gitignore` → es un log de
+**runtime/sesión**, nunca se comitea. El contador en memoria (por proceso) se
+acumula por estado y por tipo de fallo; `reset` limpia la memoria pero no
+borra el archivo (así el resumen sobrevive entre procesos y alimenta el
+endpoint).
+
+### 7.2 Tipos de fallo y sus estados
+
+| `kind` (tipo de fallo) | Estados que lo emiten | Nodo(s) |
+|------------------------|-----------------------|---------|
+| `structural`           | `structural_empty` (pregunta vacía / entrada malformada) | `validate` |
+| `content`              | `personal_task`, `off_domain`, `small_talk`, `casual`, `validate_output` (sustitución por salida no válida), `injection_neutralized` (solo cuando se detecta una instrucción incrustada real en contenido RAG/tool) | `guardrail`, `generate` |
+| `security`             | `jailbreak` (también vía defensa en profundidad en `generate`) | `guardrail`, `generate` |
+
+Nota: el aislamiento de contenido externo (`isolate_context_chunks`) corre en
+toda pregunta RAG como defensa normal; **no** se registra como evento. Solo se
+emite `injection_neutralized` cuando `detect_content_injection` encuentra una
+instrucción incrustada real (delimitador o reescritura de reglas), de modo que
+el contador refleja bloqueos/redirecciones y detecciones, no tráfico normal.
+
+### 7.3 Cómo leer el resumen de una sesión
+
+Dos formas, ambas devuelven **total + desglose por estado + desglose por tipo
+de fallo**:
+
+- **CLI**:
+  ```bash
+  python -m services.rag_agent.guardrail_observability
+  # (o con otra ruta de log: python -m ... --file /ruta/events.jsonl)
+  ```
+  Imprime algo como:
+  ```
+  === Guardarraíles del agente — resumen ===
+  Total activaciones (bloqueos + redirecciones): 7
+  Por estado:
+    - jailbreak       3
+    - off_domain      2
+    ...
+  Por tipo de fallo:
+    - content      4
+    - security     3
+  ```
+- **HTTP**:
+  ```bash
+  curl -s localhost:8000/agent/guardrails/summary
+  # → {"total": 7, "by_state": {...}, "by_kind": {...}}
+  ```
+  El endpoint reconstruye el resumen **desde el log persistido**, no desde la
+  memoria del proceso, de modo que refleja la sesión completa de pruebas.
+
+### 7.4 Garantía determinista
+
+Los tests en `tests/pipelines/test_guardrail_observability.py` ejercitan el
+harness **sin LLM vivo**: verifican que `record` incremente los contadores y
+persista cada evento JSONL, que `build_summary`/`summary_from_file`/`format_summary`
+produzcan el agregado correcto, y que cada bloqueo/redirección del grafo
+(jailbreak, off_domain, personal_task, small_talk, casual, pregunta vacía,
+defensa en profundidad y sustitución por validación de salida) quede
+registrado con su tipo de fallo correcto (`structural` | `content` | `security`).
+El log se apunta a un `tmp_path` y el contador se reinicia por test: la suite
+es repetible y no pisa el log real del repositorio.
 | Tests (clasificador, grafo, salida, coherencia prompt, anti-inyección, build-fail) | `tests/pipelines/test_guardrails.py` |
