@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS rfp_intake.rfp_metadata (
     id                 TEXT PRIMARY KEY,
     ticket_id          TEXT NOT NULL REFERENCES rfp_intake.tickets (ticket_id),
     rfp_id             TEXT NOT NULL,
+    doc_type           TEXT,
     client_name        TEXT,
     client_country     TEXT,
     services_requested JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -53,6 +54,9 @@ CREATE TABLE IF NOT EXISTS rfp_intake.rfp_metadata (
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Idempotente para bases donde la tabla ya existía sin doc_type.
+ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS doc_type TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_rfp_metadata_ticket
     ON rfp_intake.rfp_metadata (ticket_id);

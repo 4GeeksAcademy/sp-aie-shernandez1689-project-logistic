@@ -157,6 +157,11 @@ def process_rfp_pdf(
     pdf_path = Path(pdf_path)
     if not pdf_path.exists() or not pdf_path.is_file():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
+    if persist and not db.is_db_available():
+        # Falla antes de copiar el PDF: sin BD no hay dónde dejar el ticket.
+        raise db.DatabaseNotConfiguredError(
+            "DATABASE_URL no configurada: no se puede persistir el ticket."
+        )
 
     ticket_id = _new_ticket_id()
     rfp_id = f"{ticket_id}-rfp"
@@ -278,12 +283,8 @@ def _persist(
     metadata: dict[str, Any] | None,
     sections: list[dict[str, Any]],
 ) -> None:
-    """Persiste ticket + metadatos + secciones (Parte 1: key_aspects)."""
-    db.save_ticket(ticket)
-    if metadata is not None:
-        db.save_rfp_metadata(metadata)
-    for section in sections:
-        db.save_department_section(section)
+    """Persiste ticket + metadatos + secciones (Parte 1: key_aspects) en PostgreSQL."""
+    db.save_intake(ticket, metadata, sections)
 
 
 def _compose_response(

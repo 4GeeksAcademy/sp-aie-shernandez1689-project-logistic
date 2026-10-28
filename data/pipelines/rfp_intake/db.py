@@ -1,16 +1,15 @@
 """Acceso a datos del pipeline de intake de RFPs (Hito 9, Parte 1).
 
-Mismo patrón que ``data/pipelines/weekly_warehouse_client_performance/db.py``
-y que ``services/api/db_telemetry.py``:
+Ticket, metadatos de la RFP y ``DepartmentSection.key_aspects`` se persisten
+**únicamente** en PostgreSQL (Supabase) vía SQLModel, en el esquema
+``rfp_intake`` (``migrations/001_rfp_intake.sql``). No hay fallback a
+archivos locales (JSONL/TinyDB): sin ``DATABASE_URL`` las operaciones de
+persistencia fallan con ``DatabaseNotConfiguredError``. Para validar el
+flujo sin base de datos usa ``process_rfp_pdf(..., persist=False)``.
 
-- Con ``DATABASE_URL`` configurada: engine SQLAlchemy/SQLModel hacia
-  PostgreSQL (SSLMODE=require), donde se persisten Ticket, RFP metadata y
-  DepartmentSection (BRIEFING §2.3 — "Persistir en PostgreSQL vía capa
-  SQLModel").
-- Sin ``DATABASE_URL`` (modo desarrollo/validación): fallback local que
-  escribe el estado en ``data/eval/rfp_intake/`` como JSON Lines. Ese
-  fallback **no sustituye** al contrato de producción; solo permite
-  ejecutar y validar el flujo de punta a punta sin credenciales.
+Mismo patrón de engine que
+``data/pipelines/weekly_warehouse_client_performance/db.py`` y
+``services/api/db_telemetry.py`` (psycopg, SSLMODE=require).
 
 Regla de capas (Brifing-pipeline.md §5): este módulo pertenece al paquete
 de pipeline en ``data/`` y no importa nada de ``services/``.
@@ -18,17 +17,16 @@ de pipeline en ``data/`` y no importa nada de ``services/``.
 
 from __future__ import annotations
 
-import json
 import os
-from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from dotenv import load_dotenv
 from sqlalchemy.engine import Engine, create_engine, make_url
+from sqlmodel import Session, SQLModel, select
 
-from .config import DEFAULT_EVAL_RFP_DIR, REPO_ROOT
+from .config import REPO_ROOT
+from .models import DepartmentSection, RFPMetadata, Ticket
 
 # Mismo comportamiento que services/api/db_telemetry.py: carga el .env de la
 # raíz del monorepo y el de services/api si existen (desarrollo).
@@ -36,15 +34,17 @@ for _env_candidate in (REPO_ROOT / ".env", REPO_ROOT / "services" / "api" / ".en
     if _env_candidate.exists():
         load_dotenv(_env_candidate, override=False)
 
-# ── Modo local: rutas de archivos de estado ─────────────────────────────────
+_ENGINE: Engine | None = None
 
-TICKETS_PATH = DEFAULT_EVAL_RFP_DIR / "tickets.jsonl"
-RFP_METADATA_PATH = DEFAULT_EVAL_RFP_DIR / "rfp_metadata.jsonl"
-DEPARTMENT_SECTIONS_PATH = DEFAULT_EVAL_RFP_DIR / "department_sections.jsonl"
+_DATETIME_FIELDS = ("created_at", "updated_at", "approved_at")
 
 
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+class DatabaseNotConfiguredError(RuntimeError):
+    """``DATABASE_URL`` no está configurada; no hay dónde persistir."""
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _create_postgres_engine(database_url: str) -> Engine:
@@ -58,213 +58,167 @@ def _create_postgres_engine(database_url: str) -> Engine:
     return create_engine(url, pool_pre_ping=True)
 
 
-def get_engine() -> Engine | None:
-    """Devuelve el engine a PostgreSQL si ``DATABASE_URL`` está configurada.
-
-    Retorna ``None`` en modo local (sin base de datos).
-    """
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        return None
-    return _create_postgres_engine(database_url)
-
-
 def is_db_available() -> bool:
-    """True si el pipeline puede operar en modo base de datos."""
-    return bool(os.getenv("DATABASE_URL"))
+    """True si hay engine configurado (``DATABASE_URL`` o ``set_engine``)."""
+    return _ENGINE is not None or bool(os.getenv("DATABASE_URL"))
 
 
-@contextmanager
-def session_scope() -> Iterator[Any]:
-    """Context manager de sesión SQLModel; ``None`` en modo local."""
-    engine = get_engine()
-    if engine is None:
-        yield None
-        return
-    from sqlmodel import Session
+def get_engine() -> Engine:
+    """Devuelve (y cachea) el engine a PostgreSQL.
 
-    with Session(engine) as session:
-        yield session
-
-
-# ── Modo local: helpers JSONL ───────────────────────────────────────────────
-
-
-def ensure_local_dirs() -> None:
-    """Crea el directorio de estado local de tickets si no existe."""
-    DEFAULT_EVAL_RFP_DIR.mkdir(parents=True, exist_ok=True)
+    Lanza ``DatabaseNotConfiguredError`` si ``DATABASE_URL`` no está definida.
+    """
+    global _ENGINE
+    if _ENGINE is None:
+        database_url = os.getenv("DATABASE_URL")
+        if not database_url:
+            raise DatabaseNotConfiguredError(
+                "DATABASE_URL no configurada: el intake de RFPs persiste en "
+                "PostgreSQL (Supabase). Usa persist=False para validar sin BD."
+            )
+        _ENGINE = _create_postgres_engine(database_url)
+    return _ENGINE
 
 
-def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
-    """Añade un registro JSON a un archivo JSON Lines (modo local)."""
-    ensure_local_dirs()
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+def set_engine(engine: Engine | None) -> None:
+    """Sustituye el engine cacheado (tests / scripts de reproceso)."""
+    global _ENGINE
+    _ENGINE = engine
 
 
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    """Lee todos los registros de un archivo JSON Lines (modo local)."""
-    if not path.exists():
-        return []
-    records: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return records
+def create_tables(engine: Engine | None = None) -> None:
+    """Crea las tablas del esquema ``rfp_intake`` (solo tests/desarrollo).
+
+    En Supabase el esquema se aplica con ``migrations/001_rfp_intake.sql``.
+    """
+    tables = [m.__table__ for m in (Ticket, RFPMetadata, DepartmentSection)]  # type: ignore[attr-defined]
+    SQLModel.metadata.create_all(engine or get_engine(), tables=tables)
 
 
-# ── Parte 1: persistencia de Ticket/RFP metadata/DepartmentSection ──────────
+# ── Conversión dict ⇄ modelo ────────────────────────────────────────────────
+
+
+def _coerce_datetimes(record: dict[str, Any]) -> dict[str, Any]:
+    """Convierte timestamps ISO 8601 (str) a ``datetime`` para las columnas TIMESTAMPTZ."""
+    out = dict(record)
+    for key in _DATETIME_FIELDS:
+        value = out.get(key)
+        if isinstance(value, str):
+            out[key] = datetime.fromisoformat(value)
+    return out
+
+
+def _to_dict(row: SQLModel) -> dict[str, Any]:
+    """Serializa una fila a dict con timestamps en ISO 8601 (contrato de la API)."""
+    data = row.model_dump()
+    for key in _DATETIME_FIELDS:
+        value = data.get(key)
+        if isinstance(value, datetime):
+            data[key] = value.isoformat()
+    return data
+
+
+def _build(model: type[SQLModel], record: dict[str, Any]) -> SQLModel:
+    """Instancia el modelo con timestamps por defecto, ignorando claves ajenas."""
+    record = dict(record)
+    record.setdefault("created_at", _now())
+    record.setdefault("updated_at", record["created_at"])
+    fields = set(model.model_fields)
+    return model(**{k: v for k, v in _coerce_datetimes(record).items() if k in fields})
+
+
+def _upsert(*instances: SQLModel) -> None:
+    """Inserta o actualiza filas por clave primaria en una sola transacción."""
+    with Session(get_engine()) as session:
+        for instance in instances:
+            session.merge(instance)
+            # El ticket debe existir antes que sus hijos (FK).
+            session.flush()
+        session.commit()
+
+
+# ── Escritura ───────────────────────────────────────────────────────────────
 
 
 def save_ticket(ticket: dict[str, Any]) -> None:
-    """Persiste un Ticket.
-
-    Con ``DATABASE_URL`` inserta vía SQLModel contra la tabla
-    ``rfp_intake.tickets``; en modo local lo escribe en
-    ``data/eval/rfp_intake/tickets.jsonl``.
-    """
-    ticket = dict(ticket)
-    ticket.setdefault("created_at", _now_iso())
-    ticket.setdefault("updated_at", ticket["created_at"])
-
-    if is_db_available():
-        _save_ticket_db(ticket)
-    else:
-        _append_jsonl(TICKETS_PATH, ticket)
+    """Persiste un Ticket en ``rfp_intake.tickets``."""
+    _upsert(_build(Ticket, ticket))
 
 
 def save_rfp_metadata(metadata: dict[str, Any]) -> None:
-    """Persiste los metadatos de la RFP (client, country, volumes, legibilidad)."""
-    metadata = dict(metadata)
-    metadata.setdefault("created_at", _now_iso())
-    if is_db_available():
-        _save_rfp_metadata_db(metadata)
-    else:
-        _append_jsonl(RFP_METADATA_PATH, metadata)
+    """Persiste los metadatos de la RFP en ``rfp_intake.rfp_metadata``."""
+    _upsert(_build(RFPMetadata, metadata))
 
 
 def save_department_section(section: dict[str, Any]) -> None:
-    """Persiste una sección de departamento (key_aspects, etc.)."""
-    section = dict(section)
-    section.setdefault("created_at", _now_iso())
-    if is_db_available():
-        _save_department_section_db(section)
-    else:
-        _append_jsonl(DEPARTMENT_SECTIONS_PATH, section)
+    """Persiste una sección de departamento (``key_aspects``, etc.)."""
+    _upsert(_build(DepartmentSection, section))
+
+
+def save_intake(
+    ticket: dict[str, Any],
+    metadata: dict[str, Any] | None,
+    sections: list[dict[str, Any]],
+) -> None:
+    """Persiste Ticket + metadatos + secciones de forma atómica."""
+    instances = [_build(Ticket, ticket)]
+    if metadata is not None:
+        instances.append(_build(RFPMetadata, metadata))
+    instances.extend(_build(DepartmentSection, s) for s in sections)
+    _upsert(*instances)
+
+
+# ── Lectura ─────────────────────────────────────────────────────────────────
 
 
 def list_tickets() -> list[dict[str, Any]]:
-    """Lista los tickets conocidos (ordenados por actualización, más reciente primero)."""
-    if is_db_available():
-        return _list_tickets_db()
-    records = read_jsonl(TICKETS_PATH)
-    # devolver copia sin mutar el almacén
-    return sorted(
-        [dict(r) for r in records],
-        key=lambda r: r.get("updated_at") or r.get("created_at") or "",
-        reverse=True,
-    )
+    """Lista los tickets (más reciente primero)."""
+    with Session(get_engine()) as session:
+        rows = session.exec(
+            select(Ticket).order_by(Ticket.updated_at.desc())  # type: ignore[union-attr]
+        ).all()
+        return [_to_dict(row) for row in rows]
 
 
 def get_ticket(ticket_id: str) -> dict[str, Any] | None:
     """Obtiene un ticket por su id."""
-    for ticket in list_tickets():
-        if ticket.get("ticket_id") == ticket_id:
-            return ticket
-    return None
+    with Session(get_engine()) as session:
+        row = session.get(Ticket, ticket_id)
+        return _to_dict(row) if row is not None else None
 
 
 def get_rfp_metadata(ticket_id: str) -> dict[str, Any] | None:
     """Obtiene los metadatos de la RFP asociados a un ticket."""
-    for record in read_jsonl(RFP_METADATA_PATH):
-        if record.get("ticket_id") == ticket_id:
-            return record
-    return None
+    with Session(get_engine()) as session:
+        row = session.exec(
+            select(RFPMetadata).where(RFPMetadata.ticket_id == ticket_id)
+        ).first()
+        return _to_dict(row) if row is not None else None
 
 
 def get_department_sections(ticket_id: str) -> list[dict[str, Any]]:
-    """Obtiene las secciones de departamento de un ticket."""
-    sections = [
-        dict(r)
-        for r in read_jsonl(DEPARTMENT_SECTIONS_PATH)
-        if r.get("ticket_id") == ticket_id
-    ]
-    return sorted(sections, key=lambda r: r.get("department_id", ""))
-
-
-# ── Parte DB: SQLModel upsert (solo si DATABASE_URL está configurada) ───────
-
-
-def _upsert_db(instance: Any) -> None:
-    """Inserta o actualiza una instancia SQLModel en la BD (modo DB)."""
-    from sqlmodel import Session, select
-
-    engine = get_engine()
-    if engine is None:
-        return
-    with Session(engine) as session:
-        existing = session.get(type(instance), instance.id)  # type: ignore[attr-defined]
-        if existing is not None:
-            for key, value in instance.model_dump().items():
-                setattr(existing, key, value)
-            session.add(existing)
-        else:
-            session.add(instance)
-        session.commit()
-
-
-def _save_ticket_db(ticket: dict[str, Any]) -> None:
-    from models import Ticket  # services/api/models.py — definido en la rama
-
-    _upsert_db(Ticket(**ticket))
-
-
-def _save_rfp_metadata_db(metadata: dict[str, Any]) -> None:
-    from models import RFPRecord  # type: ignore[import-not-found]
-
-    _upsert_db(RFPRecord(**metadata))
-
-
-def _save_department_section_db(section: dict[str, Any]) -> None:
-    from models import DepartmentSectionModel  # type: ignore[import-not-found]
-
-    _upsert_db(DepartmentSectionModel(**section))
-
-
-def _list_tickets_db() -> list[dict[str, Any]]:
-    from sqlmodel import Session, select
-
-    from models import Ticket  # type: ignore[import-not-found]
-
-    engine = get_engine()
-    if engine is None:
-        return []
-    with Session(engine) as session:
+    """Obtiene las secciones de departamento de un ticket (orden por departamento)."""
+    with Session(get_engine()) as session:
         rows = session.exec(
-            select(Ticket).order_by(Ticket.updated_at.desc())  # type: ignore[attr-defined]
+            select(DepartmentSection)
+            .where(DepartmentSection.ticket_id == ticket_id)
+            .order_by(DepartmentSection.department_id)
         ).all()
-        return [row.model_dump() for row in rows]
+        return [_to_dict(row) for row in rows]
 
 
 __all__ = [
+    "DatabaseNotConfiguredError",
     "get_engine",
+    "set_engine",
+    "create_tables",
     "is_db_available",
-    "session_scope",
     "save_ticket",
     "save_rfp_metadata",
     "save_department_section",
+    "save_intake",
     "list_tickets",
     "get_ticket",
     "get_rfp_metadata",
     "get_department_sections",
-    "ensure_local_dirs",
-    "TICKETS_PATH",
-    "RFP_METADATA_PATH",
-    "DEPARTMENT_SECTIONS_PATH",
 ]

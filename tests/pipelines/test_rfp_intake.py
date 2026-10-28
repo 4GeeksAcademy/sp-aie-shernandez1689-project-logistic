@@ -10,9 +10,14 @@ Cubren, de abajo hacia arriba:
 - **Router HTTP** ``/rfp/*`` de ``services/api``: upload multipart,
   listado y detalle con la dependencia de auth sobreescrita.
 
-Los tests no requieren base de datos: en modo local el pipeline usa el
-fallback JSONL (o solo memoria con ``persist=False``), y el router se
-prueba con ``TestClient`` + ``app.dependency_overrides``.
+- **Persistencia** ``db.py``: roundtrip SQLModel de Ticket, metadatos y
+  ``DepartmentSection.key_aspects`` contra SQLite en memoria (mismos modelos
+  que en PostgreSQL; el esquema ``rfp_intake`` se traduce con
+  ``schema_translate_map``). Sin ``DATABASE_URL`` persistir falla — no hay
+  fallback a archivos.
+
+El orquestador se prueba con ``persist=False`` y el router con
+``TestClient`` + ``app.dependency_overrides``.
 """
 
 from __future__ import annotations
@@ -268,6 +273,97 @@ class TestPipelineOrchestrator:
 
 
 # ===================================================================
+# Persistencia — SQLModel (PostgreSQL en producción, SQLite en tests)
+# ===================================================================
+
+
+@pytest.fixture
+def sqlite_db(monkeypatch):
+    """Engine SQLite en memoria con las tablas del esquema ``rfp_intake``."""
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import create_engine
+
+    import data.pipelines.rfp_intake.db as db_mod
+
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    ).execution_options(schema_translate_map={"rfp_intake": None})
+    db_mod.create_tables(engine)
+    db_mod.set_engine(engine)
+    yield db_mod
+    db_mod.set_engine(None)
+
+
+class TestPersistence:
+    def test_save_intake_roundtrip(self, sqlite_db):
+        """Ticket + metadatos + key_aspects se guardan y se leen por SQLModel."""
+        ticket = {"ticket_id": "rfp_t1", "rfp_id": "rfp_t1-rfp",
+                  "status": "analisis_completo", "raw_pdf_path": "/tmp/x.pdf",
+                  "reason": "ok", "created_at": "2026-10-28T10:00:00+00:00",
+                  "updated_at": "2026-10-28T10:00:00+00:00"}
+        metadata = {"id": "rfp_t1-meta", "ticket_id": "rfp_t1",
+                    "rfp_id": "rfp_t1-rfp", "doc_type": "formal",
+                    "client_country": "Spain", "currency": "EUR",
+                    "services_requested": ["warehouse", "reverse"],
+                    "departments_needed": ["warehouse", "reverse"],
+                    "monthly_volume": 3000, "readability": {"words": 10}}
+        sections = [
+            {"id": f"rfp_t1_{d}", "ticket_id": "rfp_t1", "rfp_id": "rfp_t1-rfp",
+             "department_id": d, "key_aspects": [f"Servicio solicitado: {d}"]}
+            for d in ("warehouse", "reverse")
+        ]
+        sqlite_db.save_intake(ticket, metadata, sections)
+
+        stored = sqlite_db.get_ticket("rfp_t1")
+        assert stored["status"] == "analisis_completo"
+        assert stored["created_at"].startswith("2026-10-28T10:00:00")
+        meta = sqlite_db.get_rfp_metadata("rfp_t1")
+        assert meta["currency"] == "EUR"
+        assert meta["doc_type"] == "formal"
+        assert meta["readability"] == {"words": 10}
+        secs = sqlite_db.get_department_sections("rfp_t1")
+        assert [s["department_id"] for s in secs] == ["reverse", "warehouse"]
+        assert secs[1]["key_aspects"] == ["Servicio solicitado: warehouse"]
+        assert secs[1]["approval_status"] == "pendiente"
+
+    def test_save_ticket_upserts(self, sqlite_db):
+        """Guardar el mismo ticket dos veces actualiza, no duplica."""
+        base = {"ticket_id": "rfp_t2", "rfp_id": "r", "status": "analizando",
+                "raw_pdf_path": "/tmp/x.pdf"}
+        sqlite_db.save_ticket(base)
+        sqlite_db.save_ticket({**base, "status": "descartado"})
+        tickets = sqlite_db.list_tickets()
+        assert len(tickets) == 1
+        assert tickets[0]["status"] == "descartado"
+
+    @needs_samples
+    def test_process_sample_persists(self, sqlite_db, tmp_path):
+        """El orquestador deja ticket + secciones activas en la BD."""
+        result = process_rfp_pdf(SAMPLE_PDFS[2], raw_dir=tmp_path)
+        ticket_id = result["ticket_id"]
+        assert sqlite_db.get_ticket(ticket_id)["status"] == "analisis_completo"
+        assert sqlite_db.get_rfp_metadata(ticket_id)["currency"] == "USD"
+        secs = sqlite_db.get_department_sections(ticket_id)
+        assert [s["department_id"] for s in secs] == ["lastmile", "warehouse"]
+        assert all(s["key_aspects"] for s in secs)
+
+    def test_persist_without_database_fails(self, monkeypatch, tmp_path):
+        """Sin DATABASE_URL no hay fallback a archivos: se rechaza persistir."""
+        import data.pipelines.rfp_intake.db as db_mod
+
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        db_mod.set_engine(None)
+        pdf = tmp_path / "x.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        with pytest.raises(db_mod.DatabaseNotConfiguredError):
+            process_rfp_pdf(pdf, raw_dir=tmp_path)
+        with pytest.raises(db_mod.DatabaseNotConfiguredError):
+            db_mod.list_tickets()
+
+
+# ===================================================================
 # Router HTTP — /rfp/upload, /rfp/tickets, /rfp/tickets/{id}
 # ===================================================================
 
@@ -284,6 +380,8 @@ class TestRfpRoutes:
         from main import app
 
         # No escribir en datos reales durante los tests de rutas.
+        monkeypatch.setattr(db_mod, "is_db_available", lambda: True)
+        monkeypatch.setattr(db_mod, "save_intake", lambda *a, **k: None)
         monkeypatch.setattr(db_mod, "save_ticket", lambda *a, **k: None)
         monkeypatch.setattr(
             db_mod, "save_rfp_metadata", lambda *a, **k: None
@@ -433,6 +531,17 @@ class TestRfpRoutes:
         """GET /rfp/tickets/inexistente → 404 (sin aston erros)."""
         resp = api_env.get("/rfp/tickets/inexistente")
         assert resp.status_code == 404
+
+    def test_list_tickets_without_database_503(self, api_env, monkeypatch):
+        """Sin BD configurada el router responde 503 (no 500)."""
+        import data.pipelines.rfp_intake.db as db_mod
+
+        def _raise():
+            raise db_mod.DatabaseNotConfiguredError("sin BD")
+
+        monkeypatch.setattr(db_mod, "list_tickets", _raise)
+        resp = api_env.get("/rfp/tickets")
+        assert resp.status_code == 503
 
     def test_unauthenticated_401(self):
         """Sin token → 401 (auth real, no sobreescrita)."""

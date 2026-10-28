@@ -8,10 +8,9 @@ __pycache__/
 data/audit/*.jsonl
 
 # RFP intake runtime state (Hito 9, Parte 1)
-# data/raw/rfp/        — copias de PDFs subidos vía POST /rfp/upload
-# data/eval/rfp_intake/— tickets/metadatos/secciones en modo local (JSONL)
+# data/raw/rfp/ — copias de PDFs subidos vía POST /rfp/upload
+# (tickets/metadatos/secciones viven en PostgreSQL, esquema rfp_intake)
 data/raw/rfp/
-data/eval/rfp_intake/
 # NOTA: rfp-requests/ NO se ignora — los PDFs de muestra del BRIEFING §4 son
 # fixtures de tests/pipelines/test_rfp_intake.py (ver @needs_samples) y se
 # versionan para que la suite corra igual en clones limpios.

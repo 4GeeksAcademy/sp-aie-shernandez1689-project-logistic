@@ -13,8 +13,10 @@ Uso:
 
 Opciones:
     -p/--persist     Persistir el ticket (por defecto True).
-    --no-persist     No persistir (solo validación, no escribe JSONL/BD).
+    --no-persist     No persistir (solo validación, no escribe en PostgreSQL).
     --json           Salida en JSON (una entrada por archivo).
+
+Persistir requiere DATABASE_URL (PostgreSQL/Supabase).
 """
 
 from __future__ import annotations
@@ -75,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--persist", action="store_true", default=True,
                         help="Persistir el ticket (por defecto)")
     parser.add_argument("--no-persist", dest="persist", action="store_false",
-                        help="Solo validar sin persis-tir (no escribe JSONL/BD)")
+                        help="Solo validar sin persistir (no escribe en PostgreSQL)")
     parser.add_argument("--json", action="store_true", help="Salida JSON")
     args = parser.parse_args(argv)
 

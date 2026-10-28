@@ -78,17 +78,14 @@ VALID_STATUSES: frozenset[str] = frozenset(
     }
 )
 
-# ── Rutas de datos locales (modo sin-DB para desarrollo/validación) ─────────
-# Mismo patrón que data/pipelines/weekly_warehouse_client_performance/db.py:
-# con DATABASE_URL se persiste en PostgreSQL; sin ella se escribe en data/eval.
+# ── Rutas de datos locales ──────────────────────────────────────────────────
+# Solo artefactos de archivo (PDFs). Ticket/metadatos/secciones se persisten
+# en PostgreSQL (ver db.py); no hay estado local en archivos.
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # PDFs subidos (BRIEFING §2.4 — artefacto runtime de recepción, data/raw/).
 DEFAULT_RAW_RFP_DIR = REPO_ROOT / "data" / "raw" / "rfp"
-
-# Estado persistido en modo local (sin DATABASE_URL) — data/eval/rfp_intake/.
-DEFAULT_EVAL_RFP_DIR = REPO_ROOT / "data" / "eval" / "rfp_intake"
 
 # Carpeta con los PDF de prueba del BRIEFING (§4).
 ENV_RFP_SAMPLES_DIR = os.getenv("RFP_SAMPLES_DIR", "")
@@ -98,11 +95,6 @@ DEFAULT_SAMPLES_DIR = REPO_ROOT / "rfp-requests" / "trackflow"
 def raw_rfp_dir() -> Path:
     """Directorio runtime donde se guardan los PDFs recibidos (BRIEFING §2.4)."""
     return DEFAULT_RAW_RFP_DIR
-
-
-def eval_rfp_dir() -> Path:
-    """Directorio de estado persistido en modo local (sin DATABASE_URL)."""
-    return DEFAULT_EVAL_RFP_DIR
 
 
 def samples_dir() -> Path:

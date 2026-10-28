@@ -2,7 +2,7 @@
 
 Flujo (Parte 1): upload → ``extract`` (PDF → texto) → ``classify``
 (RFP de TrackFlow? metadatos, departamentos) → legibilidad → persistir
-ticket. Estado final ``analisis_completo`` o ``descartado``.
+ticket en PostgreSQL. Estado final ``analisis_completo`` o ``descartado``.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from .config import (
     STATUS_ANALISIS_COMPLETO,
     STATUS_ANALIZANDO,
     STATUS_DESCARTADO,
-    eval_rfp_dir,
     raw_rfp_dir,
     samples_dir,
 )
@@ -48,6 +47,5 @@ __all__ = [
     "STATUS_ANALISIS_COMPLETO",
     "DEFAULT_RAW_RFP_DIR",
     "raw_rfp_dir",
-    "eval_rfp_dir",
     "samples_dir",
 ]

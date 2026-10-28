@@ -65,6 +65,15 @@ def _enrich_ticket(ticket: dict[str, Any]) -> dict[str, Any]:
     return {**row, **{k: metadata.get(k) for k in _DISPLAY_FIELDS}}
 
 
+def _db_unavailable(exc: Exception) -> HTTPException:
+    """503 cuando el backend no tiene PostgreSQL configurado."""
+    logger.error("RFP intake sin base de datos: %s", exc)
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Persistencia de RFPs no disponible (DATABASE_URL no configurada).",
+    )
+
+
 def _ensure_pdf(upload: UploadFile) -> None:
     """Valida que el archivo subido parezca un PDF (nombre + head bytes)."""
     suffix = Path(upload.filename or "").suffix.lower()
@@ -103,6 +112,8 @@ async def upload_rfp(
 
     try:
         result = process_rfp_pdf(target, raw_dir=raw_dir)
+    except db.DatabaseNotConfiguredError as exc:
+        raise _db_unavailable(exc) from exc
     except Exception as exc:  # pragma: no cover - errores inesperados del pipeline
         logger.exception("RFP intake falló para %s", file.filename)
         raise HTTPException(
@@ -118,8 +129,10 @@ def list_tickets(
     _user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Lista los tickets de intake (más recientes primero)."""
-    tickets = db.list_tickets()
-    enriched = [_enrich_ticket(t) for t in tickets]
+    try:
+        enriched = [_enrich_ticket(t) for t in db.list_tickets()]
+    except db.DatabaseNotConfiguredError as exc:
+        raise _db_unavailable(exc) from exc
     return {"tickets": enriched, "count": len(enriched)}
 
 
@@ -129,7 +142,10 @@ def get_ticket_detail(
     _user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Detalle de un ticket: metadatos de la RFP + secciones por departamento."""
-    ticket = db.get_ticket(ticket_id)
+    try:
+        ticket = db.get_ticket(ticket_id)
+    except db.DatabaseNotConfiguredError as exc:
+        raise _db_unavailable(exc) from exc
     if ticket is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
