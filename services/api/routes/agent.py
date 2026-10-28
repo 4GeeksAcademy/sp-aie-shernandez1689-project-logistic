@@ -25,6 +25,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services.rag_agent.graph import graph
+from services.rag_agent import guardrail_observability as obs
 from services.rag_agent.tracing import TRACES_DIR, load_trace
 
 logger = logging.getLogger(__name__)
@@ -79,3 +80,20 @@ def agent_query(request: AgentQueryRequest) -> Any:
 @router.get("/health")
 async def agent_health() -> dict[str, str]:
     return {"status": "ok", "service": "agent", "traces_dir": str(TRACES_DIR)}
+
+
+@router.get("/guardrails/summary")
+async def guardrails_summary() -> dict[str, Any]:
+    """Resumen simple de cuántas veces se activó cada guardarraíl.
+
+    Reconstruye el resumen a partir del log persistido en
+    ``AGENT_GUARDRAIL_EVENTS_FILE`` (data/audit/guardrail_events.jsonl),
+    de modo que refleja la sesión de pruebas completa (no solo la memoria
+    del proceso actual). Devuelve total y desglose por estado y por tipo
+    de fallo (structural | content | security).
+    """
+    try:
+        return obs.summary_from_file()
+    except OSError as exc:
+        logger.warning("No se pudo leer el log de guardarraíles: %s", exc)
+        return obs.build_summary({}, {})
