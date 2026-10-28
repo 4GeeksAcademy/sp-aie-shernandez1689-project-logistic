@@ -409,6 +409,7 @@ async function loadDetail(ticketId) {
       createKv("Deadline", metadata.deadline || "—")
     );
     container.append(meta);
+    container.append(createCostSection(metadata));
 
     const services = Array.isArray(metadata.services_requested)
       ? metadata.services_requested.map(departmentLabel).join(", ")
@@ -435,6 +436,36 @@ function createKv(dt, dd) {
   ddEl.textContent = dd;
   div.append(dtEl, ddEl);
   return div;
+}
+
+function fmtScore(value) {
+  return value === null || value === undefined ? "n/d" : String(value);
+}
+
+/** Conversión MarkItDown + legibilidad + costo anticipado de procesamiento. */
+function createCostSection(metadata) {
+  const r = metadata.readability || {};
+  const box = document.createElement("div");
+  box.className = "detail-section";
+  const h4 = document.createElement("h4");
+  h4.textContent = "Conversión y costo de procesamiento";
+  const dl = document.createElement("dl");
+  dl.className = "rfp-result-grid";
+  dl.append(
+    createKv("Costo estimado", metadata.processing_cost || "—"),
+    createKv("Tokens estimados", fmtNumber(metadata.estimated_tokens)),
+    createKv("Palabras / frases", `${fmtNumber(r.num_words)} / ${fmtNumber(r.num_sentences)}`),
+    createKv("Páginas", fmtNumber(metadata.num_pages)),
+    createKv("Flesch-Kincaid", fmtScore(r.flesch_kincaid)),
+    createKv("Flesch", fmtScore(r.flesch)),
+    createKv("Conversor", metadata.converter || "—")
+  );
+  const note = document.createElement("p");
+  note.className = "reason-block";
+  note.textContent = "Índices n/d: py-readability-metrics requiere ≥ 100 palabras.";
+  box.append(h4, dl);
+  if (r.flesch === null || r.flesch === undefined) box.append(note);
+  return box;
 }
 
 function createTextSection(title, text) {

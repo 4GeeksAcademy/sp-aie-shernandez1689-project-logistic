@@ -6,10 +6,11 @@ Flujo de punta a punta (BRIEFING §2.2–§2.4). En la API se parte en dos:
 
     upload ──► register_upload()        PDF → data/raw/rfp/<ticket_id>.pdf
                                         ticket ``analizando``
-           ──► extract_text()           PDF → texto
-           ──► classify()               ¿es RFP de TrackFlow? metadatos,
+           ──► convert_pdf_to_markdown() PDF → Markdown (MarkItDown, obligatorio)
+                                        → data/raw/rfp/<ticket_id>.md
+           ──► classify(markdown)       ¿es RFP de TrackFlow? metadatos,
                                         departamentos, país/moneda
-           ──► compute_readability()    métricas de legibilidad (orientativas)
+           ──► compute_readability()    legibilidad + costo de procesamiento
            ──► persist                  Ticket + RFP metadata + DepartmentSection
            ──┴  estado final: ``analisis_completo`` | ``descartado``
 
@@ -43,7 +44,7 @@ from .config import (
     STATUS_DESCARTADO,
     raw_rfp_dir,
 )
-from .extract import extract_pdf_info, extract_text
+from .extract import convert_pdf_to_markdown, save_markdown
 from .readability_metrics import compute_readability_metrics
 
 logger = logging.getLogger(__name__)
@@ -248,7 +249,11 @@ def _analyze(
     created_at: str | None = None,
     persist: bool,
 ) -> dict[str, Any]:
-    """Extracción → clasificación → metadatos → secciones → estado final."""
+    """Markdown → clasificación → metadatos → secciones → estado final.
+
+    Nada a partir de aquí lee el PDF: clasificador, métricas y (Parte 2)
+    agentes trabajan sobre el Markdown convertido.
+    """
     ids = {
         "ticket_id": ticket_id,
         "rfp_id": rfp_id,
@@ -256,10 +261,13 @@ def _analyze(
         "created_at": created_at,
     }
 
-    # 1) Extracción
-    extraction = extract_pdf_info(pdf_path)
-    text = extraction["text"]
-    if not text or not text.strip():
+    # 1) Conversión PDF → Markdown (antes de que nadie lea el documento)
+    extraction = convert_pdf_to_markdown(pdf_path)
+    markdown = extraction["markdown"]
+    extraction["markdown_path"] = str(
+        save_markdown(markdown, Path(raw_pdf_path).with_suffix(".md"))
+    )
+    if not markdown:
         ticket = _build_ticket(
             status=STATUS_DESCARTADO, reason="documento sin texto extraíble", **ids
         )
@@ -268,7 +276,7 @@ def _analyze(
         return ticket
 
     # 2) Clasificación (determinista, Parte 1)
-    classification = classify(text)
+    classification = classify(markdown)
 
     # 3) ¿RFP de TrackFlow?
     if not classification.is_rfp:
@@ -279,7 +287,7 @@ def _analyze(
 
     # 4) Metadatos enriquecidos + legibilidad + moneda
     currency = resolve_currency(classification.client_country)
-    metadata = _build_metadata(classification, text, currency, rfp_id, ticket_id)
+    metadata = _build_metadata(classification, extraction, currency, rfp_id, ticket_id)
 
     # 5) Secciones por departamento (solo activos)
     sections = _extract_department_sections(classification, currency, rfp_id, ticket_id)
@@ -328,13 +336,14 @@ def _build_ticket(
 
 def _build_metadata(
     classification: ClassificationResult,
-    text: str,
+    extraction: dict[str, Any],
     currency: str,
     rfp_id: str,
     ticket_id: str,
 ) -> dict[str, Any]:
     """Construye el bloque de metadatos de la RFP (BRIEFING §2.3)."""
     now = _now_iso()
+    readability = compute_readability_metrics(extraction["markdown"])
     return {
         "id": f"{ticket_id}-meta",
         "ticket_id": ticket_id,
@@ -348,7 +357,12 @@ def _build_metadata(
         "budget_range": classification.budget_range,
         "departments_needed": classification.departments_needed,
         "currency": currency,
-        "readability": compute_readability_metrics(text),
+        "num_pages": extraction.get("num_pages"),
+        "markdown_path": extraction.get("markdown_path"),
+        "converter": extraction.get("converter"),
+        "estimated_tokens": readability["estimated_tokens"],
+        "processing_cost": readability["processing_cost"],
+        "readability": readability,
         "created_at": now,
         "updated_at": now,
     }
@@ -385,6 +399,7 @@ def _compose_response(
         "source_pdf": {
             "filename": extraction.get("filename"),
             "num_pages": extraction.get("num_pages"),
+            "markdown_path": extraction.get("markdown_path"),
         },
     }
 

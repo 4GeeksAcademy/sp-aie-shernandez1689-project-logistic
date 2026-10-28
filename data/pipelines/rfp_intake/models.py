@@ -72,6 +72,11 @@ class RFPMetadata(SQLModel, table=True):
     budget_range: str | None = None
     departments_needed: list[str] = _json_column([])
     currency: str | None = None
+    num_pages: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
+    markdown_path: str | None = None
+    converter: str | None = None
+    estimated_tokens: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
+    processing_cost: str | None = None
     readability: dict[str, Any] = _json_column({})
     created_at: datetime | None = _ts_column()
     updated_at: datetime | None = _ts_column()

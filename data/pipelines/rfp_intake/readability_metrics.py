@@ -1,18 +1,29 @@
-"""Métricas de legibilidad de una RFP (instalado vía ``uv add py-readability-metrics``).
+"""Métricas de legibilidad y costo de procesamiento de una RFP.
 
-El BRIEFING (§2.3) pide "métricas de legibilidad" en los metadatos de la RFP.
-Este módulo envuelve ``readability.Readability`` de forma segura: devuelve los
-índices que la librería soporta y degrada con ``None`` cuando el texto es
-demasiado corto (Flesch exige ≥ 100 palabras) o cuando la librería lanza una
-excepción — nunca deja caer el pipeline de intake por una métrica.
+Se calculan sobre el Markdown convertido (``extract.convert_pdf_to_markdown``)
+para **anticipar el costo** de que los agentes de la Parte 2 lo procesen:
 
-El tokenizador subyacente es NLTK (train set), aplicable a texto español
-e inglés; la métrica se interpreta como orientativa, no normativa.
+- **Volumen** (siempre disponible): ``num_chars``, ``num_words``,
+  ``num_sentences``, ``avg_words_per_sentence`` y ``estimated_tokens``
+  (≈ caracteres / 4, heurística estándar para modelos tipo GPT/Claude).
+- **Índices de legibilidad** (``py-readability-metrics``): ARI, Coleman-Liau,
+  Dale-Chall, Flesch, Flesch-Kincaid, Gunning Fog, Linsear Write, SMOG. La
+  librería exige ≥ 100 palabras (SMOG ≥ 30 frases); por debajo devuelve
+  ``None``. El tokenizador es NLTK (inglés): en español son orientativos.
+- **``processing_cost``**: ``bajo`` | ``medio`` | ``alto``. Sale de
+  ``estimated_tokens`` (< 1.500 bajo, < 6.000 medio, resto alto); un texto
+  ``medio`` sube a ``alto`` si es denso (Flesch-Kincaid ≥ 14 o > 25
+  palabras/frase). En textos cortos la densidad no se aplica: el costo es
+  despreciable y los índices ingleses sobrestiman el grado del español.
+
+Nunca deja caer el pipeline por una métrica.
 """
 
 from __future__ import annotations
 
 import logging
+import math
+import re
 from typing import Any
 
 from readability import Readability
@@ -20,73 +31,113 @@ from readability.exceptions import ReadabilityException
 
 logger = logging.getLogger(__name__)
 
+CHARS_PER_TOKEN = 4
+COST_TIERS = ("bajo", "medio", "alto")
+TOKENS_MEDIUM = 1500
+TOKENS_HIGH = 6000
+DENSE_GRADE = 14
+DENSE_WORDS_PER_SENTENCE = 25
 
-def _safe_score(callable_fn, metric_name: str) -> float | None:
-    """Delega en un scorer de readability y degrada a ``None`` si falla."""
+_SCORERS = (
+    "ari",
+    "coleman_liau",
+    "dale_chall",
+    "flesch",
+    "flesch_kincaid",
+    "gunning_fog",
+    "linsear_write",
+    "smog",
+)
+
+_MD_SYNTAX = re.compile(r"^\s{0,3}(#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s*)|[|*_`]+", re.MULTILINE)
+
+
+def markdown_to_plain(markdown: str) -> str:
+    """Quita la sintaxis Markdown (encabezados, listas, tablas, énfasis)."""
+    return _MD_SYNTAX.sub(" ", markdown or "")
+
+
+def _score(value: Any) -> float | None:
+    """Normaliza el resultado de un scorer (objeto con ``.score`` o número)."""
+    raw = getattr(value, "score", value)
     try:
-        return round(float(callable_fn()), 2)
+        return round(float(raw), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_score(readability: Readability, metric: str) -> float | None:
+    try:
+        return _score(getattr(readability, metric)())
     except ReadabilityException as exc:
-        # Ej.: Flesch lanza '100 words required.' en textos cortos.
-        logger.debug("Métrica %s no disponible: %s", metric_name, exc)
+        # Ej.: '100 words required.' en textos cortos.
+        logger.debug("Métrica %s no disponible: %s", metric, exc)
         return None
     except Exception as exc:  # pragma: no cover - defensa ante versiones
-        logger.debug("Error inesperado en %s: %s", metric_name, exc)
+        logger.debug("Error inesperado en %s: %s", metric, exc)
         return None
 
 
-def compute_readability_metrics(text: str) -> dict[str, Any]:
-    """Calcula las métricas de legibilidad de un texto.
+def processing_cost(
+    estimated_tokens: int,
+    flesch_kincaid: float | None,
+    avg_words_per_sentence: float | None,
+) -> str:
+    """Nivel de costo de procesamiento a partir de tamaño y densidad."""
+    if estimated_tokens < TOKENS_MEDIUM:
+        tier = 0
+    elif estimated_tokens < TOKENS_HIGH:
+        tier = 1
+    else:
+        tier = 2
+    dense = (flesch_kincaid is not None and flesch_kincaid >= DENSE_GRADE) or (
+        avg_words_per_sentence is not None
+        and avg_words_per_sentence > DENSE_WORDS_PER_SENTENCE
+    )
+    if tier == 1 and dense:
+        tier = 2
+    return COST_TIERS[tier]
 
-    Parameters
-    ----------
-    text : str
-        Texto de la RFP extraído del PDF.
+
+def compute_readability_metrics(markdown: str) -> dict[str, Any]:
+    """Calcula volumen, índices de legibilidad y costo de procesamiento.
 
     Returns
     -------
     dict
-        Claves: num_words, num_sentences, avg_words_per_sentence, plus
-        ari, coleman_liau, dale_chall, flesch, flesch_kincaid, gunning_fog,
-        linsear_write, smog. Cada score es ``float | None``.
+        ``num_chars``, ``num_words``, ``num_sentences``,
+        ``avg_words_per_sentence``, ``estimated_tokens``, los ocho índices
+        (``float | None``) y ``processing_cost``.
     """
+    plain = markdown_to_plain(markdown).strip()
+    num_chars = len(plain)
+    estimated_tokens = math.ceil(num_chars / CHARS_PER_TOKEN)
     stats: dict[str, Any] = {
-        "num_words": None,
+        "num_chars": num_chars,
+        "num_words": len(plain.split()),
         "num_sentences": None,
         "avg_words_per_sentence": None,
-        "ari": None,
-        "coleman_liau": None,
-        "dale_chall": None,
-        "flesch": None,
-        "flesch_kincaid": None,
-        "gunning_fog": None,
-        "linsear_write": None,
-        "smog": None,
+        "estimated_tokens": estimated_tokens,
+        **{metric: None for metric in _SCORERS},
     }
 
-    cleaned = (text or "").strip()
-    if not cleaned:
-        return stats
+    if plain:
+        try:
+            readability = Readability(plain)
+            raw = readability.statistics()
+            stats["num_words"] = raw.get("num_words", stats["num_words"])
+            stats["num_sentences"] = raw.get("num_sentences")
+            avg = raw.get("avg_words_per_sentence")
+            stats["avg_words_per_sentence"] = round(avg, 2) if avg is not None else None
+            for metric in _SCORERS:
+                stats[metric] = _safe_score(readability, metric)
+        except Exception as exc:  # tokenización falla en textos raros
+            logger.warning("No se pudo calcular la legibilidad: %s", exc)
 
-    try:
-        readability = Readability(cleaned)
-    except Exception as exc:  # defensa: tokenización falla en textos raros
-        logger.warning("No se pudo inicializar Readability: %s", exc)
-        return stats
-
-    raw_stats = readability.statistics()
-    stats["num_words"] = raw_stats.get("num_words")
-    stats["num_sentences"] = raw_stats.get("num_sentences")
-    stats["avg_words_per_sentence"] = round(
-        raw_stats.get("avg_words_per_sentence"), 2
-    ) if raw_stats.get("avg_words_per_sentence") is not None else None
-
-    stats["ari"] = _safe_score(readability.ari, "ari")
-    stats["coleman_liau"] = _safe_score(readability.coleman_liau, "coleman_liau")
-    stats["dale_chall"] = _safe_score(readability.dale_chall, "dale_chall")
-    stats["flesch"] = _safe_score(readability.flesch, "flesch")
-    stats["flesch_kincaid"] = _safe_score(readability.flesch_kincaid, "flesch_kincaid")
-    stats["gunning_fog"] = _safe_score(readability.gunning_fog, "gunning_fog")
-    stats["linsear_write"] = _safe_score(readability.linsear_write, "linsear_write")
-    stats["smog"] = _safe_score(readability.smog, "smog")
-
+    stats["processing_cost"] = processing_cost(
+        estimated_tokens, stats["flesch_kincaid"], stats["avg_words_per_sentence"]
+    )
     return stats
+
+
+__all__ = ["compute_readability_metrics", "markdown_to_plain", "processing_cost"]

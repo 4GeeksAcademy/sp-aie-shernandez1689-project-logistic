@@ -50,13 +50,23 @@ CREATE TABLE IF NOT EXISTS rfp_intake.rfp_metadata (
     budget_range       TEXT,
     departments_needed JSONB NOT NULL DEFAULT '[]'::jsonb,
     currency           TEXT,
+    num_pages          INTEGER,
+    markdown_path      TEXT,
+    converter          TEXT,
+    estimated_tokens   INTEGER,
+    processing_cost    TEXT CHECK (processing_cost IN ('bajo', 'medio', 'alto')),
     readability        JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Idempotente para bases donde la tabla ya existía sin doc_type.
+-- Idempotente para bases donde la tabla ya existía sin estas columnas.
 ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS doc_type TEXT;
+ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS num_pages INTEGER;
+ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS markdown_path TEXT;
+ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS converter TEXT;
+ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS estimated_tokens INTEGER;
+ALTER TABLE rfp_intake.rfp_metadata ADD COLUMN IF NOT EXISTS processing_cost TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_rfp_metadata_ticket
     ON rfp_intake.rfp_metadata (ticket_id);
@@ -65,6 +75,12 @@ CREATE INDEX IF NOT EXISTS idx_rfp_metadata_country
 
 COMMENT ON TABLE rfp_intake.rfp_metadata IS
     'Metadatos extraídos de la RFP: cliente, país (moneda), volumen, legibilidad (BRIEFING §2.3).';
+COMMENT ON COLUMN rfp_intake.rfp_metadata.markdown_path IS
+    'Markdown convertido con MarkItDown (data/raw/rfp/<ticket_id>.md): lo que leen clasificador y agentes.';
+COMMENT ON COLUMN rfp_intake.rfp_metadata.processing_cost IS
+    'Costo anticipado de procesamiento (bajo|medio|alto) por tokens estimados y densidad del texto.';
+COMMENT ON COLUMN rfp_intake.rfp_metadata.readability IS
+    'Volumen (chars, palabras, frases, tokens estimados) + índices py-readability-metrics (null si < 100 palabras).';
 COMMENT ON COLUMN rfp_intake.rfp_metadata.currency IS
     'Moneda de la propuesta según país (BRIEFING §5: US→USD, España→EUR).';
 

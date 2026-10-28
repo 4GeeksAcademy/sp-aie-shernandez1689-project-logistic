@@ -277,6 +277,102 @@ class TestPipelineOrchestrator:
 
 
 # ===================================================================
+# Conversión PDF → Markdown + legibilidad / costo de procesamiento
+# ===================================================================
+
+
+class TestMarkdownConversion:
+    @needs_samples
+    def test_markitdown_converts_sample(self):
+        from data.pipelines.rfp_intake.extract import convert_pdf_to_markdown
+
+        doc = convert_pdf_to_markdown(SAMPLE_PDFS[1])
+        assert doc["converter"].startswith("markitdown")
+        assert doc["num_pages"] == 1
+        assert "ModaViva Fashion S.L." in doc["markdown"]
+
+    def test_missing_markitdown_is_explicit(self, monkeypatch, tmp_path):
+        """Sin MarkItDown no hay fallback silencioso: error explícito."""
+        import builtins
+
+        import data.pipelines.rfp_intake.extract as extract_mod
+
+        real_import = builtins.__import__
+
+        def _no_markitdown(name, *args, **kwargs):
+            if name == "markitdown":
+                raise ImportError("no markitdown")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(extract_mod, "_markitdown", None)
+        monkeypatch.setattr(builtins, "__import__", _no_markitdown)
+        pdf = tmp_path / "x.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        with pytest.raises(extract_mod.ConversionUnavailableError):
+            extract_mod.convert_pdf_to_markdown(pdf)
+
+    @needs_samples
+    def test_pipeline_classifies_markdown_and_saves_md(self, tmp_path, monkeypatch):
+        """El clasificador recibe el Markdown y el .md queda junto al PDF."""
+        import data.pipelines.rfp_intake.pipeline as pipeline_mod
+
+        seen = {}
+        real_classify = pipeline_mod.classify
+
+        def _spy(text):
+            seen["text"] = text
+            return real_classify(text)
+
+        monkeypatch.setattr(pipeline_mod, "classify", _spy)
+        result = process_rfp_pdf(SAMPLE_PDFS[1], raw_dir=tmp_path, persist=False)
+        md_path = Path(result["metadata"]["markdown_path"])
+        assert md_path == tmp_path / f"{result['ticket_id']}.md"
+        assert md_path.read_text(encoding="utf-8").strip() == seen["text"]
+        assert result["metadata"]["converter"].startswith("markitdown")
+
+
+class TestReadabilityMetrics:
+    def test_volume_metrics_always_present(self):
+        from data.pipelines.rfp_intake.readability_metrics import (
+            compute_readability_metrics,
+        )
+
+        stats = compute_readability_metrics("## Hola\n\n| a | b |\nTexto corto.")
+        assert stats["num_words"] > 0
+        assert stats["estimated_tokens"] > 0
+        assert stats["flesch"] is None  # < 100 palabras
+        assert stats["processing_cost"] == "bajo"
+        assert "#" not in str(stats)  # sin sintaxis Markdown contada
+
+    @needs_samples
+    def test_scores_computed_for_long_text(self):
+        """Regresión: los índices devolvían siempre None (objeto vs float)."""
+        from data.pipelines.rfp_intake.extract import convert_pdf_to_markdown
+        from data.pipelines.rfp_intake.readability_metrics import (
+            compute_readability_metrics,
+        )
+
+        stats = compute_readability_metrics(
+            convert_pdf_to_markdown(SAMPLE_PDFS[1])["markdown"]
+        )
+        assert stats["num_words"] >= 100
+        assert isinstance(stats["flesch_kincaid"], float)
+        assert isinstance(stats["ari"], float)
+
+    @pytest.mark.parametrize("tokens,grade,wps,expected", [
+        (239, 17.6, 19.0, "bajo"),   # corto: la densidad no sube el nivel
+        (2000, 10.0, 12.0, "medio"),
+        (2000, 15.0, 12.0, "alto"),  # medio + denso
+        (2000, None, 30.0, "alto"),
+        (7000, None, None, "alto"),
+    ])
+    def test_processing_cost_tiers(self, tokens, grade, wps, expected):
+        from data.pipelines.rfp_intake.readability_metrics import processing_cost
+
+        assert processing_cost(tokens, grade, wps) == expected
+
+
+# ===================================================================
 # Persistencia — SQLModel (PostgreSQL en producción, SQLite en tests)
 # ===================================================================
 
@@ -348,7 +444,15 @@ class TestPersistence:
         result = process_rfp_pdf(SAMPLE_PDFS[2], raw_dir=tmp_path)
         ticket_id = result["ticket_id"]
         assert sqlite_db.get_ticket(ticket_id)["status"] == "analisis_completo"
-        assert sqlite_db.get_rfp_metadata(ticket_id)["currency"] == "USD"
+        meta = sqlite_db.get_rfp_metadata(ticket_id)
+        assert meta["currency"] == "USD"
+        # Métricas de conversión y costo persistidas junto al ticket.
+        assert meta["converter"].startswith("markitdown")
+        assert meta["num_pages"] == 1
+        assert meta["markdown_path"].endswith(f"{ticket_id}.md")
+        assert meta["estimated_tokens"] > 0
+        assert meta["processing_cost"] in ("bajo", "medio", "alto")
+        assert meta["readability"]["num_words"] > 0
         secs = sqlite_db.get_department_sections(ticket_id)
         assert [s["department_id"] for s in secs] == ["lastmile", "warehouse"]
         assert all(s["key_aspects"] for s in secs)
@@ -397,7 +501,7 @@ class TestTicketMode:
         def _boom(_path):
             raise ValueError("pdf corrupto")
 
-        monkeypatch.setattr(pipeline_mod, "extract_pdf_info", _boom)
+        monkeypatch.setattr(pipeline_mod, "convert_pdf_to_markdown", _boom)
         ticket = register_upload(b"%PDF-1.4 roto", raw_dir=tmp_path)
         result = analyze_ticket(ticket["ticket_id"])
         assert result["status"] == "descartado"

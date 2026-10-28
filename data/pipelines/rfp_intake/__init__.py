@@ -1,7 +1,8 @@
 """Paquete del pipeline de intake de RFPs (TrackFlow, Hito 9 - Parte 1).
 
 Flujo (Parte 1): upload (``register_upload``: PDF en data/raw/ + ticket
-``analizando``) → en segundo plano ``analyze_ticket``: ``extract`` (PDF → texto) → ``classify``
+``analizando``) → en segundo plano ``analyze_ticket``: ``extract``
+(PDF → Markdown con MarkItDown) (PDF → texto) → ``classify``
 (RFP de TrackFlow? metadatos, departamentos) → legibilidad → persistir
 ticket en PostgreSQL. Estado final ``analisis_completo`` o ``descartado``.
 """
@@ -23,7 +24,7 @@ from .config import (
     raw_rfp_dir,
     samples_dir,
 )
-from .extract import extract_pdf_info, extract_text
+from .extract import ConversionUnavailableError, convert_pdf_to_markdown
 from .pipeline import (
     analyze_ticket,
     process_rfp_pdf,
@@ -36,8 +37,8 @@ __all__ = [
     # clasificador / extractor
     "ClassificationResult",
     "classify",
-    "extract_text",
-    "extract_pdf_info",
+    "ConversionUnavailableError",
+    "convert_pdf_to_markdown",
     # orquestador
     "register_upload",
     "analyze_ticket",

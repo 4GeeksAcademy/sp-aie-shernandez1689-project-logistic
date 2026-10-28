@@ -1,6 +1,14 @@
 # Progress
 
 ## Estado actual del desarrollo
+- RFP INTAKE — ingesta y conversión PDF → Markdown (rama `feature/rfp-intake`, pendiente de commit):
+  - Bug encontrado: MarkItDown devolvía 0 caracteres en todos los PDF (faltaba el extra `[pdf]`/pdfminer) y el pipeline caía sin avisar a `pypdf` (texto plano). Corregido: dependencia `markitdown[pdf]>=0.1.9` en `pyproject.toml` + `uv.lock`.
+  - `extract.py`: `convert_pdf_to_markdown()` con MarkItDown obligatorio, sin fallback silencioso (`ConversionUnavailableError` si falta). `pypdf` solo cuenta páginas. El `.md` se guarda junto al PDF (`data/raw/rfp/<ticket_id>.md`); clasificador y métricas leen el Markdown, nunca el PDF.
+  - `readability_metrics.py`: bug previo — los índices salían siempre `None` (se hacía `float()` sobre el objeto resultado en vez de `.score`). Ahora: volumen siempre presente (`num_chars`, `num_words`, `num_sentences`, `estimated_tokens` ≈ chars/4) + 8 índices py-readability-metrics (null si < 100 palabras) + `processing_cost` bajo/medio/alto (por tokens: < 1.500 / < 6.000; `medio` denso → `alto`). Se calcula sobre texto sin sintaxis Markdown.
+  - PostgreSQL: nuevas columnas en `rfp_intake.rfp_metadata`: `num_pages`, `markdown_path`, `converter`, `estimated_tokens`, `processing_cost` (+ `ALTER ... ADD COLUMN IF NOT EXISTS`); métricas completas en JSONB `readability`.
+  - UI: sección "Conversión y costo de procesamiento" en el detalle del ticket.
+  - Validación: tests RFP 48 → 58 passed; regresión `tests/pipelines` idéntica al baseline; smoke uvicorn + SQLite: muestra 1 → 239 tokens, coste bajo, FK 17,65; muestra 2 → 105 tokens, índices null (< 100 palabras); muestra 3 descartada con `.md` generado.
+  - Nota: `services/api/requirements.txt` no incluye markitdown/readability/pypdf (ni celery); el entorno real es el venv raíz (`pyproject.toml`). Pendiente decidir si se sincroniza.
 - RFP INTAKE — recepción en modo ticket (rama `feature/rfp-intake`, pendiente de commit):
   - Decisión (aprobada por el desarrollador): async con FastAPI `BackgroundTasks` en el proceso del backend, no Celery (el worker de docker-compose no comparte `data/raw/` con el backend). Riesgo asumido: si el backend se reinicia a mitad, el ticket queda en `analizando` → reprocesar con `scripts/rfp_intake.py`.
   - `pipeline.py`: `register_upload(bytes)` guarda `data/raw/rfp/<ticket_id>.pdf` + ticket `analizando`; `analyze_ticket(ticket_id)` corre el análisis y deja `analisis_completo`/`descartado` (conserva `created_at`; un error inesperado → `descartado` con motivo, nunca colgado). `process_rfp_pdf` (CLI) reutiliza ambos.
