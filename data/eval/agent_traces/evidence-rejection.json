@@ -1,22 +1,31 @@
 {
   "schema_version": 2,
   "thread_id": "evidence-rejection",
-  "started_at": "2026-10-27T16:54:43+00:00",
-  "completed_at": "2026-10-27T16:54:43+00:00",
+  "started_at": "2026-10-28T12:34:24+00:00",
+  "completed_at": "2026-10-28T12:34:24+00:00",
   "question": "¿Quién es el gerente de logística?",
   "steps": [
     {
       "seq": 1,
       "node": "validate",
-      "started_at": "2026-10-27T16:54:43+00:00",
+      "started_at": "2026-10-28T12:34:24+00:00",
       "output": {
         "question": "¿Quién es el gerente de logística?"
       }
     },
     {
       "seq": 2,
+      "node": "guardrail",
+      "started_at": "2026-10-28T12:34:24+00:00",
+      "output": {
+        "guardrail_state": "domain",
+        "answer": ""
+      }
+    },
+    {
+      "seq": 3,
       "node": "remember",
-      "started_at": "2026-10-27T16:54:43+00:00",
+      "started_at": "2026-10-28T12:34:24+00:00",
       "output": {
         "n_prefs": 0,
         "n_semantic_hits": 0,
@@ -24,12 +33,50 @@
         "processed_proposal": false,
         "intent_classification": null
       }
+    },
+    {
+      "seq": 4,
+      "node": "intent",
+      "started_at": "2026-10-28T12:34:24+00:00",
+      "output": {
+        "incident_query": null,
+        "inventory_query": null,
+        "use_rag": true
+      }
+    },
+    {
+      "seq": 5,
+      "node": "retrieve",
+      "started_at": "2026-10-28T12:34:24+00:00",
+      "output": {
+        "context": [],
+        "n_hits": 0,
+        "sources": []
+      }
+    },
+    {
+      "seq": 6,
+      "node": "no_context",
+      "started_at": "2026-10-28T12:34:24+00:00",
+      "output": {
+        "answer": "Lo siento, no tengo información sobre eso en mi base de conocimiento. Consulta con el equipo comercial de TrackFlow para datos actualizados."
+      }
+    },
+    {
+      "seq": 7,
+      "node": "memorize",
+      "started_at": "2026-10-28T12:34:24+00:00",
+      "output": {
+        "proposal_type": "none",
+        "proposal_text": null
+      }
     }
   ],
   "final_state": {
     "question": "¿Quién es el gerente de logística?",
     "context": [],
-    "answer": "Entendido. No guardo nada.",
+    "answer": "Lo siento, no tengo información sobre eso en mi base de conocimiento. Consulta con el equipo comercial de TrackFlow para datos actualizados.",
+    "guardrail_state": "domain",
     "incident_query": null,
     "inventory_query": null,
     "use_rag": true,
@@ -43,10 +90,13 @@
     },
     "_memory_loaded": true,
     "_memorized": {
-      "proposal_type": "fact",
-      "proposed": true
+      "proposal_type": "none",
+      "proposed": false
     },
-    "_memory_proposal": null,
+    "_memory_proposal": {
+      "type": "none",
+      "payload": {}
+    },
     "_memory_intent_classification": null,
     "consolidation_pending": false,
     "_consolidation_report": {
@@ -60,9 +110,11 @@
     }
   },
   "routing": {
-    "decision": "none",
-    "used_rag": false,
+    "decision": "rag",
+    "used_rag": true,
     "tools": [],
-    "order": []
+    "order": [
+      "rag:retrieve"
+    ]
   }
 }

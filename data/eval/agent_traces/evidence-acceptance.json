@@ -1,22 +1,31 @@
 {
   "schema_version": 2,
   "thread_id": "evidence-acceptance",
-  "started_at": "2026-10-27T16:54:43+00:00",
-  "completed_at": "2026-10-27T16:54:43+00:00",
+  "started_at": "2026-10-28T12:34:23+00:00",
+  "completed_at": "2026-10-28T12:34:23+00:00",
   "question": "¿Cuál es el límite de stock?",
   "steps": [
     {
       "seq": 1,
       "node": "validate",
-      "started_at": "2026-10-27T16:54:43+00:00",
+      "started_at": "2026-10-28T12:34:23+00:00",
       "output": {
         "question": "¿Cuál es el límite de stock?"
       }
     },
     {
       "seq": 2,
+      "node": "guardrail",
+      "started_at": "2026-10-28T12:34:23+00:00",
+      "output": {
+        "guardrail_state": "domain",
+        "answer": ""
+      }
+    },
+    {
+      "seq": 3,
       "node": "remember",
-      "started_at": "2026-10-27T16:54:43+00:00",
+      "started_at": "2026-10-28T12:34:23+00:00",
       "output": {
         "n_prefs": 0,
         "n_semantic_hits": 1,
@@ -24,11 +33,64 @@
         "processed_proposal": false,
         "intent_classification": null
       }
+    },
+    {
+      "seq": 4,
+      "node": "intent",
+      "started_at": "2026-10-28T12:34:23+00:00",
+      "output": {
+        "incident_query": null,
+        "inventory_query": {
+          "sku_id": null
+        },
+        "use_rag": false
+      }
+    },
+    {
+      "seq": 5,
+      "node": "inventory_lookup",
+      "started_at": "2026-10-28T12:34:23+00:00",
+      "output": {
+        "inventory_result": {
+          "product": null,
+          "description": null,
+          "resolved": false,
+          "error": null
+        },
+        "tool_answers": [
+          "No pude consultar el stock de ese producto ahora mismo. Inténtalo de nuevo más tarde."
+        ],
+        "tool_context": [
+          {
+            "text": "No pude consultar el stock de ese producto ahora mismo. Inténtalo de nuevo más tarde.",
+            "source_document": "inventory_lookup",
+            "section": "consulta de stock"
+          }
+        ]
+      }
+    },
+    {
+      "seq": 6,
+      "node": "generate",
+      "started_at": "2026-10-28T12:34:23+00:00",
+      "output": {
+        "answer": "Hechos recordados relevantes:\n  - {'id': 'fact-001', 'text': 'límite de stock es 100 unidades', 'memory_type': 'fact', 'metadata': {'key': 'fact:limite_de_stock'}, 'score': 0.92, 'created_at': '2026-10-27T10:00:00'}\n\nNo pude consultar el stock de ese producto ahora mismo. Inténtalo de nuevo más tarde.\nNo pude consultar el stock de ese producto ahora mismo. Inténtalo de nuevo más tarde."
+      }
+    },
+    {
+      "seq": 7,
+      "node": "memorize",
+      "started_at": "2026-10-28T12:34:23+00:00",
+      "output": {
+        "proposal_type": "none",
+        "proposal_text": null
+      }
     }
   ],
   "final_state": {
     "question": "¿Cuál es el límite de stock?",
-    "answer": "✅ Hecho recordado. Lo tendré presente cuando sea relevante.",
+    "answer": "Hechos recordados relevantes:\n  - {'id': 'fact-001', 'text': 'límite de stock es 100 unidades', 'memory_type': 'fact', 'metadata': {'key': 'fact:limite_de_stock'}, 'score': 0.92, 'created_at': '2026-10-27T10:00:00'}\n\nNo pude consultar el stock de ese producto ahora mismo. Inténtalo de nuevo más tarde.\nNo pude consultar el stock de ese producto ahora mismo. Inténtalo de nuevo más tarde.",
+    "guardrail_state": "domain",
     "incident_query": null,
     "inventory_query": {
       "sku_id": null
@@ -41,9 +103,15 @@
       "error": null
     },
     "tool_answers": [
+      "No pude consultar el stock de ese producto ahora mismo. Inténtalo de nuevo más tarde.",
       "No pude consultar el stock de ese producto ahora mismo. Inténtalo de nuevo más tarde."
     ],
     "tool_context": [
+      {
+        "text": "No pude consultar el stock de ese producto ahora mismo. Inténtalo de nuevo más tarde.",
+        "source_document": "inventory_lookup",
+        "section": "consulta de stock"
+      },
       {
         "text": "No pude consultar el stock de ese producto ahora mismo. Inténtalo de nuevo más tarde.",
         "source_document": "inventory_lookup",
@@ -69,10 +137,13 @@
     },
     "_memory_loaded": true,
     "_memorized": {
-      "proposal_type": "fact",
-      "proposed": true
+      "proposal_type": "none",
+      "proposed": false
     },
-    "_memory_proposal": null,
+    "_memory_proposal": {
+      "type": "none",
+      "payload": {}
+    },
     "_memory_intent_classification": null,
     "consolidation_pending": false,
     "_consolidation_report": {
@@ -86,9 +157,13 @@
     }
   },
   "routing": {
-    "decision": "none",
+    "decision": "tool",
     "used_rag": false,
-    "tools": [],
-    "order": []
+    "tools": [
+      "inventory_lookup"
+    ],
+    "order": [
+      "tool:inventory_lookup"
+    ]
   }
 }

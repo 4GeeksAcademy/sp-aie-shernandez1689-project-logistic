@@ -1,22 +1,31 @@
 {
   "schema_version": 2,
   "thread_id": "audit-acceptance",
-  "started_at": "2026-10-27T16:54:43+00:00",
-  "completed_at": "2026-10-27T16:54:43+00:00",
+  "started_at": "2026-10-28T12:34:24+00:00",
+  "completed_at": "2026-10-28T12:34:24+00:00",
   "question": "sí, guárdalo",
   "steps": [
     {
       "seq": 1,
       "node": "validate",
-      "started_at": "2026-10-27T16:54:43+00:00",
+      "started_at": "2026-10-28T12:34:24+00:00",
       "output": {
         "question": "sí, guárdalo"
       }
     },
     {
       "seq": 2,
+      "node": "guardrail",
+      "started_at": "2026-10-28T12:34:24+00:00",
+      "output": {
+        "guardrail_state": "off_domain",
+        "answer": ""
+      }
+    },
+    {
+      "seq": 3,
       "node": "remember",
-      "started_at": "2026-10-27T16:54:43+00:00",
+      "started_at": "2026-10-28T12:34:24+00:00",
       "output": {
         "n_prefs": 0,
         "n_semantic_hits": 0,
@@ -29,6 +38,7 @@
   "final_state": {
     "question": "sí, guárdalo",
     "answer": "✅ Hecho recordado. Lo tendré presente cuando sea relevante.",
+    "guardrail_state": "off_domain",
     "incident_query": null,
     "inventory_query": {
       "sku_id": null
