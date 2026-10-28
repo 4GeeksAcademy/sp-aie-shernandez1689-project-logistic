@@ -1,6 +1,13 @@
 # Progress
 
 ## Estado actual del desarrollo
+- RFP INTAKE — preguntas de diseño + checklist de entrega (rama `feature/rfp-intake`, pendiente de commit):
+  - Doc de preguntas de diseño (Claude Docs): https://claude.ai/artifact/CJmEVe8dqq79Ho84L8BReM — 5 respuestas + diagrama del ciclo de vida del ticket + tabla de huecos abiertos.
+  - Clasificador: falso negativo corregido — un título explícito ("Request for Proposal", "Solicitud de propuesta/cotización") en los primeros 300 caracteres cuenta como señal de cliente; una mención suelta a "RFP" no. Sigue exigiendo servicio logístico.
+  - Barrido de tickets atascados: `tickets.attempts` (migración idempotente); `analyze_ticket()` registra intento + renueva `updated_at`; `recover_stale_tickets()` (> 10 min sin actividad → reanaliza; sin PDF o ≥ 3 intentos → descartado) corre en el lifespan de `services/api` al arrancar y cada `RFP_RECOVERY_INTERVAL_SECONDS` (300; 0 desactiva). Probado matando uvicorn a mitad: al reiniciar → `analisis_completo`, attempts=2.
+  - Checklist: los descartados ahora guardan `rfp_metadata` (conversión + legibilidad, sin departamentos ni handoff); el handoff lleva `ticket_id`, `rfp_id` y `sections` (department_id, owner, key_aspects, open_questions) — contrato documentado en `graph.py`.
+  - Validación: RFP 79 + 2 E2E passed; `tests/pipelines` 446 passed, mismos 52 fallos previos; verificación con uvicorn real de las 3 muestras subidas a la vez.
+  - Huecos abiertos (en el doc): reabrir ticket descartado; distinguir error técnico de descarte; servicio fuera de alcance (aduanas) sin rastro; árbitro de contradicciones (Parte 2/3). Persistencia contra Supabase real sin verificar (sin DATABASE_URL).
 - RFP INTAKE — pruebas y verificación por la UI (rama `feature/rfp-intake`, pendiente de commit):
   - Unitarios en `tests/pipelines/test_rfp_intake.py`: clasificador (país, cliente, volumen, presupuesto/fecha, 3 escenarios del BRIEFING + nuevo caso de última milla excluida) y workers (`TestDepartmentWorkers`: lastmile, reverse, cifra no respaldada descartada; además warehouse en `TestDepartmentGraph`). 65 → 69 tests.
   - E2E nuevo `tests/pipelines/test_rfp_intake_ui.py` (Playwright + Chromium): sube los 3 PDF del BRIEFING por el formulario de `uis/backoffice/rfp` contra la API real (uvicorn, JWT real, BackgroundTasks, SQLite en archivo en lugar de Supabase). Verifica formal/informal → `analisis_completo`, pitch → `descartado`, tabla, PDF + .md en raw, detalle (Ventas: Ana Whitfield + Sofía Ramos, sin Carlos Vega; handoff `generando_borrador`), cero errores de consola; y rechazo de .pdf falso. Estable 10/10. Se omite si no hay Playwright/Chromium o el puerto 5500 está ocupado. `RFP_UI_SCREENSHOT=<png>` guarda captura.

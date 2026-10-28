@@ -1,6 +1,7 @@
+import asyncio
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -22,7 +23,7 @@ from services.reporting import router as reporting_router  # noqa: E402
 #  POST /rfp/upload              — sube PDF y procesa: ticket analizado/descartado
 #  GET  /rfp/tickets             — lista tickets de intake
 #  GET  /rfp/tickets/{ticket_id} — detalle con metadatos + departamentos
-from routes.rfp import router as rfp_router  # noqa: E402
+from routes.rfp import rfp_recovery_loop, router as rfp_router  # noqa: E402
 
 # RAG router — base de conocimiento de TrackFlow.
 from routes.rag import router as rag_router  # noqa: E402
@@ -47,7 +48,12 @@ async def lifespan(application: FastAPI):
         logging.getLogger(__name__).warning(
             "DATABASE_URL is not configured; telemetry table creation skipped"
         )
+    # Barrido de tickets RFP atascados en "analizando" (proceso caído a mitad).
+    recovery = asyncio.create_task(rfp_recovery_loop())
     yield
+    recovery.cancel()
+    with suppress(asyncio.CancelledError):
+        await recovery
 
 
 app = FastAPI(title="TrackFlow Operations API", lifespan=lifespan)

@@ -69,6 +69,15 @@ _RFP_HEADER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Título explícito de RFP al inicio del documento ("Request for Proposal — …",
+# "Solicitud de propuesta …"). A diferencia de _RFP_HEADER_RE no acepta un
+# "RFP" suelto en el cuerpo: solo la frase completa en la cabecera.
+_RFP_TITLE_RE = re.compile(
+    r"request\s+for\s+(proposal|quotation)|solicitud\s+de\s+(propuesta|cotizaci[oó]n)",
+    re.IGNORECASE,
+)
+_TITLE_WINDOW_CHARS = 300
+
 # Señales de "documento NO es RFP de cliente": un transportista/vendor que
 # VENDE tarifas A TrackFlow (inbound pitch), no un prospecto tercerizando.
 _VENDOR_PITCH_RE = re.compile(
@@ -216,7 +225,8 @@ def classify(text: str) -> ClassificationResult:
     1. Texto vacío → rechazar (``unknown``).
     2. Señal de **pitch entrante de vendor/transportista** (vende tarifas A
        TrackFlow) → rechazar con ``doc_type='invalid'`` (BRIEFING §4, doc 3).
-    3. Señal de **cliente tercerizando** → aceptar. El tipo se decide por la
+    3. Señal de **cliente tercerizando** (frase de cliente o título
+       explícito de RFP en la cabecera) → aceptar. El tipo se decide por la
        estructura del encabezado: ``formal`` si trae cabecera de RFP explícita
        ("Request for Proposal", "Solicitud de propuesta", "RFP"); si no,
        ``informal`` (p. ej. un correo pidiendo servicios — BRIEFING §4, doc 2).
@@ -244,8 +254,11 @@ def classify(text: str) -> ClassificationResult:
         )
         return result
 
-    # 2) ¿Es un cliente tercerizando su logística?
-    if not _CLIENT_RFP_RE.search(cleaned):
+    # 2) ¿Es un cliente tercerizando su logística? Vale la frase de cliente
+    #    ("necesitamos", "we need"…) o un título explícito de RFP en la
+    #    cabecera: una RFP formal puede no usar ninguna frase gatillo.
+    has_rfp_title = bool(_RFP_TITLE_RE.search(cleaned[:_TITLE_WINDOW_CHARS]))
+    if not (_CLIENT_RFP_RE.search(cleaned) or has_rfp_title):
         result.is_rfp = False
         result.doc_type = "unknown"
         result.reason = "sin señales de RFP de cliente de TrackFlow"

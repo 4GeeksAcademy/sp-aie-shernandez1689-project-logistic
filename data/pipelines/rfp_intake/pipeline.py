@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import shutil
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +50,10 @@ from .graph import run_department_graph
 from .readability_metrics import compute_readability_metrics
 
 logger = logging.getLogger(__name__)
+
+# Barrido de tickets atascados: un análisis normal dura segundos.
+STALE_ANALYSIS_AFTER = timedelta(minutes=10)
+MAX_ANALYSIS_ATTEMPTS = 3
 
 
 def _now_iso() -> str:
@@ -133,6 +137,19 @@ def analyze_ticket(ticket_id: str) -> dict[str, Any]:
         "raw_pdf_path": ticket["raw_pdf_path"],
         "created_at": ticket.get("created_at"),
     }
+    # Reclama el ticket: registra el intento y renueva updated_at antes de
+    # trabajar, para que el barrido sepa que hubo un intento si el proceso
+    # muere a mitad (y no lo reprocese mientras sigue activo).
+    attempts = int(ticket.get("attempts") or 0) + 1
+    db.save_ticket(
+        _build_ticket(
+            status=STATUS_ANALIZANDO,
+            reason=f"análisis en curso (intento {attempts})",
+            attempts=attempts,
+            **ids,
+        )
+    )
+    ids["attempts"] = attempts
     try:
         return _analyze(Path(ticket["raw_pdf_path"]), persist=True, **ids)
     except Exception as exc:
@@ -144,6 +161,69 @@ def analyze_ticket(ticket_id: str) -> dict[str, Any]:
         )
         db.save_ticket(failed)
         return failed
+
+
+def recover_stale_tickets(
+    stale_after: timedelta = STALE_ANALYSIS_AFTER,
+    max_attempts: int = MAX_ANALYSIS_ATTEMPTS,
+) -> dict[str, list[str]]:
+    """Barrido de tickets atascados en ``analizando`` (el proceso murió a mitad).
+
+    Para cada ticket sin actividad desde hace más de ``stale_after``:
+
+    - PDF ausente en ``data/raw/`` → ``descartado`` con el motivo.
+    - ``attempts >= max_attempts`` → ``descartado`` para revisión manual (un
+      PDF que tumba el proceso no debe reintentarse en bucle).
+    - En otro caso → se reanaliza con ``analyze_ticket`` (idempotente:
+      upsert por clave primaria).
+
+    Returns
+    -------
+    dict
+        ``requeued``, ``abandoned`` y ``missing_pdf`` con los ``ticket_id``.
+    """
+    cutoff = datetime.now(timezone.utc) - stale_after
+    summary: dict[str, list[str]] = {"requeued": [], "abandoned": [], "missing_pdf": []}
+
+    for ticket in db.list_tickets_by_status(STATUS_ANALIZANDO):
+        if _as_utc(ticket.get("updated_at")) > cutoff:
+            continue  # análisis reciente: puede seguir en marcha
+        ticket_id = ticket["ticket_id"]
+        attempts = int(ticket.get("attempts") or 0)
+        ids = {
+            "ticket_id": ticket_id,
+            "rfp_id": ticket["rfp_id"],
+            "raw_pdf_path": ticket["raw_pdf_path"],
+            "created_at": ticket.get("created_at"),
+            "attempts": attempts,
+        }
+        if not Path(ticket["raw_pdf_path"]).is_file():
+            db.save_ticket(_build_ticket(
+                status=STATUS_DESCARTADO,
+                reason="análisis interrumpido y PDF no encontrado en data/raw",
+                **ids,
+            ))
+            summary["missing_pdf"].append(ticket_id)
+        elif attempts >= max_attempts:
+            db.save_ticket(_build_ticket(
+                status=STATUS_DESCARTADO,
+                reason=f"análisis interrumpido {attempts} veces; revisar manualmente",
+                **ids,
+            ))
+            summary["abandoned"].append(ticket_id)
+        else:
+            logger.warning("RFP intake: reanalizando ticket atascado %s", ticket_id)
+            analyze_ticket(ticket_id)
+            summary["requeued"].append(ticket_id)
+    return summary
+
+
+def _as_utc(value: Any) -> datetime:
+    """``updated_at`` (ISO o datetime, con o sin tz) → datetime UTC."""
+    if value is None:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    moment = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 def process_rfp_pdf(
@@ -194,6 +274,7 @@ def _analyze(
     rfp_id: str,
     raw_pdf_path: str,
     created_at: str | None = None,
+    attempts: int = 0,
     persist: bool,
 ) -> dict[str, Any]:
     """Markdown → clasificación → metadatos → secciones → estado final.
@@ -206,6 +287,7 @@ def _analyze(
         "rfp_id": rfp_id,
         "raw_pdf_path": raw_pdf_path,
         "created_at": created_at,
+        "attempts": attempts,
     }
 
     # 1) Conversión PDF → Markdown (antes de que nadie lea el documento)
@@ -214,23 +296,18 @@ def _analyze(
     extraction["markdown_path"] = str(
         save_markdown(markdown, Path(raw_pdf_path).with_suffix(".md"))
     )
-    if not markdown:
-        ticket = _build_ticket(
-            status=STATUS_DESCARTADO, reason="documento sin texto extraíble", **ids
-        )
-        if persist:
-            _persist(ticket, metadata=None, sections=[])
-        return ticket
-
-    # 2) Clasificación (determinista, Parte 1)
+    # 2) Clasificación (determinista, Parte 1); sin texto = documento vacío
     classification = classify(markdown)
 
-    # 3) ¿RFP de TrackFlow?
+    # 3) ¿RFP de TrackFlow? Un descarte también guarda sus metadatos de
+    #    conversión y legibilidad: todo documento procesado deja su registro.
     if not classification.is_rfp:
-        ticket = _build_ticket(status=STATUS_DESCARTADO, reason=classification.reason, **ids)
+        reason = classification.reason if markdown else "documento sin texto extraíble"
+        ticket = _build_ticket(status=STATUS_DESCARTADO, reason=reason, **ids)
+        metadata = _build_metadata(classification, extraction, None, rfp_id, ticket_id)
         if persist:
-            _persist(ticket, metadata=None, sections=[])
-        return ticket
+            _persist(ticket, metadata=metadata, sections=[])
+        return {**ticket, "metadata": metadata}
 
     # 4) Metadatos enriquecidos + legibilidad + moneda
     currency = resolve_currency(classification.client_country)
@@ -278,6 +355,7 @@ def _build_ticket(
     raw_pdf_path: str,
     reason: str,
     created_at: str | None = None,
+    attempts: int = 0,
 ) -> dict[str, Any]:
     now = _now_iso()
     return {
@@ -286,6 +364,7 @@ def _build_ticket(
         "status": status,
         "raw_pdf_path": raw_pdf_path,
         "reason": reason,
+        "attempts": attempts,
         "created_at": created_at or now,
         "updated_at": now,
     }
@@ -294,11 +373,15 @@ def _build_ticket(
 def _build_metadata(
     classification: ClassificationResult,
     extraction: dict[str, Any],
-    currency: str,
+    currency: str | None,
     rfp_id: str,
     ticket_id: str,
 ) -> dict[str, Any]:
-    """Construye el bloque de metadatos de la RFP (BRIEFING §2.3)."""
+    """Metadatos del documento (BRIEFING §2.3): clasificación + conversión + legibilidad.
+
+    Se construye también para documentos descartados (campos de cliente
+    vacíos, sin departamentos): sus métricas quedan registradas igual.
+    """
     now = _now_iso()
     readability = compute_readability_metrics(extraction["markdown"])
     return {
@@ -366,6 +449,7 @@ def _compose_response(
 __all__ = [
     "register_upload",
     "analyze_ticket",
+    "recover_stale_tickets",
     "process_rfp_pdf",
     "resolve_currency",
     "store_pdf",

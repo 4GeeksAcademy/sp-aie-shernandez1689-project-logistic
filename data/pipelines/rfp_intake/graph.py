@@ -20,6 +20,13 @@ aceptadas::
 - **synthesizer**: consolida el resumen para Ventas (qué pedir a quién y qué
   preguntar al cliente) y el ``handoff`` hacia la Parte 2.
 
+Contrato del handoff (``rfp_metadata.handoff``, JSONB): ``ticket_id``,
+``rfp_id``, ``next_status`` (``generando_borrador``), ``departments``,
+``section_ids``, ``sections`` (``department_id``, ``owner``, ``key_aspects``,
+``open_questions``), ``currency``, ``markdown_path``, ``guidelines`` (§5) y
+``pending_client_questions``. La Parte 2 lo lee de los tickets en
+``analisis_completo``.
+
 Los workers son deterministas (sin LLM), como el clasificador: auditables y
 garantizan que no hay cifras inventadas. La redacción con LLM es Parte 2.
 """
@@ -316,9 +323,22 @@ def synthesizer(state: IntakeGraphState) -> dict[str, Any]:
     }
     handoff = {
         "part": 2,
+        "ticket_id": state["ticket_id"],
+        "rfp_id": state["rfp_id"],
         "next_status": STATUS_GENERANDO_BORRADOR,
         "departments": [s["department_id"] for s in sections],
         "section_ids": [s["id"] for s in sections],
+        # Payload por departamento para los generadores de la Parte 2 (copia de
+        # DepartmentSection; la fila en department_sections es la fuente).
+        "sections": [
+            {
+                "department_id": s["department_id"],
+                "owner": s["department_owner"],
+                "key_aspects": s["key_aspects"],
+                "open_questions": s["open_questions"],
+            }
+            for s in sections
+        ],
         "currency": metadata.get("currency"),
         "markdown_path": state.get("markdown_path"),
         "inputs": (

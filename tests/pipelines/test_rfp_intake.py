@@ -25,6 +25,8 @@ El orquestador se prueba con ``persist=False`` y el router con
 from __future__ import annotations
 
 import sys
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -40,6 +42,7 @@ from data.pipelines.rfp_intake.classifier import classify  # noqa: E402
 from data.pipelines.rfp_intake.pipeline import (  # noqa: E402
     analyze_ticket,
     process_rfp_pdf,
+    recover_stale_tickets,
     register_upload,
     resolve_currency,
 )
@@ -230,6 +233,29 @@ class TestClassifyScenarios:
         assert result.budget_range == "USD 40.000"
         assert result.deadline == "2026-05-15"
         assert result.departments_needed == ["warehouse", "lastmile"]
+
+    def test_explicit_rfp_title_accepted_without_trigger_phrases(self):
+        """Regresión (falso negativo): cabecera RFP explícita + servicios → aceptar."""
+        text = (
+            "Request for Proposal — Fulfillment services\n"
+            "Acme Corp invites logistics providers to quote warehousing and "
+            "returns handling for 4,000 orders/month in the US."
+        )
+        result = classify(text)
+        assert result.is_rfp is True
+        assert result.doc_type == "formal"
+        assert result.departments_needed == ["warehouse", "reverse"]
+        assert result.monthly_volume == 4000
+        assert result.client_country == "US"
+
+    def test_bare_rfp_mention_is_not_enough(self):
+        """Mencionar 'RFP' en el cuerpo (sin título ni señal de cliente) no basta."""
+        text = "Adjuntamos información general sobre almacenamiento; ver RFP anterior."
+        assert classify(text).is_rfp is False
+
+    def test_rfp_title_without_logistics_services_rejected(self):
+        text = "Request for Proposal — Office cleaning services for our headquarters."
+        assert classify(text).is_rfp is False
 
     def test_carrier_pitch_rejected(self):
         """Escenario 3: pitch de vendor NO es una RFP de cliente."""
@@ -610,6 +636,26 @@ class TestPersistence:
         assert "Carlos Vega" in meta["sales_summary"]["headline"]
         assert meta["handoff"]["next_status"] == "generando_borrador"
         assert sqlite_db.get_ticket(ticket_id)["status"] == "analisis_completo"
+        # Handoff autocontenido para la Parte 2: ticket_id + key_aspects por depto.
+        handoff = meta["handoff"]
+        assert handoff["ticket_id"] == ticket_id
+        assert {s["department_id"] for s in handoff["sections"]} == {"warehouse", "lastmile"}
+        assert all(s["key_aspects"] and s["owner"] for s in handoff["sections"])
+
+    @needs_samples
+    def test_discarded_document_keeps_metadata_and_metrics(self, sqlite_db, tmp_path):
+        """Un documento rechazado también guarda conversión y legibilidad."""
+        result = process_rfp_pdf(SAMPLE_PDFS[3], raw_dir=tmp_path)
+        ticket_id = result["ticket_id"]
+        assert sqlite_db.get_ticket(ticket_id)["status"] == "descartado"
+        meta = sqlite_db.get_rfp_metadata(ticket_id)
+        assert meta["doc_type"] == "invalid"
+        assert meta["converter"].startswith("markitdown")
+        assert meta["estimated_tokens"] > 0
+        assert meta["readability"]["num_words"] > 0
+        assert meta["departments_needed"] == []
+        assert meta["sales_summary"] is None and meta["handoff"] is None
+        assert sqlite_db.get_department_sections(ticket_id) == []
 
     def test_persist_without_database_fails(self, monkeypatch, tmp_path):
         """Sin DATABASE_URL no hay fallback a archivos: se rechaza persistir."""
@@ -664,6 +710,81 @@ class TestTicketMode:
         assert "ValueError" in stored["reason"]
 
 
+class TestStaleTicketRecovery:
+    """El ticket sigue siendo verdad si el proceso muere a mitad del análisis."""
+
+    @staticmethod
+    def _stale(sqlite_db, tmp_path, pdf_bytes, attempts=1, minutes=30):
+        """Simula un ticket reclamado por un proceso que murió hace ``minutes``."""
+        ticket = register_upload(pdf_bytes, raw_dir=tmp_path)
+        old = (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+        sqlite_db.save_ticket({**ticket, "attempts": attempts, "updated_at": old})
+        return ticket["ticket_id"]
+
+    def test_analyze_ticket_claims_attempt(self, sqlite_db, tmp_path):
+        ticket = register_upload(b"%PDF-1.4 sin texto", raw_dir=tmp_path)
+        analyze_ticket(ticket["ticket_id"])
+        assert sqlite_db.get_ticket(ticket["ticket_id"])["attempts"] == 1
+
+    @needs_samples
+    def test_stale_ticket_is_reanalyzed(self, sqlite_db, tmp_path):
+        ticket_id = self._stale(sqlite_db, tmp_path, SAMPLE_PDFS[1].read_bytes())
+        summary = recover_stale_tickets()
+        assert summary["requeued"] == [ticket_id]
+        stored = sqlite_db.get_ticket(ticket_id)
+        assert stored["status"] == "analisis_completo"
+        assert stored["attempts"] == 2
+        assert sqlite_db.get_department_sections(ticket_id)
+
+    def test_ticket_over_max_attempts_is_abandoned(self, sqlite_db, tmp_path):
+        ticket_id = self._stale(sqlite_db, tmp_path, b"%PDF-1.4", attempts=3)
+        summary = recover_stale_tickets(max_attempts=3)
+        assert summary["abandoned"] == [ticket_id]
+        stored = sqlite_db.get_ticket(ticket_id)
+        assert stored["status"] == "descartado"
+        assert "revisar manualmente" in stored["reason"]
+
+    def test_stale_ticket_without_pdf_is_discarded(self, sqlite_db, tmp_path):
+        ticket_id = self._stale(sqlite_db, tmp_path, b"%PDF-1.4")
+        Path(sqlite_db.get_ticket(ticket_id)["raw_pdf_path"]).unlink()
+        assert recover_stale_tickets()["missing_pdf"] == [ticket_id]
+        assert sqlite_db.get_ticket(ticket_id)["status"] == "descartado"
+
+    def test_recent_ticket_is_left_alone(self, sqlite_db, tmp_path):
+        ticket_id = self._stale(sqlite_db, tmp_path, b"%PDF-1.4", minutes=1)
+        assert recover_stale_tickets() == {"requeued": [], "abandoned": [], "missing_pdf": []}
+        assert sqlite_db.get_ticket(ticket_id)["status"] == "analizando"
+
+    @needs_samples
+    def test_backend_startup_recovers_stale_ticket(self, sqlite_db, tmp_path, monkeypatch):
+        """El lifespan de la API lanza el barrido al arrancar."""
+        API_DIR = REPO_ROOT / "services" / "api"
+        if str(API_DIR) not in sys.path:
+            sys.path.insert(0, str(API_DIR))
+        from fastapi.testclient import TestClient
+        from sqlmodel import create_engine
+        from main import app
+
+        # El barrido escribe desde el threadpool mientras el test lee: SQLite en
+        # archivo (una conexión por sesión, como PostgreSQL) en vez de StaticPool.
+        engine = create_engine(
+            f"sqlite:///{tmp_path / 'recovery.db'}",
+            connect_args={"check_same_thread": False, "timeout": 30},
+        ).execution_options(schema_translate_map={"rfp_intake": None})
+        sqlite_db.create_tables(engine)
+        sqlite_db.set_engine(engine)
+
+        ticket_id = self._stale(sqlite_db, tmp_path, SAMPLE_PDFS[2].read_bytes())
+        monkeypatch.setenv("RFP_RECOVERY_INTERVAL_SECONDS", "3600")
+        with TestClient(app):
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                if sqlite_db.get_ticket(ticket_id)["status"] != "analizando":
+                    break
+                time.sleep(0.1)
+        assert sqlite_db.get_ticket(ticket_id)["status"] == "analisis_completo"
+
+
 class TestAsyncUploadRoute:
     """POST /rfp/upload responde 202 + analizando; el análisis corre en fondo."""
 
@@ -678,6 +799,8 @@ class TestAsyncUploadRoute:
         from main import app
 
         monkeypatch.setattr(pipeline_mod, "raw_rfp_dir", lambda: tmp_path)
+        # Sin barrido: comparte la única conexión StaticPool con las subidas.
+        monkeypatch.setenv("RFP_RECOVERY_INTERVAL_SECONDS", "0")
         app.dependency_overrides[get_current_user] = lambda: CurrentUser(
             id="test-admin", email="admin@example.com", role="admin",
         )

@@ -20,11 +20,14 @@ config). No contiene lógica de negocio ni SQL de agregación.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Annotated, Any
 
+from fastapi.concurrency import run_in_threadpool
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -41,7 +44,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from auth import get_current_user  # noqa: E402
-from data.pipelines.rfp_intake import analyze_ticket, db, register_upload  # noqa: E402
+from data.pipelines.rfp_intake import (  # noqa: E402
+    analyze_ticket,
+    db,
+    recover_stale_tickets,
+    register_upload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,4 +182,27 @@ def get_ticket_detail(
     }
 
 
-__all__ = ["router"]
+async def rfp_recovery_loop() -> None:
+    """Barrido periódico de tickets atascados en ``analizando``.
+
+    El análisis corre en BackgroundTasks dentro de este proceso: si el
+    backend se reinicia a mitad, la tarea se pierde. Este bucle (arrancado
+    desde el lifespan de ``main.py``) corre al iniciar y cada
+    ``RFP_RECOVERY_INTERVAL_SECONDS`` (300 por defecto; 0 lo desactiva) y
+    reanaliza o descarta esos tickets. La lógica vive en el pipeline.
+    """
+    interval = int(os.getenv("RFP_RECOVERY_INTERVAL_SECONDS", "300"))
+    if interval <= 0:
+        return
+    while True:
+        if db.is_db_available():
+            try:
+                summary = await run_in_threadpool(recover_stale_tickets)
+                if any(summary.values()):
+                    logger.warning("RFP intake: barrido de tickets atascados %s", summary)
+            except Exception:
+                logger.exception("RFP intake: falló el barrido de tickets atascados")
+        await asyncio.sleep(interval)
+
+
+__all__ = ["router", "rfp_recovery_loop"]

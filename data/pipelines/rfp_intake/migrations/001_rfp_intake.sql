@@ -22,9 +22,12 @@ CREATE TABLE IF NOT EXISTS rfp_intake.tickets (
                       'esperando_aprobación', 'terminado')),
     raw_pdf_path  TEXT NOT NULL,
     reason        TEXT,
+    attempts      INTEGER NOT NULL DEFAULT 0,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE rfp_intake.tickets ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_rfp_tickets_status
     ON rfp_intake.tickets (status);
@@ -33,6 +36,8 @@ CREATE INDEX IF NOT EXISTS idx_rfp_tickets_updated
 
 COMMENT ON TABLE rfp_intake.tickets IS
     'Ticket del intake de RFPs (BRIEFING §2.3): estado del documento recibido y ruta del PDF.';
+COMMENT ON COLUMN rfp_intake.tickets.attempts IS
+    'Intentos de análisis iniciados; el barrido de tickets atascados descarta tras el máximo.';
 COMMENT ON COLUMN rfp_intake.tickets.status IS
     'Parte 1: analizando | descartado | analisis_completo. Partes 2-3 reservan el resto.';
 

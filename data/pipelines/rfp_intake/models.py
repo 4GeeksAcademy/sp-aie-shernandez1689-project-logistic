@@ -51,6 +51,8 @@ class Ticket(SQLModel, table=True):
     status: str
     raw_pdf_path: str
     reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    # Intentos de análisis iniciados (lo usa el barrido de tickets atascados).
+    attempts: int = 0
     created_at: datetime | None = _ts_column()
     updated_at: datetime | None = _ts_column()
 

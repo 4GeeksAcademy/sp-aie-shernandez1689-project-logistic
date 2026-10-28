@@ -29,6 +29,7 @@ from .graph import department_graph, run_department_graph
 from .pipeline import (
     analyze_ticket,
     process_rfp_pdf,
+    recover_stale_tickets,
     register_upload,
     resolve_currency,
     store_pdf,
@@ -46,6 +47,7 @@ __all__ = [
     # orquestador
     "register_upload",
     "analyze_ticket",
+    "recover_stale_tickets",
     "process_rfp_pdf",
     "resolve_currency",
     "store_pdf",

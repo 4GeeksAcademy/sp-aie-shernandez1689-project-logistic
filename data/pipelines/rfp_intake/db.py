@@ -180,6 +180,13 @@ def list_tickets() -> list[dict[str, Any]]:
         return [_to_dict(row) for row in rows]
 
 
+def list_tickets_by_status(status: str) -> list[dict[str, Any]]:
+    """Tickets en un estado dado (p. ej. ``analizando`` para el barrido)."""
+    with Session(get_engine()) as session:
+        rows = session.exec(select(Ticket).where(Ticket.status == status)).all()
+        return [_to_dict(row) for row in rows]
+
+
 def get_ticket(ticket_id: str) -> dict[str, Any] | None:
     """Obtiene un ticket por su id."""
     with Session(get_engine()) as session:
@@ -218,6 +225,7 @@ __all__ = [
     "save_department_section",
     "save_intake",
     "list_tickets",
+    "list_tickets_by_status",
     "get_ticket",
     "get_rfp_metadata",
     "get_department_sections",
