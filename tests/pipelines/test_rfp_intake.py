@@ -196,6 +196,19 @@ class TestClassifyScenarios:
         assert result.deadline == "2026-06-30"
         # Última milla NO se activa porque usan transportista propio.
         assert result.departments_needed == ["warehouse", "reverse"]
+        assert result.services_requested == ["warehouse", "reverse"]
+
+    def test_excluded_last_mile_not_a_requested_service(self):
+        """'la última milla NO está incluida' no cuenta como servicio solicitado."""
+        text = (
+            "Somos una marca de moda y estamos buscando tercerizar la logística.\n"
+            "Servicios: almacenamiento y devoluciones.\n"
+            "Nota: para la última milla usamos nuestro propio transportista, por lo "
+            "que la última milla NO está incluida en esta solicitud."
+        )
+        result = classify(text)
+        assert result.services_requested == ["warehouse", "reverse"]
+        assert "lastmile" not in result.departments_needed
 
     def test_luna_informal_us(self):
         """Escenario 2: RFP informal de Luna Cosmetics (US, USD, última milla)."""
@@ -457,6 +470,54 @@ class TestDepartmentGraph:
         assert handoff["section_ids"] == ["t_warehouse", "t_lastmile"]
         assert handoff["markdown_path"] == "/tmp/t.md"
         assert any("48 horas" in g for g in handoff["guidelines"])
+
+
+class TestDepartmentWorkers:
+    """Unitarios de cada worker: solo usa su subtarea, nunca supuestos."""
+
+    @staticmethod
+    def _task(department_id, excerpts, **shared):
+        base = {"client_country": "US", "currency": "USD", "monthly_volume": 5000,
+                "deadline": "2026-05-15", "budget_range": "USD 40.000"}
+        return {"ticket_id": "t", "rfp_id": "r", "department_id": department_id,
+                "shared": {**base, **shared}, "excerpts": excerpts}
+
+    def test_lastmile_worker_asks_destinations_and_sla(self):
+        from data.pipelines.rfp_intake.graph import worker
+
+        section = worker(self._task("lastmile", ["We need last mile delivery for our brand"]))["sections"][0]
+        assert section["department_owner"] == "Carlos Vega"
+        assert "Volumen mensual indicado en la RFP: 5000 pedidos/mes" in section["key_aspects"]
+        assert any("Destinos" in q for q in section["open_questions"])
+        assert any("SLA" in q for q in section["open_questions"])
+
+    def test_lastmile_worker_no_question_when_rfp_states_it(self):
+        from data.pipelines.rfp_intake.graph import worker
+
+        excerpts = ["Last mile delivery across US national coverage with next-day SLA"]
+        section = worker(self._task("lastmile", excerpts))["sections"][0]
+        assert not any("Destinos" in q or "SLA" in q for q in section["open_questions"])
+
+    def test_reverse_worker_flags_48h_guideline_without_inventing(self):
+        from data.pipelines.rfp_intake.graph import worker
+
+        section = worker(self._task(
+            "reverse", ["Gestión de devoluciones y reacondicionamiento"],
+            client_country="Spain", currency="EUR",
+        ))["sections"][0]
+        assert section["department_owner"] == "Sofía Ramos"
+        assert any("48 horas" in q for q in section["open_questions"])
+        # El 48 de la política vive en open_questions, nunca en key_aspects.
+        assert not any("48" in a for a in section["key_aspects"])
+
+    def test_worker_drops_aspect_with_ungrounded_figure(self, monkeypatch):
+        """Si un metadato no está respaldado por las fuentes, no llega a key_aspects."""
+        import data.pipelines.rfp_intake.graph as graph_mod
+
+        task = self._task("warehouse", ["Necesitamos almacenamiento en Los Angeles"])
+        monkeypatch.setattr(graph_mod, "is_grounded", lambda aspect, _s: "5000" not in aspect)
+        section = graph_mod.worker(task)["sections"][0]
+        assert not any("5000" in a for a in section["key_aspects"])
 
 
 # ===================================================================

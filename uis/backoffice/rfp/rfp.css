@@ -1,4 +1,10 @@
-/* Intake de RFPs (Hito 9, Parte 1) — estilos adicionales sobre suppliers/styles. */
+/* Intake de RFPs (Hito 9, Parte 1) — estilos adicionales sobre suppliers/styles.
+   Usa solo los tokens del tema base (--text, --muted, --line, --card). */
+
+:root {
+  --rfp-surface: rgba(255, 255, 255, 0.04);
+  --rfp-code-bg: rgba(255, 255, 255, 0.08);
+}
 
 .rfp-upload-form {
   display: grid;
@@ -11,10 +17,10 @@
 .rfp-upload-form input[type="text"] {
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid var(--border, #d8d0c4);
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--surface, #fffdf8);
-  color: var(--text, #2b241c);
+  background: var(--rfp-surface);
+  color: var(--text);
   font: inherit;
 }
 
@@ -25,8 +31,8 @@
 }
 
 .rfp-result-grid .kv {
-  background: var(--surface, #fffdf8);
-  border: 1px solid var(--border, #e6dfd3);
+  background: var(--rfp-surface);
+  border: 1px solid var(--line);
   border-radius: 10px;
   padding: 10px 12px;
 }
@@ -35,21 +41,21 @@
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--text-muted, #6b6257);
+  color: var(--muted);
   margin-bottom: 4px;
 }
 
 .rfp-result-grid .kv dd {
   margin: 0;
   font-weight: 600;
-  color: var(--text, #2b241c);
+  color: var(--text);
 }
 
 .kv dd code {
   font-family: "JetBrains Mono", ui-monospace, monospace;
   font-size: 0.85rem;
   font-weight: 500;
-  background: var(--code-bg, #f1ece2);
+  background: var(--rfp-code-bg);
   padding: 1px 6px;
   border-radius: 6px;
 }
@@ -83,7 +89,7 @@
 .reason-block {
   margin-top: 0.75rem;
   font-size: 0.9rem;
-  color: var(--text-muted, #6b6257);
+  color: var(--muted);
 }
 
 .reason-block code {
@@ -101,21 +107,21 @@
 .detail-section {
   margin: 0.75rem 0;
   padding: 12px 14px;
-  border: 1px solid var(--border, #e6dfd3);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--surface, #fffdf8);
+  background: var(--rfp-surface);
 }
 
 .detail-section h4 {
   margin: 0 0 6px;
   font-size: 0.95rem;
-  color: var(--text, #2b241c);
+  color: var(--text);
 }
 
 .detail-section ul {
   margin: 0;
   padding-left: 1.1rem;
-  color: var(--text-muted, #6b6257);
+  color: var(--muted);
 }
 
 .detail-section .aspect {
@@ -123,7 +129,7 @@
 }
 
 .detail-section .aspect strong {
-  color: var(--text, #2b241c);
+  color: var(--text);
 }
 .upload-list {
   list-style: none;
@@ -139,9 +145,9 @@
   align-items: center;
   gap: 0.6rem;
   padding: 8px 12px;
-  border: 1px solid var(--border, #e6dfd3);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--surface, #fffdf8);
+  background: var(--rfp-surface);
 }
 
 .upload-row code {
@@ -158,16 +164,16 @@
 .upload-note {
   flex-basis: 100%;
   font-size: 0.85rem;
-  color: var(--text-muted, #6b6257);
+  color: var(--muted);
 }
 
 .detail-section .subheading {
   margin: 8px 0 2px;
   font-size: 0.82rem;
   font-weight: 600;
-  color: var(--text, #2b241c);
+  color: var(--text);
 }
 
 .sales-summary {
-  border-left: 4px solid #1e7e44;
+  border-left: 4px solid var(--ok);
 }

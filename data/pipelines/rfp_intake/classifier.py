@@ -257,6 +257,13 @@ def classify(text: str) -> ClassificationResult:
 
     # ── Metadatos ─────────────────────────────────────────────────────
     result.services_requested = _detect_services(cleaned)
+    # Si el cliente declara usar su propio transportista, la mención a la
+    # última milla es una exclusión ("NO está incluida"), no un servicio
+    # solicitado: se quita de services_requested y, por tanto, del enrutado.
+    if _OWN_CARRIER_RE.search(cleaned):
+        result.services_requested = [
+            s for s in result.services_requested if s != "lastmile"
+        ]
     result.client_country = _detect_country(cleaned)
     result.monthly_volume = _detect_volume(cleaned)
     result.deadline = _detect_deadline(cleaned)
@@ -267,14 +274,9 @@ def classify(text: str) -> ClassificationResult:
 
     # ── Enrutamiento por departamento (BRIEFING §2.1) ─────────────────
     # Solo se activan los departamentos que el alcance solicita realmente.
-    for dep_id in result.services_requested:
-        if dep_id in _SERVICE_LABELS:
-            # No se inventa: si el texto menciona EXPRESAMENTE que el cliente
-            # usa su propio transportista, `lastmile` no se activa aunque el
-            # texto hable de entregas.
-            if dep_id == "lastmile" and _OWN_CARRIER_RE.search(cleaned):
-                continue
-            result.departments_needed.append(dep_id)
+    result.departments_needed = [
+        dep_id for dep_id in result.services_requested if dep_id in _SERVICE_LABELS
+    ]
 
     if not result.departments_needed:
         result.reason = "RFP de cliente sin servicios logísticos detectables"

@@ -1,8 +1,10 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlmodel import SQLModel
 
@@ -49,6 +51,23 @@ async def lifespan(application: FastAPI):
 
 
 app = FastAPI(title="TrackFlow Operations API", lifespan=lifespan)
+
+# CORS: las páginas de uis/backoffice se sirven desde otro origen. Mismo
+# contrato que services/user-api (variable CORS_ALLOW_ORIGINS, mismos defaults).
+raw_cors_origins = os.getenv(
+    "CORS_ALLOW_ORIGINS",
+    "http://127.0.0.1:5500,http://localhost:5500,http://127.0.0.1:3000,http://localhost:3000",
+)
+allowed_origins = [origin.strip() for origin in raw_cors_origins.split(",") if origin.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(incidents_router)
 app.include_router(suppliers_router)
 app.include_router(telemetry_router)

@@ -1,6 +1,16 @@
 # Progress
 
 ## Estado actual del desarrollo
+- RFP INTAKE — pruebas y verificación por la UI (rama `feature/rfp-intake`, pendiente de commit):
+  - Unitarios en `tests/pipelines/test_rfp_intake.py`: clasificador (país, cliente, volumen, presupuesto/fecha, 3 escenarios del BRIEFING + nuevo caso de última milla excluida) y workers (`TestDepartmentWorkers`: lastmile, reverse, cifra no respaldada descartada; además warehouse en `TestDepartmentGraph`). 65 → 69 tests.
+  - E2E nuevo `tests/pipelines/test_rfp_intake_ui.py` (Playwright + Chromium): sube los 3 PDF del BRIEFING por el formulario de `uis/backoffice/rfp` contra la API real (uvicorn, JWT real, BackgroundTasks, SQLite en archivo en lugar de Supabase). Verifica formal/informal → `analisis_completo`, pitch → `descartado`, tabla, PDF + .md en raw, detalle (Ventas: Ana Whitfield + Sofía Ramos, sin Carlos Vega; handoff `generando_borrador`), cero errores de consola; y rechazo de .pdf falso. Estable 10/10. Se omite si no hay Playwright/Chromium o el puerto 5500 está ocupado. `RFP_UI_SCREENSHOT=<png>` guarda captura.
+  - Bugs encontrados por la verificación en navegador y corregidos:
+    1. `services/api` no tenía CORS → la UI no podía llamar a la API (preflight 405). Añadido `CORSMiddleware` con `CORS_ALLOW_ORIGINS` (mismo contrato/defaults que user-api).
+    2. `rfp.css` usaba variables inexistentes en el tema oscuro base (`--surface`, `--border`, `--text-muted`) → texto claro sobre tarjetas claras, ilegible. Ahora usa `--text`, `--muted`, `--line` + superficie translúcida.
+    3. Clasificador: "la última milla NO está incluida" contaba `lastmile` en `services_requested` (el enrutado sí lo excluía). Corregido.
+  - Hallazgo del harness: con StaticPool (una conexión compartida) los análisis en paralelo fallaban en SQLite; en PostgreSQL cada sesión tiene su conexión. Nota: si guardar el estado `descartado` tras un error también falla, el ticket queda en `analizando`.
+  - Dev deps: `playwright>=1.49` en `[dependency-groups].dev`. Setup: `uv sync --group dev && playwright install --with-deps chromium`.
+  - Regresión: `tests/pipelines` 436 passed, mismos 52 fallos previos (guardrails); `services/api/tests` igual que baseline.
 - RFP INTAKE — orquestación por departamento (rama `feature/rfp-intake`, pendiente de commit):
   - `data/pipelines/rfp_intake/graph.py` (nuevo): grafo LangGraph dedicado (aislado del grafo CX) orchestrator → `Send` a un worker por departamento activo (paralelo) → synthesizer. Workers deterministas, sin LLM (como el clasificador de Parte 1).
   - Orchestrator: subtarea por `departments_needed` con metadatos compartidos + extractos del Markdown relevantes al depto (señales léxicas es/en, ≥ 3 palabras, máx. 6).
