@@ -459,3 +459,51 @@ def test_server_restart_triggers_single_resync_without_duplicates(page, stack, m
     assert sorted(ids) == sorted({first, missed})
     errors = [e for e in page.errors if not e.startswith("Failed to load resource: net::")]  # type: ignore[attr-defined]
     assert errors == []
+
+
+def test_network_cut_reconnects_with_backoff_and_replays_without_duplicates(page, stack):
+    """Corte de red del navegador (el servidor sigue vivo): el stream abierto no falla
+    solo; ``offline`` lo corta, el backoff reintenta y al volver hay replay sin duplicados."""
+    import data.pipelines.rfp_intake.pipeline as pipeline_mod
+
+    seen = _track_requests(page)
+    page.goto(stack["ui"])
+    live = page.locator("#liveStatus")
+    sync_api.expect(live).to_have_text("En vivo", timeout=UI_TIMEOUT_MS)
+
+    # Ticket A notificado en vivo y ya abierto por el usuario.
+    seen_ticket = pipeline_mod.register_upload(SAMPLE_PDFS[0].read_bytes())["ticket_id"]
+    row_seen = page.locator(f'#ticketsBody tr[data-ticket-id="{seen_ticket}"]')
+    sync_api.expect(row_seen.locator(".new-badge")).to_have_count(1, timeout=UI_TIMEOUT_MS)
+    row_seen.locator("a.client-row").click()
+    sync_api.expect(row_seen.locator(".new-badge")).to_have_count(0)
+    list_before = len(seen["list"])
+
+    page.context.set_offline(True)
+    sync_api.expect(live).to_have_text("Reconectando…", timeout=UI_TIMEOUT_MS)
+    # Durante el corte: A avanza de estado y llega un ticket B.
+    pipeline_mod.analyze_ticket(seen_ticket)
+    missed = pipeline_mod.register_upload(SAMPLE_PDFS[1].read_bytes())["ticket_id"]
+    page.wait_for_timeout(3500)
+    failed = list(seen["events_failed"])
+    page.context.set_offline(False)
+
+    sync_api.expect(live).to_have_text("En vivo", timeout=UI_TIMEOUT_MS)
+    row_missed = page.locator(f'#ticketsBody tr[data-ticket-id="{missed}"]')
+    sync_api.expect(row_missed.locator(".new-badge")).to_have_text("Nueva", timeout=UI_TIMEOUT_MS)
+    sync_api.expect(row_seen.locator(".status-analizando")).to_have_count(0, timeout=UI_TIMEOUT_MS)
+
+    # Backoff: reintentos fallidos cada vez más espaciados mientras no hay red.
+    assert len(failed) >= 2, failed
+    gaps = [b - a for a, b in zip(failed, failed[1:])]
+    assert gaps[0] >= 0.9 and all(later > earlier for earlier, later in zip(gaps, gaps[1:]))
+    # Recuperación por Last-Event-ID (replay), sin repedir la lista.
+    assert seen["events"][-1][1]
+    page.wait_for_timeout(500)
+    assert len(seen["list"]) == list_before
+    # Ni filas duplicadas ni re-notificación del ticket ya visto.
+    ids = page.locator("#ticketsBody tr").evaluate_all("rows => rows.map(r => r.dataset.ticketId)")
+    assert sorted(ids) == sorted({seen_ticket, missed})
+    assert row_seen.locator(".new-badge").count() == 0
+    errors = [e for e in page.errors if not e.startswith("Failed to load resource: net::")]  # type: ignore[attr-defined]
+    assert errors == []

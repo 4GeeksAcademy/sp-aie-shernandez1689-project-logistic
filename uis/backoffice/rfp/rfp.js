@@ -24,7 +24,8 @@
  *
  * Se lee el stream con ``fetch`` + ``ReadableStream`` (no ``EventSource``)
  * para mandar el JWT en ``Authorization``. Reconexión con backoff exponencial
- * (1 s → 30 s). Recuperación: se reenvía ``Last-Event-ID`` y el servidor
+ * (1 s → 30 s); el stream se da por muerto si el navegador pasa a ``offline``
+ * o si no llega nada (ni el ``: ping`` de 15 s) en 45 s. Recuperación: se reenvía ``Last-Event-ID`` y el servidor
  * reproduce lo perdido; si ya no puede (reinicio o buffer agotado) manda
  * ``rfp_resync`` y solo entonces se vuelve a pedir ``GET /rfp/tickets``.
  *
@@ -45,6 +46,9 @@ const WAIT_TIMEOUT_MS = 180000;
 const NEXT_EVENT_TIMEOUT_MS = 5000;
 const STREAM_RETRY_MIN_MS = 1000;
 const STREAM_RETRY_MAX_MS = 30000;
+// El servidor manda ": ping" cada 15 s: tres sin llegar = conexión muerta
+// (un corte de red deja el TCP medio abierto y fetch no se entera).
+const STREAM_IDLE_TIMEOUT_MS = 45000;
 
 // Tabla de tickets: un registro y una fila por ticket_id (deduplicación).
 const ticketsById = new Map();
@@ -60,6 +64,10 @@ const ticketListeners = new Map();
 // Reconexión: cada (re)arranque del stream invalida el bucle anterior.
 let streamGeneration = 0;
 let streamAbort = null;
+// Intento de conexión en curso (se aborta al pasar a offline o por inactividad).
+let streamAttempt = null;
+// Despierta la espera del backoff cuando el navegador vuelve a estar online.
+let wakeRetry = null;
 
 // Estados desde los que arranca la Parte 3 (aprobación por departamento).
 const APPROVABLE_STATUSES = new Set(["esperando_aprobación", "needs_human_review"]);
@@ -329,7 +337,18 @@ async function fetchTicket(ticketId) {
   return result;
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Espera del backoff; el evento ``online`` la acorta. */
+function retryDelay(ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      wakeRetry = null;
+      resolve();
+    }
+    wakeRetry = done;
+  });
+}
 
 /** Suscribe ``callback`` a los eventos SSE de un ticket; devuelve la baja. */
 function onTicketEvent(ticketId, callback) {
@@ -426,12 +445,13 @@ function setLiveStatus(state, message) {
 }
 
 /** Parser mínimo de ``text/event-stream`` sobre el body de ``fetch``. */
-async function readEventStream(body, onEvent) {
+async function readEventStream(body, onEvent, onActivity) {
   const reader = body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
   for (;;) {
     const { value, done } = await reader.read();
     if (done) return;
+    onActivity();
     buffer += value;
     let end;
     while ((end = buffer.indexOf("\n\n")) !== -1) {
@@ -482,30 +502,41 @@ async function connectTicketStream() {
 
   while (generation === streamGeneration) {
     setLiveStatus("connecting", "Conectando…");
+    const attempt = new AbortController();
+    streamAttempt = attempt;
+    let idleTimer = null;
+    const touch = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => attempt.abort(), STREAM_IDLE_TIMEOUT_MS);
+    };
     try {
       const headers = { ...requestHeaders(), Accept: "text/event-stream" };
       if (lastEventId) headers["Last-Event-ID"] = lastEventId;
       const response = await fetch(`${getApiBase()}/rfp/events`, {
         headers,
         cache: "no-store",
-        signal: controller.signal,
+        signal: AbortSignal.any([controller.signal, attempt.signal]),
       });
       if (!response.ok || !response.body) throw { status: response.status || 500 };
       setLiveStatus("live", "En vivo");
       delay = STREAM_RETRY_MIN_MS;
       // Sin Last-Event-ID el servidor no sabe qué nos perdimos: resync.
       if (!lastEventId) resyncTickets();
-      await readEventStream(response.body, handleStreamEvent);
+      touch();
+      await readEventStream(response.body, handleStreamEvent, touch);
     } catch (error) {
       if (controller.signal.aborted) return;
       if (error.status === 401 || error.status === 403) {
         setLiveStatus("error", friendlyError(error.status));
         return;
       }
+    } finally {
+      clearTimeout(idleTimer);
+      if (streamAttempt === attempt) streamAttempt = null;
     }
     if (generation !== streamGeneration) return;
     setLiveStatus("reconnecting", "Reconectando…");
-    await sleep(delay);
+    await retryDelay(delay);
     delay = Math.min(delay * 2, STREAM_RETRY_MAX_MS);
   }
 }
@@ -1199,6 +1230,9 @@ function init() {
   dom.detailRetryButton.addEventListener("click", () => {
     dom.detailError.hidden = true;
   });
+  // Corte de red: el stream abierto no falla solo; se corta y entra en backoff.
+  window.addEventListener("offline", () => streamAttempt?.abort());
+  window.addEventListener("online", () => wakeRetry?.());
   loadTickets();
   connectTicketStream();
 }

@@ -109,6 +109,11 @@ ignores payloads older than what it already shows (`updated_at`), so replays
 and resyncs never duplicate a ticket. Reconnection uses exponential backoff
 (1 s → 30 s).
 
+A network cut does not make an open `fetch` stream fail by itself (the TCP
+connection stays half-open), so the UI also treats the stream as dead when the
+browser fires `offline` or when nothing arrives for 45 s (three missed
+`: ping`). The `online` event shortens the pending backoff wait.
+
 The broker is per process: with several workers, each one only sees the
 tickets it processes. Run a single worker, or replace the broker with a shared
 channel (e.g. PostgreSQL `LISTEN/NOTIFY` or Redis pub/sub).
@@ -117,8 +122,8 @@ Run uvicorn with `--timeout-graceful-shutdown 5`: on Python 3.12 shutdown waits
 for every open connection, and an SSE stream never closes on its own.
 
 Tests: `tests/pipelines/test_rfp_events.py` (framing, auth, replay, real HTTP)
-and `tests/pipelines/test_rfp_intake_ui.py` (Chromium: live arrival, API
-outage → backoff → recovery without duplicates).
+and `tests/pipelines/test_rfp_intake_ui.py` (Chromium: live arrival, network cut
+and API outage → backoff → replay without duplicates, restart → resync).
 
 Manual check:
 
@@ -126,8 +131,10 @@ Manual check:
    status shows "En vivo".
 2. Upload a PDF from another tab or with `curl`: the row appears on top with
    the "Nueva" badge and the notice, and its status advances without reloading.
-3. Stop the API: the status shows "Reconectando…" and DevTools → Network shows
-   `/rfp/events` retries spaced 1 s, 2 s, 4 s…
+3. Cut the network (DevTools → Network → Offline) or stop the API: the status
+   shows "Reconectando…" and `/rfp/events` retries are spaced 1 s, 2 s, 4 s…
+   Back online, the reconnection replays the missed events (`Last-Event-ID`)
+   without duplicate rows or re-announcing tickets already seen.
 4. Restart it: the reconnection carries `Last-Event-ID`; since the restart
    changes the `epoch`, the server answers `rfp_resync` and the table is
    re-fetched once, with no duplicate rows. Without a restart (network blip)
