@@ -9,6 +9,11 @@ ticket en PostgreSQL. Estado final ``analisis_completo`` o ``descartado``.
 Parte 2 (``proposal``): handoff de la Parte 1 → generador por departamento →
 evaluadores en paralelo (legibilidad, pertinencia, cumplimiento §5) → ciclo
 con límite de iteraciones → ``esperando_aprobación`` o ``needs_human_review``.
+
+Parte 3 (``approval``): una rama interrumpible por departamento (hilo
+``rfp-{ticket_id}:{department}``) espera la decisión de su responsable;
+el coordinador (hilo ``rfp-{ticket_id}``) arbitra los conflictos §7 y, con
+todo aprobado, guarda el documento final → ``terminado``.
 """
 
 from __future__ import annotations
@@ -34,6 +39,15 @@ from .proposal import (
     ProposalNotReadyError,
     generate_proposal,
     process_ticket,
+    run_proposal_and_approval,
+)
+from .approval import (
+    ApprovalDecision,
+    ApprovalError,
+    get_final_document,
+    open_approval,
+    submit_decision,
+    validate_decision,
 )
 # Sin re-exportar ``proposal_graph`` (el grafo): taparía el submódulo homónimo.
 from .proposal_graph import run_proposal_graph, section_graph
@@ -61,6 +75,14 @@ __all__ = [
     "process_ticket",
     "section_graph",
     "run_proposal_graph",
+    "run_proposal_and_approval",
+    # Parte 3: aprobación por departamento + documento final
+    "ApprovalDecision",
+    "ApprovalError",
+    "open_approval",
+    "validate_decision",
+    "submit_decision",
+    "get_final_document",
     # orquestador
     "register_upload",
     "analyze_ticket",

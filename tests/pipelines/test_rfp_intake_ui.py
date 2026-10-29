@@ -239,3 +239,53 @@ def test_ui_rejects_non_pdf(page, stack, tmp_path):
         "no es un PDF válido", timeout=UI_TIMEOUT_MS
     )
     assert stack["db"].list_tickets() == []
+
+
+def test_department_approval_through_ui(page, stack):
+    """Parte 3 por la interfaz: cada responsable decide su sección hasta el documento final."""
+    page.goto(stack["ui"])
+    page.set_input_files("#fileInput", str(SAMPLE_PDFS[0]))  # ModaViva: warehouse + reverse
+    page.click("#uploadBtn")
+    row = page.locator("#uploadList .upload-row")
+    sync_api.expect(row.locator(".status-esperando_aprobación")).to_be_visible(timeout=UI_TIMEOUT_MS)
+
+    page.locator("#ticketsBody tr", has_text="ModaViva").locator("a.client-row").click()
+    detail = page.locator("#detailContent")
+    approval = detail.locator(".approval-section")
+    sync_api.expect(approval).to_contain_text("Aprobación por departamento (Parte 3)", timeout=UI_TIMEOUT_MS)
+    assert page.locator("#regenerateBtn").count() == 0  # con la Parte 3 abierta no se regenera
+
+    # Sofía pide cambios sin comentario: la UI no deja enviar.
+    reverse = approval.locator('.approval-card[data-department="reverse"]')
+    reverse.get_by_label("Solicitar cambios").check()
+    reverse.get_by_role("button", name="Registrar decisión").click()
+    sync_api.expect(reverse.locator(".feedback")).to_contain_text("Explica el motivo")
+
+    # Con comentario: la sección se reescribe y vuelve a esperar a Sofía (ronda 1).
+    reverse.locator("textarea").fill("Detallar el proceso de inspección de las devoluciones.")
+    reverse.get_by_role("button", name="Registrar decisión").click()
+    reverse = page.locator('.approval-card[data-department="reverse"]')
+    sync_api.expect(reverse).to_contain_text("Rondas de cambios: 1/3", timeout=UI_TIMEOUT_MS)
+    sync_api.expect(reverse.locator(".status-approval-cambios_solicitados")).to_be_visible()
+
+    # B (reverse) se aprueba mientras A (warehouse) sigue esperando a Ana.
+    reverse.get_by_label("Aprobar").check()
+    reverse.get_by_role("button", name="Registrar decisión").click()
+    reverse = page.locator('.approval-card[data-department="reverse"]')
+    sync_api.expect(reverse.locator(".status-approval-aprobada")).to_be_visible(timeout=UI_TIMEOUT_MS)
+    warehouse = page.locator('.approval-card[data-department="warehouse"]')
+    sync_api.expect(warehouse.locator(".decision-form")).to_be_visible()
+    sync_api.expect(page.locator("#detailContent")).to_contain_text("esperando_aprobación")
+
+    warehouse.get_by_label("Aprobar").check()
+    warehouse.get_by_role("button", name="Registrar decisión").click()
+    final = page.locator("#detailContent .final-document")
+    sync_api.expect(final).to_contain_text("Documento final", timeout=UI_TIMEOUT_MS)
+    sync_api.expect(final).to_contain_text("# Propuesta económica TrackFlow — ModaViva")
+    sync_api.expect(page.locator("#detailContent")).to_contain_text("terminado")
+    sync_api.expect(page.locator("#ticketsBody .status-terminado")).to_be_visible(timeout=UI_TIMEOUT_MS)
+    assert page.locator(".decision-form").count() == 0
+
+    if os.getenv("RFP_UI_SCREENSHOT"):
+        page.screenshot(path=os.environ["RFP_UI_SCREENSHOT"].replace(".png", "-part3.png"), full_page=True)
+    assert page.errors == []  # type: ignore[attr-defined]

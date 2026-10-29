@@ -5,6 +5,7 @@ Reflejan 1:1 las tablas de ``migrations/001_rfp_intake.sql`` (esquema
 
 - ``Ticket``            → ``rfp_intake.tickets``
 - ``RFPMetadata``       → ``rfp_intake.rfp_metadata``
+- ``FinalDocument``     → ``rfp_intake.final_documents`` (Parte 3)
 - ``DepartmentSection`` → ``rfp_intake.department_sections`` (``key_aspects``,
   ``source_excerpts``, ``open_questions``; Parte 2: ``drafts``,
   ``evaluation_results``, ``generation_status``, ``iterations``)
@@ -88,6 +89,8 @@ class RFPMetadata(SQLModel, table=True):
     proposal_handoff: dict[str, Any] | None = Field(
         default=None, sa_column=Column(_JSON, nullable=True)
     )
+    # Parte 3: estado de la aprobación (departamentos, conflictos, arbitrajes, trace).
+    approval: dict[str, Any] | None = Field(default=None, sa_column=Column(_JSON, nullable=True))
     created_at: datetime | None = _ts_column()
     updated_at: datetime | None = _ts_column()
 
@@ -116,11 +119,33 @@ class DepartmentSection(SQLModel, table=True):
     )
     generation_status: str | None = None
     iterations: int = 0
+    # Parte 3: decisión del responsable (o del árbitro) y su historial.
     approval_status: str = "pendiente"
     approver: str | None = None
     approved_at: datetime | None = _ts_column(nullable=True)
+    approval_comments: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    approval_rounds: int = 0
+    approval_history: list[dict[str, Any]] | None = Field(
+        default=None, sa_column=Column(_JSON, nullable=True)
+    )
     created_at: datetime | None = _ts_column()
     updated_at: datetime | None = _ts_column()
 
 
-__all__ = ["SCHEMA", "Ticket", "RFPMetadata", "DepartmentSection"]
+class FinalDocument(SQLModel, table=True):
+    """Documento final consolidado con las secciones aprobadas (BRIEFING §2.3)."""
+
+    __tablename__ = "final_documents"  # type: ignore
+    __table_args__ = {"schema": SCHEMA}
+
+    ticket_id: str = Field(primary_key=True, foreign_key=f"{SCHEMA}.tickets.ticket_id")
+    rfp_id: str
+    currency: str | None = None
+    sections: list[dict[str, Any]] = _json_column([])
+    content: str = Field(sa_column=Column(Text, nullable=False))
+    generated_at: datetime | None = _ts_column()
+    created_at: datetime | None = _ts_column()
+    updated_at: datetime | None = _ts_column()
+
+
+__all__ = ["SCHEMA", "Ticket", "RFPMetadata", "DepartmentSection", "FinalDocument"]

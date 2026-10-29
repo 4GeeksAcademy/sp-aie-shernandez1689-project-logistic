@@ -100,6 +100,76 @@
   color: #7a2a8f;
 }
 
+/* Parte 3: estado final y aprobación por departamento. */
+.status-terminado,
+.status-approval-aprobada {
+  background: #e4f3e8;
+  color: #1e7e44;
+}
+
+.status-approval-pendiente,
+.status-approval-cambios_solicitados {
+  background: #fff3d6;
+  color: #9a6700;
+}
+
+.status-approval-rechazada {
+  background: #fbe6e4;
+  color: #b3322a;
+}
+
+.approval-card {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.decision-form fieldset {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.decision-form legend {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.decision-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-right: 1rem;
+}
+
+.decision-form textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--rfp-surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.approval-trace td {
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.final-document {
+  border-left: 4px solid var(--ok);
+}
+
+.final-document button {
+  margin: 0.5rem 0;
+}
+
 .provisional-warning {
   margin: 0.5rem 0;
   padding: 0.6rem 0.75rem;
