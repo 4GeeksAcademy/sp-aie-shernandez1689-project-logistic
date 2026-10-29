@@ -76,10 +76,12 @@ STATUS_ANALIZANDO = "analizando"
 STATUS_DESCARTADO = "descartado"
 STATUS_ANALISIS_COMPLETO = "analisis_completo"
 
-# Estados definidos para Partes 2 y 3 (reservados; no se usan todavía).
+# Parte 2 (generación + evaluación).
 STATUS_GENERANDO_BORRADOR = "generando_borrador"
 STATUS_EN_EVALUACION = "en_evaluación"
 STATUS_NEEDS_HUMAN_REVIEW = "needs_human_review"
+# Parte 3 (aprobación); la Parte 2 deja aquí los tickets con todas las
+# secciones aprobadas por los evaluadores.
 STATUS_ESPERANDO_APROBACION = "esperando_aprobación"
 STATUS_TERMINADO = "terminado"
 
@@ -94,6 +96,33 @@ VALID_STATUSES: frozenset[str] = frozenset(
         STATUS_ESPERANDO_APROBACION,
         STATUS_TERMINADO,
     }
+)
+
+# ── Parte 2: ciclo generador-evaluador ──────────────────────────────────────
+
+# Límite de iteraciones generador-evaluador por sección (KPI §3: ideal < 2).
+# Al agotarlo sin pasar, la sección queda ``needs_human_review`` con su último
+# borrador + EvaluationResult y viaja igual a la Parte 3.
+MAX_GENERATION_ITERATIONS = int(os.getenv("RFP_MAX_GENERATION_ITERATIONS", "3"))
+
+# Estado de cada DepartmentSection durante la Parte 2
+# (``department_sections.generation_status``).
+SECTION_GENERANDO = "generando_borrador"
+SECTION_EN_EVALUACION = "en_evaluación"
+SECTION_APROBADA_EVALUACION = "evaluacion_superada"
+SECTION_NEEDS_HUMAN_REVIEW = "needs_human_review"
+
+# Formato esperado de cada sección de propuesta económica: encabezados en este
+# orden. ``{label}`` y ``{currency}`` se rellenan por sección; el evaluador de
+# cumplimiento verifica que estén todos (regla ``section-format``).
+SECTION_HEADINGS: tuple[str, ...] = (
+    "## Propuesta económica — {label}",
+    "### Alcance",
+    "### Precios ({currency})",
+    "### SLA comprometido",
+    "### Descuentos por volumen",
+    "### Información pendiente del cliente",
+    "### Responsable",
 )
 
 # ── Rutas de datos locales ──────────────────────────────────────────────────

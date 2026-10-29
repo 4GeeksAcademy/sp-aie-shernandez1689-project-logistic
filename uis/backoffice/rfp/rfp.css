@@ -81,9 +81,43 @@
   color: #b3322a;
 }
 
-.status-analizando {
+.status-analizando,
+.status-generando_borrador,
+.status-en_evaluación {
   background: #fff3d6;
   color: #9a6700;
+}
+
+/* Parte 2: listo para aprobación / revisión humana. */
+.status-esperando_aprobación,
+.status-evaluacion_superada {
+  background: #e4ecfb;
+  color: #2350a8;
+}
+
+.status-needs_human_review {
+  background: #f6e3fa;
+  color: #7a2a8f;
+}
+
+.provisional-warning {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #c88ad8;
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: rgba(122, 42, 143, 0.12);
+}
+
+.rfp-draft {
+  white-space: pre-wrap;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.8rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  max-height: 24rem;
+  overflow: auto;
 }
 
 .reason-block {

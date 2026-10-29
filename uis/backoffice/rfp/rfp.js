@@ -22,11 +22,22 @@ const DEFAULT_API_BASE = "http://127.0.0.1:8000";
 const API_STORAGE_KEY = "trackflow_api_base";
 const TOKEN_STORAGE_KEY = "trackflow_access_token";
 const STATUS_ANALIZANDO = "analizando";
+// Estados con trabajo en segundo plano (Parte 1 análisis, Parte 2 generación).
+const IN_PROGRESS_STATUSES = new Set([STATUS_ANALIZANDO, "generando_borrador", "en_evaluación"]);
 const POLL_INTERVAL_MS = 2000;
-const POLL_TIMEOUT_MS = 120000;
+const POLL_TIMEOUT_MS = 180000;
 const TABLE_REFRESH_MS = 3000;
 
 let tableRefreshTimer = null;
+// Con la Parte 2 encadenada, analisis_completo es un estado de paso.
+let autoProposal = true;
+
+/** ¿Sigue el ticket con trabajo en segundo plano? */
+function isPending(detail) {
+  const status = detail.ticket?.status;
+  if (IN_PROGRESS_STATUSES.has(status)) return true;
+  return status === "analisis_completo" && detail.auto_proposal !== false && !detail.proposal_handoff;
+}
 
 const dom = {
   uploadForm: document.getElementById("uploadForm"),
@@ -177,7 +188,8 @@ async function loadTickets({ silent = false } = {}) {
     const tickets = result.tickets || [];
     renderTickets(tickets);
     hideLoading(dom.ticketsLoading);
-    scheduleTableRefresh(tickets.some((t) => t.status === STATUS_ANALIZANDO));
+    scheduleTableRefresh(tickets.some((t) => IN_PROGRESS_STATUSES.has(t.status)
+      || (t.status === "analisis_completo" && autoProposal)));
   } catch (error) {
     hideLoading(dom.ticketsLoading);
     dom.ticketsError.hidden = false;
@@ -205,13 +217,14 @@ async function fetchTicket(ticketId) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Consulta el ticket hasta que sale de ``analizando`` (o vence el timeout). */
+/** Consulta el ticket hasta un estado final (o vence el timeout). */
 async function pollTicket(ticketId, onUpdate) {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const detail = await fetchTicket(ticketId);
+    autoProposal = detail.auto_proposal !== false;
     onUpdate(detail);
-    if (detail.ticket?.status !== STATUS_ANALIZANDO) return detail;
+    if (!isPending(detail)) return detail;
     await sleep(POLL_INTERVAL_MS);
   }
   throw { timeout: true };
@@ -369,11 +382,31 @@ function createSalesSummary(summary) {
   box.className = "detail-section sales-summary";
   const h4 = document.createElement("h4");
   h4.textContent = "Resumen para Ventas";
-  box.append(h4, createSubheading("Qué pedir a quién"));
+  box.append(h4);
+  const provisional = summary.proposal?.provisional_sections || [];
+  if (provisional.length) {
+    box.append(createProvisionalWarning(
+      `Propuesta con ${provisional.length} sección(es) provisional(es): no enviar al cliente sin revisión.`,
+      provisional.map((p) => `${departmentLabel(p.department_id)}: revisar con ${p.owner} `
+        + `(pendiente: ${(p.pending || []).join(", ") || "evaluación"}; ${p.iterations} iteraciones)`)
+    ));
+  }
+  box.append(createSubheading("Qué pedir a quién"));
   box.append(createList((summary.requests || []).map((r) => `${r.owner} (${departmentLabel(r.department_id)}): ${r.ask}`)));
   const questions = summary.client_questions || [];
   box.append(createSubheading(`Preguntas para el cliente (${questions.length})`));
   box.append(questions.length ? createList(questions) : createSubheading("Ninguna: la RFP trae todo lo necesario."));
+  return box;
+}
+
+function createProvisionalWarning(title, items) {
+  const box = document.createElement("div");
+  box.className = "provisional-warning";
+  box.setAttribute("role", "alert");
+  const strong = document.createElement("strong");
+  strong.textContent = title;
+  box.append(strong);
+  if (items.length) box.append(createList(items));
   return box;
 }
 
@@ -424,6 +457,111 @@ function createHandoff(handoff) {
   return box;
 }
 
+function createEvaluation(evaluation) {
+  const box = document.createElement("div");
+  const dl = document.createElement("dl");
+  dl.className = "rfp-result-grid";
+  const readability = evaluation.readability || {};
+  const relevance = evaluation.relevance || {};
+  const compliance = evaluation.compliance || {};
+  const verdict = (ok) => (ok ? "pasa" : "falla");
+  dl.append(
+    createKv("Resultado", evaluation.overall_pass ? "aprobada por los evaluadores" : "no aprobada"),
+    createKv("Legibilidad", `${verdict(readability.pass)} · FK ${fmtScore(readability.score)}`),
+    createKv("Pertinencia", verdict(relevance.pass)),
+    createKv("Cumplimiento", `${verdict(compliance.pass)}${(compliance.rule_ids || []).length ? ` · ${compliance.rule_ids.join(", ")}` : ""}`)
+  );
+  box.append(dl);
+  if ((relevance.missing_aspects || []).length) {
+    box.append(createSubheading("Falta para responder la RFP:"), createList(relevance.missing_aspects));
+  }
+  if ((compliance.violations || []).length) {
+    box.append(createSubheading("Incumplimientos:"),
+      createList(compliance.violations.map((v) => `[${v.rule_id}] ${v.detail}`)));
+  }
+  if (evaluation.feedback_for_generator) {
+    box.append(createSubheading("Feedback para el generador:"));
+    const pre = document.createElement("pre");
+    pre.className = "rfp-draft";
+    pre.textContent = evaluation.feedback_for_generator;
+    box.append(pre);
+  }
+  return box;
+}
+
+function createProposal(sections, ticketId, status) {
+  const box = document.createElement("div");
+  box.className = "detail-section";
+  const h4 = document.createElement("h4");
+  h4.textContent = "Propuesta económica (Parte 2)";
+  box.append(h4);
+  const drafted = sections.filter((s) => s.generation_status);
+  if (!drafted.length) {
+    box.append(createSubheading("Sin borradores todavía."));
+  }
+  for (const section of drafted) {
+    const item = document.createElement("div");
+    item.className = "aspect";
+    const head = document.createElement("strong");
+    head.textContent = `${departmentLabel(section.department_id)} · ${section.department_owner || ""} · `;
+    const badge = document.createElement("span");
+    badge.className = `status-pill status-${section.generation_status}`;
+    badge.textContent = section.generation_status;
+    head.append(badge);
+    const iterations = document.createElement("p");
+    iterations.textContent = `Iteraciones generador-evaluador: ${section.iterations || 0}`;
+    item.append(head);
+    if (section.generation_status === "needs_human_review") {
+      item.append(createProvisionalWarning(
+        `Borrador provisional: agotó el límite sin pasar la evaluación. Revisar con ${section.department_owner || "el responsable"} antes de enviarlo.`,
+        []
+      ));
+    }
+    item.append(iterations);
+    const evaluations = section.evaluation_results || [];
+    if (evaluations.length) item.append(createEvaluation(evaluations[evaluations.length - 1]));
+    if (section.draft_content) {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "Ver borrador";
+      const pre = document.createElement("pre");
+      pre.className = "rfp-draft";
+      pre.textContent = section.draft_content;
+      details.append(summary, pre);
+      item.append(details);
+    }
+    box.append(item);
+  }
+  if (!IN_PROGRESS_STATUSES.has(status) && status !== "descartado" && status !== STATUS_ANALIZANDO) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "primary";
+    button.id = "regenerateBtn";
+    button.textContent = drafted.length ? "Regenerar propuesta" : "Generar propuesta";
+    button.addEventListener("click", () => regenerateProposal(ticketId, button));
+    box.append(button);
+  }
+  return box;
+}
+
+async function regenerateProposal(ticketId, button) {
+  button.disabled = true;
+  try {
+    const response = await fetch(
+      `${getApiBase()}/rfp/tickets/${encodeURIComponent(ticketId)}/proposal`,
+      { method: "POST", headers: requestHeaders() }
+    );
+    if (!response.ok) throw { status: response.status };
+    await sleep(POLL_INTERVAL_MS);
+    await loadDetail(ticketId);
+    loadTickets({ silent: true });
+  } catch (error) {
+    button.disabled = false;
+    dom.detailError.hidden = false;
+    dom.detailErrorMessage.textContent = friendlyError(error.status || 0);
+  }
+}
+
 async function loadDetail(ticketId) {
   dom.detailError.hidden = true;
   dom.detailContent.replaceChildren();
@@ -468,6 +606,9 @@ async function loadDetail(ticketId) {
     if (result.sales_summary) container.append(createSalesSummary(result.sales_summary));
     renderAspects(container, result.departments || [], "Aspectos clave por departamento");
     if (result.handoff) container.append(createHandoff(result.handoff));
+    if (result.handoff) {
+      container.append(createProposal(result.departments || [], ticketId, result.ticket?.status));
+    }
   } catch (error) {
     hideLoading(dom.detailLoading);
     dom.detailError.hidden = false;

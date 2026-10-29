@@ -1,10 +1,11 @@
 """E2E de la UI de recepción de RFPs (``uis/backoffice/rfp``) con Chromium.
 
 Sube los PDF de muestra del BRIEFING §4 **por la interfaz** (input de archivo
-+ botón) y comprueba lo que ve el usuario:
++ botón) y comprueba lo que ve el usuario. Las RFP aceptadas pasan por la
+Parte 1 (análisis) y la Parte 2 encadenada (borradores + evaluación):
 
-- ``trackflow-request-1.pdf`` (RFP formal)   → ``analisis_completo``
-- ``trackflow-request-2.pdf`` (RFP informal) → ``analisis_completo``
+- ``trackflow-request-1.pdf`` (RFP formal)   → ``esperando_aprobación``
+- ``trackflow-request-2.pdf`` (RFP informal) → ``esperando_aprobación``
 - ``trackflow-request-3.pdf`` (pitch de transportista) → ``descartado``
 
 Entorno del test: la API real (``services/api/main.py``) en uvicorn con auth
@@ -45,8 +46,8 @@ for _path in (REPO_ROOT, API_DIR):
 SAMPLES_DIR = REPO_ROOT / "rfp-requests" / "trackflow"
 SAMPLE_PDFS = [SAMPLES_DIR / f"trackflow-request-{i}.pdf" for i in (1, 2, 3)]
 EXPECTED = {
-    "trackflow-request-1.pdf": "analisis_completo",
-    "trackflow-request-2.pdf": "analisis_completo",
+    "trackflow-request-1.pdf": "esperando_aprobación",
+    "trackflow-request-2.pdf": "esperando_aprobación",
     "trackflow-request-3.pdf": "descartado",
 }
 UI_TIMEOUT_MS = 30_000
@@ -197,7 +198,7 @@ def test_upload_brief_samples_through_ui(page, stack):
     table = page.locator("#ticketsBody tr")
     sync_api.expect(table).to_have_count(3, timeout=UI_TIMEOUT_MS)
     statuses = sorted(table.locator(".status-pill").all_inner_texts())
-    assert [s.lower() for s in statuses] == ["analisis_completo", "analisis_completo", "descartado"]
+    assert [s.lower() for s in statuses] == ["descartado", "esperando_aprobación", "esperando_aprobación"]
     sync_api.expect(page.locator("#ticketsBody")).to_contain_text("ModaViva Fashion S.L.")
     sync_api.expect(page.locator("#ticketsBody")).to_contain_text("Luna Cosmetics")
 
@@ -213,6 +214,14 @@ def test_upload_brief_samples_through_ui(page, stack):
     sync_api.expect(detail).to_contain_text("Sofía Ramos")
     assert "Carlos Vega" not in detail.inner_text()  # usa su propio transportista
     sync_api.expect(detail).to_contain_text("generando_borrador")
+
+    # Parte 2: un borrador evaluado por departamento activo.
+    sync_api.expect(detail).to_contain_text("Propuesta económica (Parte 2)")
+    proposal = detail.locator(".detail-section", has_text="Propuesta económica (Parte 2)")
+    sync_api.expect(proposal.locator(".status-evaluacion_superada")).to_have_count(2)
+    sync_api.expect(proposal).to_contain_text("aprobada por los evaluadores")
+    proposal.locator("summary", has_text="Ver borrador").first.click()
+    sync_api.expect(proposal).to_contain_text("Descuentos por volumen")
 
     if os.getenv("RFP_UI_SCREENSHOT"):
         page.screenshot(path=os.environ["RFP_UI_SCREENSHOT"], full_page=True)

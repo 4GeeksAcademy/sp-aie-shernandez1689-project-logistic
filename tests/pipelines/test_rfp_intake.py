@@ -816,7 +816,9 @@ class TestAsyncUploadRoute:
 
     @needs_samples
     @pytest.mark.parametrize("idx,final", [
-        (1, "analisis_completo"), (2, "analisis_completo"), (3, "descartado"),
+        # Parte 2 encadenada: las RFP aceptadas pasan por la generación y, con
+        # todas las secciones aprobadas por los evaluadores, esperan aprobación.
+        (1, "esperando_aprobación"), (2, "esperando_aprobación"), (3, "descartado"),
     ])
     def test_upload_returns_analizando_then_final(self, client, tmp_path, idx, final):
         resp = self._upload(client, SAMPLE_PDFS[idx])
@@ -829,12 +831,14 @@ class TestAsyncUploadRoute:
         # TestClient ejecuta las BackgroundTasks antes de devolver el control.
         detail = client.get(f"/rfp/tickets/{body['ticket_id']}").json()
         assert detail["ticket"]["status"] == final
-        if final == "analisis_completo":
+        if final != "descartado":
             assert detail["departments"]
             assert all(d["key_aspects"] for d in detail["departments"])
             owners = {r["owner"] for r in detail["sales_summary"]["requests"]}
             assert owners == {d["department_owner"] for d in detail["departments"]}
             assert detail["handoff"]["next_status"] == "generando_borrador"
+            assert all(d["draft_content"] for d in detail["departments"])
+            assert detail["proposal_handoff"]["status"] == final
         else:
             assert detail["sales_summary"] is None
 

@@ -10,8 +10,11 @@ con los endpoints del tramo de recepción de RFPs:
   ``descartado``.
 - ``GET  /rfp/tickets``   — lista los tickets de intake (más recientes primero).
 - ``GET  /rfp/tickets/{ticket_id}`` — detalle: metadatos, secciones por
-  departamento (``key_aspects``, extractos, preguntas abiertas), resumen
-  para Ventas y handoff hacia la Parte 2.
+  departamento (``key_aspects``, extractos, preguntas abiertas; Parte 2:
+  borradores y EvaluationResult), resumen para Ventas y handoffs.
+- ``POST /rfp/tickets/{ticket_id}/proposal`` — (re)lanza la Parte 2 en
+  segundo plano (``202``). Tras el upload se encadena sola salvo
+  ``RFP_AUTO_PROPOSAL=0``.
 
 Regla estricta de capas (Brifing-pipeline.md §5): este router **importa
 únicamente** funciones de ``data/pipelines/rfp_intake/`` (proceso, clasificador,
@@ -45,10 +48,16 @@ if str(REPO_ROOT) not in sys.path:
 
 from auth import get_current_user  # noqa: E402
 from data.pipelines.rfp_intake import (  # noqa: E402
-    analyze_ticket,
+    ProposalNotReadyError,
     db,
+    generate_proposal,
+    process_ticket,
     recover_stale_tickets,
     register_upload,
+)
+from data.pipelines.rfp_intake.proposal import (  # noqa: E402
+    auto_proposal_enabled,
+    load_handoff,
 )
 
 logger = logging.getLogger(__name__)
@@ -137,7 +146,8 @@ async def upload_rfp(
         raise _db_unavailable(exc) from exc
 
     # Función síncrona → Starlette la ejecuta en el threadpool tras responder.
-    background_tasks.add_task(analyze_ticket, ticket["ticket_id"])
+    # Parte 1 (análisis) y, si acaba en analisis_completo, Parte 2.
+    background_tasks.add_task(process_ticket, ticket["ticket_id"])
     logger.info("RFP %s recibida como %s", file.filename, ticket["ticket_id"])
     return {**ticket, "filename": file.filename}
 
@@ -179,7 +189,38 @@ def get_ticket_detail(
         # Synthesizer: qué pedir a quién (Ventas) + handoff a la Parte 2.
         "sales_summary": metadata.get("sales_summary"),
         "handoff": metadata.get("handoff"),
+        # Parte 2 → Parte 3: borradores evaluados (needs_human_review incluidas).
+        "proposal_handoff": metadata.get("proposal_handoff"),
+        # La UI sabe si analisis_completo es transitorio (Parte 2 encadenada).
+        "auto_proposal": auto_proposal_enabled(),
     }
+
+
+def _run_proposal(ticket_id: str) -> None:
+    try:
+        generate_proposal(ticket_id)
+    except Exception:
+        logger.exception("RFP propuesta: falló la generación de %s", ticket_id)
+
+
+@router.post("/tickets/{ticket_id}/proposal", status_code=status.HTTP_202_ACCEPTED)
+def regenerate_proposal(
+    ticket_id: str,
+    background_tasks: BackgroundTasks,
+    _user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """(Re)lanza la generación + evaluación de la propuesta (Parte 2)."""
+    try:
+        ticket, *_ = load_handoff(ticket_id)
+    except db.DatabaseNotConfiguredError as exc:
+        raise _db_unavailable(exc) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Ticket no encontrado: {ticket_id}") from exc
+    except ProposalNotReadyError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    background_tasks.add_task(_run_proposal, ticket_id)
+    return {"ticket_id": ticket_id, "status": ticket["status"], "queued": True}
 
 
 async def rfp_recovery_loop() -> None:
