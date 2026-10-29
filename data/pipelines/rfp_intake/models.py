@@ -6,7 +6,8 @@ Reflejan 1:1 las tablas de ``migrations/001_rfp_intake.sql`` (esquema
 - ``Ticket``            → ``rfp_intake.tickets``
 - ``RFPMetadata``       → ``rfp_intake.rfp_metadata``
 - ``DepartmentSection`` → ``rfp_intake.department_sections`` (``key_aspects``,
-  ``source_excerpts``, ``open_questions``)
+  ``source_excerpts``, ``open_questions``; Parte 2: ``drafts``,
+  ``evaluation_results``, ``generation_status``, ``iterations``)
 
 Viven en ``data/pipelines/`` (no en ``services/api/models.py``) para respetar
 la regla de capas: el pipeline no importa nada de ``services/``.
@@ -83,12 +84,16 @@ class RFPMetadata(SQLModel, table=True):
     readability: dict[str, Any] = _json_column({})
     sales_summary: dict[str, Any] | None = Field(default=None, sa_column=Column(_JSON, nullable=True))
     handoff: dict[str, Any] | None = Field(default=None, sa_column=Column(_JSON, nullable=True))
+    # Parte 2 → Parte 3: secciones con su último borrador + EvaluationResult.
+    proposal_handoff: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(_JSON, nullable=True)
+    )
     created_at: datetime | None = _ts_column()
     updated_at: datetime | None = _ts_column()
 
 
 class DepartmentSection(SQLModel, table=True):
-    """Sección por departamento activo (Parte 1: ``key_aspects``)."""
+    """Sección por departamento activo (Parte 1: ``key_aspects``; Parte 2: borradores)."""
 
     __tablename__ = "department_sections"  # type: ignore
     __table_args__ = {"schema": SCHEMA}
@@ -102,10 +107,15 @@ class DepartmentSection(SQLModel, table=True):
     key_aspects: list[str] = _json_column([])
     source_excerpts: list[str] = _json_column([])
     open_questions: list[str] = _json_column([])
+    # Parte 2: último borrador + historial (un borrador y un EvaluationResult
+    # por iteración del ciclo generador-evaluador).
     draft_content: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    evaluation_results: dict[str, Any] | None = Field(
+    drafts: list[dict[str, Any]] | None = Field(default=None, sa_column=Column(_JSON, nullable=True))
+    evaluation_results: list[dict[str, Any]] | None = Field(
         default=None, sa_column=Column(_JSON, nullable=True)
     )
+    generation_status: str | None = None
+    iterations: int = 0
     approval_status: str = "pendiente"
     approver: str | None = None
     approved_at: datetime | None = _ts_column(nullable=True)

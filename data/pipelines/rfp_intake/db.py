@@ -168,6 +168,43 @@ def save_intake(
     _upsert(*instances)
 
 
+def _update(model: type[SQLModel], key: str, fields: dict[str, Any]) -> dict[str, Any]:
+    """Actualiza columnas de una fila existente y renueva ``updated_at``."""
+    with Session(get_engine()) as session:
+        row = session.get(model, key)
+        if row is None:
+            raise KeyError(f"{model.__name__} no encontrado: {key}")
+        for name, value in _coerce_datetimes(fields).items():
+            setattr(row, name, value)
+        row.updated_at = _now()  # type: ignore[attr-defined]
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return _to_dict(row)
+
+
+def update_ticket(ticket_id: str, **fields: Any) -> dict[str, Any]:
+    """Cambia campos del ticket (p. ej. ``status``/``reason`` en la Parte 2)."""
+    return _update(Ticket, ticket_id, fields)
+
+
+def update_department_section(section_id: str, **fields: Any) -> dict[str, Any]:
+    """Cambia campos de una sección (borradores, evaluaciones, estado)."""
+    return _update(DepartmentSection, section_id, fields)
+
+
+def update_rfp_metadata(ticket_id: str, **fields: Any) -> dict[str, Any]:
+    """Cambia campos de los metadatos de un ticket (p. ej. ``proposal_handoff``)."""
+    with Session(get_engine()) as session:
+        row = session.exec(
+            select(RFPMetadata).where(RFPMetadata.ticket_id == ticket_id)
+        ).first()
+        if row is None:
+            raise KeyError(f"RFPMetadata no encontrado para {ticket_id}")
+        key = row.id
+    return _update(RFPMetadata, key, fields)
+
+
 # ── Lectura ─────────────────────────────────────────────────────────────────
 
 
@@ -224,6 +261,9 @@ __all__ = [
     "save_rfp_metadata",
     "save_department_section",
     "save_intake",
+    "update_ticket",
+    "update_department_section",
+    "update_rfp_metadata",
     "list_tickets",
     "list_tickets_by_status",
     "get_ticket",
