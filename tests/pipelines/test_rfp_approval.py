@@ -318,18 +318,21 @@ class TestInterruptAndResume:
         assert _sections(sqlite_db, ticket_id)["reverse"]["approval_status"] == "rechazada"
 
     def test_needs_human_review_ticket_enters_part_3_and_loses_banner_on_approval(
-        self, sqlite_db, make_ticket,
+        self, sqlite_db, make_ticket, monkeypatch,
     ):
         """Parte 2 → 3: la sección provisional llega a su responsable y al aprobarla
         se quita la cabecera y el aviso de Ventas."""
         ticket_id = make_ticket(2, max_iterations=1, drafter=WrongCurrencyDrafter())
         assert sqlite_db.get_ticket(ticket_id)["status"] == "needs_human_review"
+        statuses = _track_statuses(sqlite_db, monkeypatch)
         approval.open_approval(ticket_id, drafter=WrongCurrencyDrafter())
         assert sqlite_db.get_ticket(ticket_id)["status"] == "esperando_aprobación"
         _approve(ticket_id, "warehouse")
         _approve(ticket_id, "lastmile")
 
         assert sqlite_db.get_ticket(ticket_id)["status"] == "terminado"
+        # needs_human_review → esperando_aprobación → terminado, sin saltos.
+        assert statuses == ["esperando_aprobación", "terminado"]
         warehouse = _sections(sqlite_db, ticket_id)["warehouse"]
         assert not warehouse["draft_content"].startswith("> **BORRADOR PROVISIONAL**")
         sales = sqlite_db.get_rfp_metadata(ticket_id)["sales_summary"]["proposal"]
@@ -600,6 +603,42 @@ class TestParallelBranches:
         assert coordinator["ticket_id"] == second
 
 
+    def test_concurrent_tickets_running_at_once_keep_separate_checkpoints(self, sqlite_db, make_ticket):
+        """Dos tickets abren y deciden a la vez en hilos distintos: cada uno su checkpoint."""
+        tickets = [make_ticket(1), make_ticket(1)]
+        errors: list[Exception] = []
+
+        def run(ticket_id, decision):
+            try:
+                approval.open_approval(ticket_id)
+                approval.submit_decision(ticket_id, "warehouse", decision)
+            except Exception as exc:  # pragma: no cover - se reporta abajo
+                errors.append(exc)
+
+        decisions = [
+            {"decision": "approve", "approver": ANA},
+            {"decision": "reject", "approver": ANA, "comments": "Sin capacidad en Zaragoza este trimestre."},
+        ]
+        threads = [threading.Thread(target=run, args=args) for args in zip(tickets, decisions)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, errors
+        first, second = tickets
+        assert _sections(sqlite_db, first)["warehouse"]["approval_status"] == "aprobada"
+        assert _sections(sqlite_db, second)["warehouse"]["approval_status"] == "rechazada"
+        saver = ckpt.get_checkpointer()
+        threads_seen = {c.config["configurable"]["thread_id"] for c in saver.list(None)}
+        for ticket_id in tickets:
+            assert {f"rfp-{ticket_id}", f"rfp-{ticket_id}:warehouse", f"rfp-{ticket_id}:reverse"} <= threads_seen
+            for dep in ("warehouse", "reverse"):
+                values = _dept_state(ticket_id, dep).values
+                assert values["ticket_id"] == ticket_id  # ningún estado cruzado
+                assert all(e["thread_id"] == f"rfp-{ticket_id}:{dep}" for e in values["trace"])
+
+
 class TestTrace:
     def test_every_node_execution_records_agent_input_output_timestamp(self, sqlite_db, make_ticket):
         ticket_id = make_ticket(1)
@@ -622,6 +661,13 @@ class TestTrace:
         assert decision["output"]["decision"]["decision"] == "approve"
         # El trace también vive en el estado (checkpoint) de cada grafo.
         assert _dept_state(ticket_id, "warehouse").values["trace"][0]["node"] == "prepare"
+
+    def test_every_graph_node_is_traced(self):
+        """Ningún nodo escapa al registro: todos los nodos de ambos grafos usan @traced."""
+        for graph in (department_approval_graph(), ticket_approval_graph()):
+            for name, node in graph.builder.nodes.items():
+                fn = node.runnable.func
+                assert hasattr(fn, "__wrapped__"), f"{name} no está decorado con @traced"
 
 
 # ===================================================================
