@@ -60,7 +60,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from auth import get_current_user  # noqa: E402
+from auth import CurrentUser, get_current_user  # noqa: E402
 from data.pipelines.rfp_intake import (  # noqa: E402
     ApprovalDecision,
     ApprovalError,
@@ -310,16 +310,17 @@ def record_decision(
     ticket_id: str,
     department_id: str,
     decision: ApprovalDecision,
-    _user: Any = Depends(get_current_user),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Decisión del responsable: aprobar, rechazar o pedir cambios.
 
     FastAPI valida el formato (422) y el pipeline valida el contexto
-    (responsable correcto, sección esperando decisión, conflictos abiertos)
+    (cuenta autenticada entre los aprobadores del departamento → si no, 403;
+    responsable correcto, sección esperando decisión, conflictos abiertos)
     antes de reanudar la rama interrumpida.
     """
     try:
-        approval = submit_decision(ticket_id, department_id, decision)
+        approval = submit_decision(ticket_id, department_id, decision, actor=current_user.email)
     except db.DatabaseNotConfiguredError as exc:
         raise _db_unavailable(exc) from exc
     except ApprovalError as exc:

@@ -41,6 +41,7 @@ for _path in (REPO_ROOT, API_DIR):
 import agent_chat  # noqa: E402
 import auth  # noqa: E402
 import data.pipelines.rag as rag  # noqa: E402
+import rate_limit  # noqa: E402
 import services.rag_agent.graph as graph_mod  # noqa: E402
 from data.pipelines.rag import StreamAborted  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
@@ -275,6 +276,7 @@ class FakeGraph:
 
 @pytest.fixture
 def client(monkeypatch):
+    rate_limit.llm_limiter.reset()  # presupuesto de LLM por usuario: limpio en cada test
     monkeypatch.setenv("JWT_SECRET_KEY", JWT_SECRET)
     monkeypatch.setattr(auth, "_find_user", lambda user_id: USERS.get(user_id))
     app = FastAPI()
@@ -455,6 +457,22 @@ def test_interrupt_command_without_new_input(client, monkeypatch):
 
         ws.send_json({"command": "interrupt", "data": {}})
         assert ws.receive_json()["data"]["code"] == "invalid_state"
+
+
+def test_send_message_over_llm_rate_limit_reports_chat_error(client, fake_graph, monkeypatch):
+    """PR-6 (informe NIST): el WS comparte el presupuesto de llamadas al LLM por usuario."""
+    monkeypatch.setenv("LLM_RATE_LIMIT_PER_MINUTE", "1")
+    flow_id = _new_session(client)
+    with _ws(client, flow_id) as ws:
+        _restored(ws, flow_id)
+        _say(ws, "¿Dónde está mi envío?")
+        _receive_until(ws, "generation_completed")
+        _say(ws, "¿Y el de ayer?")
+        error = _receive_until(ws, "chat_error")[-1]["data"]
+
+    assert error["code"] == "rate_limited"
+    assert "Reintenta en" in error["message"]
+    assert fake_graph.questions == ["¿Dónde está mi envío?"]
 
 
 def test_reconnect_with_same_flow_id_restores_thread(client, fake_graph):

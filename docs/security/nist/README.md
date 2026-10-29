@@ -8,8 +8,8 @@
 
 ## Resumen ejecutivo
 
-- **La pregunta del CEO y el CTO** (briefing §1): ¿puede un cliente obtener por el chat datos de otro, o forzar al agente a una acción que no le corresponde? **Por el chat, hoy no.** El agente no tiene herramientas de escritura ni elige acciones: el LLM solo produce texto y las consultas a sistemas son de solo lectura. En este ciclo se cerraron los dos caminos de fuga e inyección que sí existían: la memoria del agente compartida entre usuarios y el texto oculto en los PDF de RFP. Ambos tienen test antes/después (§6).
-- **El riesgo más alto que queda no está en el chat, sino en la API.** La aprobación humana de propuestas RFP se puede suplantar escribiendo el nombre del responsable (G1). Además, cualquier usuario autenticado ve todas las RFP y todo el inventario de todas las marcas (G2, G4). Mientras todas las cuentas sean de empleados es tolerable; **no lo es en cuanto existan cuentas de clientes B2B o B2C.**
+- **La pregunta del CEO y el CTO** (briefing §1): ¿puede un cliente obtener por el chat datos de otro, o forzar al agente a una acción que no le corresponde? **Por el chat, hoy no.** El agente no tiene herramientas de escritura ni elige acciones: el LLM solo produce texto y las consultas a sistemas son de solo lectura. En este ciclo se cerraron los caminos de fuga e inyección que sí existían, todos con test antes/después (§6): la memoria del agente compartida entre usuarios, el texto oculto en los PDF de RFP y **tres endpoints que llamaban al LLM sin autenticación ni límite** (`/agent/query`, `/api/rag/query`, `/knowledge/query`). Por `/agent/query`, un anónimo podía llegar a la consulta de incidencias con el token de servicio del MCP (G3, G19). Ahora los tres exigen JWT y tienen rate limiting por usuario.
+- **El riesgo más alto estaba en la API, no en el chat.** La aprobación humana de propuestas RFP se podía suplantar escribiendo el nombre del responsable (G1). **Corregido en este ciclo:** ahora decide la cuenta autenticada, no el nombre escrito (§6.2). Sigue abierto que cualquier usuario autenticado ve todas las RFP y todo el inventario de todas las marcas (G2, aceptado por ahora; G4). Mientras todas las cuentas sean de empleados es tolerable; **no lo es en cuanto existan cuentas de clientes B2B o B2C.**
 - **Faltan los procesos que piden el RGPD y la CCPA/CPRA cuando algo falla.** No hay plan de notificación de brechas en 72 horas (G9), ni backups reales de las bases de datos (G10), ni un procedimiento para borrar los datos de un usuario (G11).
 - **Dos componentes del inventario del briefing no existen en el fork:** el motor de selección de carrier y el motor de aprobación automática de devoluciones. Las acciones irreversibles del §5 no se pueden ejecutar porque no hay código que las haga (§5 de este informe). Antes de construirlos hay que fijar los requisitos de confirmación humana (G5, G6).
 
@@ -49,13 +49,14 @@ Los responsables se proponen a partir de los dueños que fijan los briefings de 
 
 | Componente | ¿Existe en el fork? | Implementación | Responsable de negocio | Responsable técnico | Riesgo principal | Estado |
 | --- | --- | --- | --- | --- | --- | --- |
-| Agente de soporte 24/7 (CX) | ✔ | `services/rag_agent/graph.py`; `POST /agent/query`, `WS /agent/ws` | Valentina Cruz (Customer Experience) | Andrés Kim (CTO) | Prompt injection para obtener datos de otro pedido o cliente | ✔ Jailbreak bloqueado antes del LLM; contenido externo aislado; memoria por usuario (este ciclo). ⚠ T1 (G3) |
+| Agente de soporte 24/7 (CX) | ✔ | `services/rag_agent/graph.py`; `POST /agent/query`, `WS /agent/ws` | Valentina Cruz (Customer Experience) | Andrés Kim (CTO) | Prompt injection para obtener datos de otro pedido o cliente | ✔ Jailbreak bloqueado antes del LLM; contenido externo aislado; memoria por usuario; JWT y rate limiting en `/agent/query` (este ciclo). ⚠ T1 (G3) |
 | Motor de selección de carrier | ✘ No implementado | — (el agente solo lee incidencias e inventario) | Carlos Vega (Last Mile & Carrier Mgmt.) | Andrés Kim | Excessive agency: confirmar un envío sin validar costo ni reglas | N/A hoy. Requisitos previos en G5 |
-| RAG de políticas de devolución y SLA por país | ✔ | `data/process/rag.py` (ingesta), `data/pipelines/rag.py` (retrieve y generate), colección `trackflow_knowledge` | Miguel Torres (Comercial; contenido de la KB) | Andrés Kim | Data leakage entre marcas B2B | ✔ La KB solo contiene políticas generales de TrackFlow, sin reglas confidenciales por cliente; solo se escribe por commit. ⚠ `retrieve` roto con qdrant-client 1.20 (G13) |
+| RAG de políticas de devolución y SLA por país | ✔ | `data/process/rag.py` (ingesta), `data/pipelines/rag.py` (retrieve y generate), colección `trackflow_knowledge`; endpoints propios `POST /api/rag/query` (UI `uis/rag.html`) y `POST /knowledge/query` (UI `uis/backoffice/knowledge/`) | Miguel Torres (Comercial; contenido de la KB) | Andrés Kim | Data leakage entre marcas B2B; abuso del LLM | ✔ La KB solo contiene políticas generales de TrackFlow, sin reglas confidenciales por cliente; solo se escribe por commit. ✔ JWT y rate limiting (este ciclo). ✘ Los dos endpoints no pasan por los guardarraíles (G18). ⚠ `retrieve` roto con qdrant-client 1.20 (G13) |
 | Motor de aprobación automática de devoluciones | ✘ No implementado | — | Sofía Ramos (Reverse Logistics) | Andrés Kim | Aprobar devoluciones fuera de las reglas (alto impacto económico) | N/A hoy. Falta definir el umbral monetario (G6) |
-| *Fuera del §3:* pipeline de propuestas RFP | ✔ | `data/pipelines/rfp_intake/` (generador LLM + aprobación humana por departamento) | Miguel Torres (Comercial) | Andrés Kim | Inyección por documento; aprobación suplantable; datos B2B sin control de acceso | ✔ Inyección por PDF (este ciclo). ✘ G1, G2 |
+| *Fuera del §3:* pipeline de propuestas RFP | ✔ | `data/pipelines/rfp_intake/` (generador LLM + aprobación humana por departamento) | Miguel Torres (Comercial) | Andrés Kim | Inyección por documento; aprobación suplantable; datos B2B sin control de acceso | ✔ Inyección por PDF y aprobación vinculada a la cuenta (este ciclo). ⚠ G2 aceptado |
 | *Fuera del §3:* memoria persistente del agente | ✔ | `services/memory/` (Redis + Qdrant `trackflow_agent_memory`) | Valentina Cruz | Andrés Kim | Inyección persistente y fuga entre usuarios; datos personales sin supresión | ✔ Aislamiento y filtro por usuario (este ciclo). ⚠ G11, G14 |
 | *Fuera del §3:* servidor MCP `trackflow-server` | ✔ | `mcps/trackflow-server/main.py` (JWT con `aud`/`iss` y scopes) | — | Andrés Kim | Confused deputy: token de servicio sin la identidad del usuario | ⚠ G3 |
+| *Fuera del §3:* modelo de pronóstico de ventas (ML, no LLM) | ✔ | `shared/sales_forecast/` (features causales y métricas MSE, PSI, Gini, K2), `scripts/sales_forecast_train.py` y `sales_forecast_evaluate.py`; referencia `trackflow-BRIEFING.es.md` | Thomas (CEO; decide inversiones con el pronóstico) | Andrés Kim | Decisiones de negocio sobre un pronóstico degradado (drift); no recibe input de usuarios ni tiene endpoint | ✔ Entrenamiento y evaluación offline, sin exposición por API; el PSI mide el drift. Sin monitorización periódica del drift (ver DE-4) |
 
 > **Corrección a la auditoría OWASP.** [`owasp-top10-audit.md`](../owasp-top10-audit.md) (A04/A05) afirma que "el motor de aprobación de devoluciones vive en `data/pipelines/rfp_intake/approval.py`". Ese módulo aprueba **secciones de propuestas RFP**, no devoluciones. El motor de devoluciones no existe. Hay que alinear ambos documentos (GV-2).
 
@@ -79,7 +80,7 @@ Cada función describe el estado actual con su evidencia y una lista de acciones
 
 ### 3.2 IDENTIFY (ID) — activos, datos y riesgos
 
-**Estado actual.** Este informe inventaría los sistemas de IA (§2), todas las entradas externas al LLM (Anexo B: 10 puntos, U1-D3) y las credenciales (Anexo A). No hay clasificación de datos por almacén ni escaneo de vulnerabilidades de dependencias (OWASP A06 ⚠).
+**Estado actual.** Este informe inventaría los sistemas de IA (§2), todas las entradas externas al LLM (Anexo B: 11 puntos, U1-D3) y las credenciales (Anexo A). No hay clasificación de datos por almacén ni escaneo de vulnerabilidades de dependencias (OWASP A06 ⚠).
 
 | # | Acción | Prioridad | Dueño | Hecho cuando… |
 | --- | --- | --- | --- | --- |
@@ -100,11 +101,13 @@ Cada función describe el estado actual con su evidencia y una lista de acciones
 
 | # | Acción | Prioridad | Dueño | Hecho cuando… |
 | --- | --- | --- | --- | --- |
-| **PR-1** | **Vincular la aprobación RFP a la identidad autenticada:** derivar `approver` del JWT (`current_user` → responsable del departamento) en lugar de aceptarlo del cuerpo de la petición | **P1** | Andrés Kim | Test: un usuario que no es Sofía Ramos envía `approver: "Sofía Ramos"` → 403 (G1) |
-| **PR-2** | Control de acceso por rol en `/rfp/*` (solo Comercial y responsables de departamento) y en el inventario por marca cliente cuando existan cuentas B2B | **P1** | Andrés Kim | Tests 403 por rol; modelo usuario↔marca (G2, G4) |
+| **PR-1** ✔ | **Vincular la aprobación RFP a la identidad autenticada.** **Hecho en este ciclo:** la ruta pasa el email del JWT y solo las cuentas de `RFP_APPROVER_EMAILS` para ese departamento deciden (403 si no; fail-closed sin configuración). La decisión guarda `approved_by` | **P1** | Andrés Kim | ✔ Test: `intruso@…` y `ana@…` envían `approver: "Sofía Ramos"` → 403; `sofia@…` → 200 con `approved_by` (G1). Pendiente operativo: configurar los emails reales en producción |
+| **PR-2** | Control de acceso por rol en `/rfp/*` y en el inventario por marca cliente. **Decisión del 2026-10-29:** `/rfp/*` sigue abierto a todo usuario autenticado mientras solo haya cuentas internas (G2, riesgo aceptado) | **P1 al crear cuentas externas** | Andrés Kim | Tests 403 por rol y modelo usuario↔marca antes de la primera cuenta B2B (G2, G4) |
 | **PR-3** | Propagar la identidad del usuario del chat al MCP (token *on-behalf-of*) y emitir un `MCP_TOKEN` del agente **solo con scopes `read:*`**. Añadir dueño a las incidencias y filtrar por él | **P1** | Andrés Kim | Test: el usuario A pide el ticket de B → respuesta honesta "no encontrado" (G3) |
 | **PR-4** | Higiene de credenciales: documentar `LLM_API_KEY`, `EMBEDDINGS_API_KEY`, `QDRANT_API_KEY` y `MCP_TOKEN` en `.env.example`; `REPORTING_RUN_TOKEN` fail-closed fuera de desarrollo; `load_dotenv` del MCP con ruta explícita | P2 | Andrés Kim | Arranque en producción falla si falta un secreto (G7) |
 | **PR-5** | Verificar el cifrado en reposo de Supabase, Qdrant y los volúmenes, y TLS en todas las rutas públicas | P2 | Andrés Kim | Evidencia de configuración del proveedor (G17) |
+| **PR-6** ✔ | **JWT y rate limiting en todas las rutas que invocan un modelo.** **Hecho en este ciclo:** `/agent/query`, `/api/rag/query` y `/knowledge/query` exigen JWT, y cada usuario tiene un presupuesto de `LLM_RATE_LIMIT_PER_MINUTE` llamadas (20 por defecto, ventana deslizante de 60 s) compartido con el `send_message` del chat WS. Al superarlo: 429 con `Retry-After`, o `chat_error rate_limited` | **P1** | Andrés Kim | ✔ Tests: anónimo → 401; tercera llamada con límite 2 → 429 sin llamar al modelo; otro usuario sigue con su presupuesto; WS → `rate_limited` (§6.3, G19). Pendiente: pasar el estado a Redis si hay varios workers |
+| **PR-7** | Hacer que `/api/rag/query` y `/knowledge/query` pasen por los mismos guardarraíles que el agente (clasificador de jailbreak, `isolate_context_chunks`, `validate_output`) o retirarlos en favor de `/agent/query` | **P1** | Andrés Kim | Test de jailbreak y de documento inyectado sobre ambos endpoints (G18) |
 
 ### 3.4 DETECT (DE) — detección y monitorización
 
@@ -119,6 +122,7 @@ Cada función describe el estado actual con su evidencia y una lista de acciones
 | **DE-1** | **Alerta de picos de seguridad:** más de N eventos `kind=security` o `injection_neutralized` por usuario o hilo en 10 minutos → aviso al canal de guardia (LA y Zaragoza) | **P1** | Andrés Kim | Alerta probada con el test de jailbreak existente (G8) |
 | **DE-2** | Registrar `injection_neutralized` también en el generador RFP (ticket, departamento, campo de origen) y auditar cada decisión de aprobación con el usuario del JWT | P2 | Andrés Kim | Evento visible en el resumen; test que lo verifica |
 | **DE-3** | Detección de abuso de lectura: un mismo usuario consulta muchos `ticket_id` o SKU distintos en una sesión (señal de enumeración, briefing §4.1) | P2 | Valentina Cruz + Andrés Kim | Regla en la telemetría con umbral acordado |
+| **DE-4** | Monitorizar el drift del modelo de pronóstico de ventas: calcular el PSI mensual contra la distribución de entrenamiento y avisar si supera 0,2 (umbral habitual de cambio significativo) antes de usar el pronóstico para decisiones de inversión | P3 | Andrés Kim + Thomas (CEO) | PSI mensual publicado y alerta probada |
 
 ### 3.5 RESPOND (RS) — respuesta a incidentes
 
@@ -160,9 +164,9 @@ Cada brecha incluye el riesgo (qué puede pasar y su gravedad), la mitigación p
 
 | ID | Brecha (evidencia) | Riesgo | Gravedad | Mitigación propuesta | Acción |
 | --- | --- | --- | --- | --- | --- |
-| **G1** | **Aprobación RFP suplantable.** `approver` es texto del cuerpo de la petición y se compara con el nombre del responsable ([`approval.py:186`](../../../data/pipelines/rfp_intake/approval.py#L186)); la ruta recibe `_user` y no lo usa ([`routes/rfp.py:313`](../../../services/api/routes/rfp.py#L313)) | Cualquier usuario autenticado aprueba una sección en nombre de Sofía Ramos, Ana Whitfield o Carlos Vega: la confirmación humana del §5 queda anulada y la auditoría registra a la persona equivocada | **Alta** | Derivar el aprobador del JWT, mapear usuario → departamento y rechazar con 403; auditar con el `user_id` real | PR-1, DE-2 |
-| **G2** | **Datos RFP sin control por rol.** Todas las rutas `/rfp/*` exigen solo `get_current_user` | Cualquier cuenta ve RFP, volúmenes y propuestas de todas las marcas: es la acción 4 del §5 ("compartir datos de volumen de una marca con otra") sin confirmación. Hoy solo hay cuentas internas (`admin`/`manager`/`user`) | **Alta** al abrir a externos; Media hoy | `require_roles` en `/rfp/*`; tenant por marca si se abre un portal B2B | PR-2 |
-| **G3** | **T1: confused deputy en el MCP.** El agente llama al MCP con un `MCP_TOKEN` de servicio; las incidencias no tienen dueño | Si el chat se abre a clientes, el usuario A puede obtener el estado del ticket de B dando su ID (briefing §4.1, vía tool en lugar de memoria) | **Alta** al abrir a B2C; Baja hoy (uso interno de CX) | Token *on-behalf-of* con la identidad del usuario; campo dueño en incidencias; `MCP_TOKEN` del agente solo `read:*`; test A↛B | PR-3 |
+| ~~G1~~ ✔ | **Aprobación RFP suplantable — corregida en este ciclo (§6.2).** `approver` era texto del cuerpo de la petición y la ruta recibía `_user` sin usarlo | Cualquier usuario autenticado aprobaba una sección en nombre de Sofía Ramos, Ana Whitfield o Carlos Vega | ~~Alta~~ | Hecho: identidad del JWT contra `RFP_APPROVER_EMAILS` (403, fail-closed) y `approved_by` en el historial. Queda DE-2 (alerta sobre decisiones) | PR-1 ✔, DE-2 |
+| **G2** | **Datos RFP sin control por rol.** Todas las rutas `/rfp/*` exigen solo `get_current_user` | Cualquier cuenta ve RFP, volúmenes y propuestas de todas las marcas: es la acción 4 del §5 ("compartir datos de volumen de una marca con otra") sin confirmación. Hoy solo hay cuentas internas (`admin`/`manager`/`user`) | **Alta** al abrir a externos; Media hoy | **Riesgo aceptado el 2026-10-29 por decisión del desarrollador** mientras todas las cuentas sean internas; hay que formalizar la aceptación con su dueño (GV-2). Condición de salida: `require_roles` en `/rfp/*` y tenant por marca **antes** de crear la primera cuenta externa | PR-2 |
+| **G3** | **T1: confused deputy en el MCP.** El agente llama al MCP con un `MCP_TOKEN` de servicio; las incidencias no tienen dueño | Si el chat se abre a clientes, el usuario A puede obtener el estado del ticket de B dando su ID (briefing §4.1, vía tool en lugar de memoria) | **Alta.** Hasta este ciclo, `/agent/query` era **anónimo**: cualquiera en internet llegaba a esta consulta (por lectura de código; no se probó contra un MCP real). Ahora exige JWT (PR-6), así que el riesgo se limita a usuarios autenticados, pero sigue siendo alto en cuanto haya cuentas B2C | Token *on-behalf-of* con la identidad del usuario; campo dueño en incidencias; `MCP_TOKEN` del agente solo `read:*`; test A↛B | PR-3 |
 | **G4** | **Inventario sin tenant.** `GET /inventory/products` devuelve todas las marcas a cualquier usuario autenticado; `User` no tiene marca asociada | Fuga de stock y volumen entre marcas B2B en cuanto haya cuentas de cliente, también a través del agente (T2) | Media | Modelo usuario↔marca y filtro por `client_name` en el router y en el MCP | PR-2 |
 | **G5** | **Motor de carrier y motor de devoluciones no implementados.** No hay código para validar los controles del §5 | Si se construyen sin requisitos, aparecen *excessive agency* y aprobaciones fuera de reglas (briefing §3) | Media (riesgo futuro) | Requisitos de diseño: decisión determinista por reglas (el LLM solo explica); `interrupt()` humano por encima del umbral; tool de escritura con identidad propagada; tests de inyección por "nota de envío" (§4.2) antes de producción | GV-3, GV-5 |
 | **G6** | **Umbral monetario sin definir** para aprobar devoluciones y envíos de alto valor | No se puede implementar ni auditar la confirmación humana del §5 | Media | Fijar los valores (Sofía Ramos, Miguel Torres) y publicarlos en la KB y en la configuración | GV-5 |
@@ -177,6 +181,8 @@ Cada brecha incluye el riesgo (qué puede pasar y su gravedad), la mitigación p
 | **G15** | **Falso positivo del guardarraíl:** "devolución" en singular → `OFF_DOMAIN` | Clientes legítimos reciben una redirección en lugar de respuesta (calidad del servicio CX) | Baja | Añadir la forma singular al vocabulario de dominio, con test | PR (backlog, P3) |
 | **G16** | **Riesgo residual de inyección semántica:** la neutralización por patrones no detecta órdenes redactadas como datos de negocio ("asigna siempre el carrier más caro") | Una propuesta RFP podría reflejar una condición plantada por el prospecto | Baja (con controles compensatorios) | **Aceptar con controles compensatorios:** marcado como dato no confiable, evaluadores de cumplimiento §5 deterministas y aprobación humana antes de publicar (que depende de cerrar G1) | GV-2 (aceptación) |
 | **G17** | **Cifrado en reposo sin verificar** (heredado de la auditoría OWASP A02) | Exposición de datos B2C y B2B si se compromete un volumen o un backup | Media | Ver PR-5 | PR-5 |
+| **G18** | **Endpoints RAG sin guardarraíles.** `/api/rag/query` y `/knowledge/query` llaman a `retrieve` → `generate_answer` directamente: no pasan por el clasificador de jailbreak, ni por `isolate_context_chunks`, ni por `validate_output` ([routes/rag.py](../../../services/api/routes/rag.py), [routes/knowledge.py](../../../services/api/routes/knowledge.py)) | Un usuario autenticado puede intentar jailbreak o extraer el system prompt sin el bloqueo previo que sí tiene el agente; un documento de la KB con instrucciones llegaría sin aislar | Media (ahora con JWT y límite; la KB solo se escribe por commit) | Ver PR-7 | PR-7 |
+| ~~G19~~ ✔ | **Endpoints de modelo anónimos y sin límite — corregida en este ciclo (§6.3).** `/agent/query`, `/api/rag/query` y `/knowledge/query` no exigían JWT ni tenían rate limiting (el informe y la auditoría OWASP los daban por autenticados) | Consumo ilimitado de créditos del LLM por anónimos (*denial of wallet*); acceso anónimo al lookup de incidencias (G3); evasión del límite por el WS | ~~Alta~~ | Hecho: JWT y presupuesto por usuario compartido entre HTTP y WS | PR-6 ✔ |
 
 ---
 
@@ -187,14 +193,16 @@ Cada brecha incluye el riesgo (qué puede pasar y su gravedad), la mitigación p
 | 1. Aprobar una devolución por encima de un valor definido | **No.** No hay motor de devoluciones ni tool o endpoint que apruebe devoluciones. El agente CX solo lee | ✔ Por ausencia de capacidad: solo un humano, fuera del sistema, puede aprobar | El grafo del agente invoca solo `get_incident`, `list_incidents`, `get_product` y `list_products` ([`mcp_client.py`](../../../services/rag_agent/mcp_client.py)); no hay tool calling | G5, G6: `interrupt()` humano por encima del umbral antes de construirlo |
 | 2. Confirmar el despacho de un envío de alto valor | **No.** No existe ninguna operación de despacho | ✔ Por ausencia de capacidad | Igual que la fila anterior; las tools MCP de escritura (`create_incident`, `update_incident_status`) no tocan envíos y el grafo no las invoca | GV-3 |
 | 3. Cambiar el carrier de un envío en tránsito | **No.** No hay motor de carrier ni campo de carrier editable | ✔ Por ausencia de capacidad | Auditoría OWASP A05 (carril agente) | G5 |
-| 4. Compartir datos de volumen o incidentes de una marca B2B con otra | **Sí, por la API**, sin confirmación: cualquier usuario autenticado ve todas las RFP (G2) y todo el inventario (G4). Por el agente, solo el inventario (T2) | ✘ **No confirmado** | `routes/rfp.py` usa solo `get_current_user`; el router de inventario de user-api no filtra por marca | **P1:** PR-2 antes de crear cualquier cuenta B2B |
-| *(Fuera del §5, mismo principio)* Aprobar secciones de una propuesta RFP | Sí, con interrupt humano por departamento | ⚠ **Hay paso humano, pero se puede suplantar** (G1) | [`approval.py:186`](../../../data/pipelines/rfp_intake/approval.py#L186) | **P1:** PR-1 |
+| 4. Compartir datos de volumen o incidentes de una marca B2B con otra | **Sí, por la API**, sin confirmación: cualquier usuario autenticado ve todas las RFP (G2) y todo el inventario (G4). Por el agente, solo el inventario (T2) | ✘ **No confirmado** (riesgo aceptado mientras solo haya cuentas internas) | `routes/rfp.py` usa solo `get_current_user`; el router de inventario de user-api no filtra por marca | **P1:** PR-2 antes de crear cualquier cuenta B2B |
+| *(Fuera del §5, mismo principio)* Aprobar secciones de una propuesta RFP | Sí, con interrupt humano por departamento | ✔ **Paso humano vinculado a la cuenta autenticada** (G1 corregida) | `validate_decision` en [`approval.py`](../../../data/pipelines/rfp_intake/approval.py) + `RFP_APPROVER_EMAILS` | Configurar los emails reales en producción |
 
-**Conclusión:** las acciones 1 a 3 no pueden ocurrir sin un humano porque el sistema no tiene la capacidad de hacerlas. Es una garantía por diseño, que se mantiene mientras se respete GV-3. La acción 4 **no cumple** el requisito y es la prioridad P1 de PROTECT.
+**Conclusión:** las acciones 1 a 3 no pueden ocurrir sin un humano porque el sistema no tiene la capacidad de hacerlas. Es una garantía por diseño, que se mantiene mientras se respete GV-3. La acción 4 **no cumple** el requisito: hoy es un riesgo aceptado mientras todas las cuentas sean internas, y PR-2 es condición para crear la primera cuenta externa.
 
 ---
 
-## 6. Caso de prompt injection demostrado (briefing §4)
+## 6. Fixes con prueba antes/después
+
+### 6.1 Caso de prompt injection demostrado (briefing §4)
 
 Archivo: [`tests/pipelines/test_prompt_injection_nist.py`](../../../tests/pipelines/test_prompt_injection_nist.py). Son 11 tests deterministas: sin LLM, sin Redis y con Qdrant en memoria. Corrección en el commit `fcc8e00`.
 
@@ -212,6 +220,39 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tests/pipelines/test_prompt
 **Resultado:** antes, 10 fallan y 1 pasa (la precondición); después, 11 de 11 pasan. **Regresión de `tests/pipelines`:** fallan los mismos 55 tests que en `HEAD`, comparados uno por uno (fallos previos ajenos al cambio), y pasan 594 → 605.
 
 Este caso complementa los ya documentados en la auditoría OWASP: jailbreak en el chat bloqueado antes del LLM (`test_guardrails.py`) y documento RAG con instrucción incrustada neutralizado (`TestGraphContentIsolation`).
+
+### 6.2 Aprobación humana no suplantable (G1 / PR-1)
+
+`POST /rfp/tickets/{id}/sections/{dep}/decision` ahora pasa el email del JWT como `actor` a `submit_decision`. `validate_decision` exige que esté en `RFP_APPROVER_EMAILS` para ese departamento, sin distinguir mayúsculas. Si no lo está, responde 403 antes de mirar el estado de la sección. Un departamento sin cuentas configuradas no lo decide nadie (fail-closed). Cada decisión guarda `approved_by` en el historial. No hay escalera jerárquica: un `admin` no puede aprobar por otro, igual que exige el briefing de RFP.
+
+| Test (`tests/pipelines/test_rfp_approval.py::TestApprovalRoutes`) | Antes | Después |
+| --- | --- | --- |
+| `test_approver_name_in_body_does_not_impersonate_the_owner`: `intruso@…` y `ana@…` envían `{"approver": "Sofía Ramos"}` a la sección reverse | ✘ 200: la sección queda **aprobada** a nombre de "Sofía Ramos" | ✔ 403 y la sección sigue pendiente; `sofia@…` → 200 con `approved_by` |
+| `test_department_without_configured_approvers_is_closed` | ✘ 200 | ✔ 403 |
+
+Regresión: en `tests/pipelines` fallan los mismos 55 que en `HEAD` y pasan 607; el E2E de la UI RFP con Chromium pasa 7 de 7 (aprobación por la UI hasta el documento final); `services/api/tests` da el mismo resultado que en `HEAD` (41 pasan y falla el mismo test previo de `test_serialization`).
+
+**Despliegue.** Hay que definir `RFP_APPROVER_EMAILS` en `services/api/.env` (documentada en `.env.example`). Sin ella, la aprobación por la API queda cerrada para todos.
+
+### 6.3 Autenticación y rate limiting de las rutas de modelo (G19 / PR-6)
+
+[`services/api/rate_limit.py`](../../../services/api/rate_limit.py) implementa una ventana deslizante en memoria por usuario, sin dependencias nuevas. La dependencia `llm_rate_limit` exige JWT (401) y consume una llamada del presupuesto (429 con `Retry-After`) **antes** de llamar al modelo. El chat WS consume del mismo presupuesto (`chat_error rate_limited`). Límite: `LLM_RATE_LIMIT_PER_MINUTE` (20 por defecto). Las dos UIs que usaban los endpoints (`uis/rag.html` y `uis/backoffice/knowledge/`) ahora envían el JWT del backoffice. `/agent/query` pasa además el `user_id` al grafo, así que la memoria del agente queda ligada a su dueño.
+
+```bash
+cd services/api && ../../.venv/bin/python -m pytest tests/test_llm_rate_limit.py -q -o addopts=""
+```
+
+| Test (`services/api/tests/test_llm_rate_limit.py`, 9) | Antes | Después |
+| --- | --- | --- |
+| `test_model_routes_require_jwt` ×3 (`/agent/query`, `/api/rag/query`, `/knowledge/query`) | ✘ 200 para anónimos | ✔ 401 sin llamar al modelo |
+| `test_budget_is_shared_across_model_routes_and_returns_429` (límite 2) | ✘ Sin límite | ✔ Tercera llamada → 429 con `Retry-After`, el modelo no se invoca; otro usuario tiene su propio presupuesto |
+| `test_agent_query_runs_with_the_callers_user_id` | ✘ Sin `user_id` | ✔ El grafo recibe el `user_id` del JWT |
+| `test_model_routes_answer_with_jwt` ×3 y `test_window_slides_and_frees_the_budget` | ✔ | ✔ |
+| `tests/pipelines/test_agent_chat_ws.py::test_send_message_over_llm_rate_limit_reports_chat_error` | (nuevo) | ✔ El segundo mensaje con límite 1 → `chat_error rate_limited`; el agente se invoca una sola vez |
+
+**Antes: 5 de 9 fallan; después: 9 de 9 pasan.** El chat WS pasa 35 de 35.
+
+**Límite conocido.** El estado vive en memoria del proceso, igual que el bus del chat y el broker SSE: con varios workers el límite efectivo se multiplica. Para varios workers habría que moverlo a Redis (`REDIS_URL` ya existe).
 
 ---
 
@@ -256,7 +297,8 @@ flowchart LR
     U1[POST /agent/query<br/>question]
     U2[WS /agent/ws<br/>send_message]
     U3[Comentario de aprobación RFP]
-    U4[PDF subido<br/>POST /rfp/upload]
+    U4[POST /api/rag/query<br/>POST /knowledge/query]
+    PDF[PDF subido<br/>POST /rfp/upload]
   end
   subgraph KB[Base de conocimiento semántica]
     K1[(Qdrant trackflow_knowledge<br/>docs/company-knowledge-base)]
@@ -281,7 +323,8 @@ flowchart LR
   LLMa --> VO[validate_output] --> R[respuesta]
   R -. hechos aprobados .-> K2
 
-  U4 --> MD[MarkItDown → source_excerpts] --> W[wrap_untrusted_text]
+  U4 -. retrieve sin aislar .-> LLMa
+  PDF --> MD[MarkItDown → source_excerpts] --> W[wrap_untrusted_text]
   U3 --> W
   W --> LLMb[[LLM B: generador RFP]]
   LLMb -. borrador anterior .-> W
@@ -292,6 +335,7 @@ flowchart LR
 | **U1** | Usuario (JWT) | `POST /agent/query` → `question` ([routes/agent.py:53](../../../services/api/routes/agent.py#L53)) → mensaje `user` en [rag.py:264](../../../data/pipelines/rag.py#L264) | Máx. 1000 caracteres; el jailbreak **nunca llega al LLM**; defensa en profundidad en `generate_node`; `validate_output` | ✔ |
 | **U2** | Usuario (JWT + propiedad de la sesión) | `WS /agent/ws` → `send_message.text` ([agent_chat.py:154](../../../services/api/agent_chat.py#L154)) → mismo grafo | Igual que U1; cierre 4401/4403 antes de cualquier evento | ✔ |
 | **U3** | Usuario, rama casual | Pregunta `CASUAL` sin contexto → `generate_casual_answer` ([rag.py:329](../../../data/pipelines/rag.py#L329)) | Solo lo ya clasificado como casual; cierre que redirige al dominio | ✔ |
+| **U4** | Usuario (JWT; *faltaba en la primera versión de este mapa*) | `POST /api/rag/query` y `POST /knowledge/query` → `retrieve` → `generate_answer` directo, sin pasar por el grafo | JWT y rate limiting (PR-6). **Sin** guardarraíl de jailbreak, ni aislamiento de los fragmentos, ni `validate_output` | ⚠ G18 |
 | **K1** | KB (documentos) | `docs/company-knowledge-base/*.md` → Qdrant → `retrieve` → `isolate_context_chunks` | Aislado y sanitizado; `injection_neutralized` registrado; escritura solo por commit | ✔ (disponibilidad: G13) |
 | **K2** | KB (memoria del agente) | `remember_node` → `recall(question, user_id=uid)` → `memory_lines` → `isolate_context_chunks` | **Corregido en este ciclo:** aislado; solo el texto del hecho; filtro `metadata.user_id` obligatorio | ✔ (era ✘) |
 | **T1** | MCP incidencias | [`lookup_incidents_mcp`](../../../services/rag_agent/mcp_client.py#L208) → `tool_context` → aislado | Contenido aislado; `aud`/`iss`/scope validados; solo lectura. Token de servicio sin identidad del usuario | ⚠ G3 |

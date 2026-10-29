@@ -49,6 +49,7 @@ from .config import (
     MAX_ARBITRATION_ROUNDS,
     STATUS_ESPERANDO_APROBACION,
     STATUS_NEEDS_HUMAN_REVIEW,
+    approver_emails,
     department_thread_id,
     ticket_thread_id,
 )
@@ -73,6 +74,10 @@ class ApprovalNotFoundError(ApprovalError):
 
 class ApprovalConflictError(ApprovalError):
     status_code = 409
+
+
+class ApprovalForbiddenError(ApprovalError):
+    status_code = 403
 
 
 class ApprovalValidationError(ApprovalError):
@@ -157,9 +162,20 @@ def pending_interrupt(ticket_id: str, department_id: str) -> dict[str, Any] | No
     return snapshot.interrupts[0].value if snapshot.interrupts else None
 
 
-def validate_decision(ticket_id: str, department_id: str, payload: Any) -> dict[str, Any]:
+def validate_decision(
+    ticket_id: str,
+    department_id: str,
+    payload: Any,
+    *,
+    actor: str | None = None,
+) -> dict[str, Any]:
     """Valida la respuesta humana; solo una respuesta válida entra al grafo.
 
+    - identidad: ``actor`` (email del JWT) debe estar entre los aprobadores
+      configurados del departamento (``RFP_APPROVER_EMAILS``); el nombre de
+      ``approver`` en el cuerpo no basta, cualquiera puede escribirlo. La API
+      siempre pasa ``actor``; ``None`` es solo para llamadas internas de
+      confianza (CLI, tests del pipeline);
     - formato (``ApprovalDecision``: decisión admitida, comentario obligatorio
       al rechazar o pedir cambios);
     - la rama existe y está interrumpida esperando decisión;
@@ -169,6 +185,10 @@ def validate_decision(ticket_id: str, department_id: str, payload: Any) -> dict[
     _require_ticket(ticket_id)
     if department_id not in DEPARTMENT_IDS:
         raise ApprovalNotFoundError(f"Departamento desconocido: {department_id}")
+    if actor is not None and actor.strip().lower() not in approver_emails(department_id):
+        raise ApprovalForbiddenError(
+            f"Tu cuenta no es responsable de {DEPARTMENT_LABELS[department_id]}: no puede decidir esta sección."
+        )
     snapshot = department_approval_graph().get_state(department_config(ticket_id, department_id))
     values = snapshot.values or {}
     if not values:
@@ -204,6 +224,7 @@ def validate_decision(ticket_id: str, department_id: str, payload: Any) -> dict[
     return {
         "decision": decision.decision,
         "approver": decision.approver,
+        "approved_by": actor,
         "comments": decision.comments,
         "source": "human",
         "round": values.get("revisions", 0),
@@ -217,19 +238,20 @@ def submit_decision(
     payload: Any,
     *,
     drafter: Any = None,
+    actor: str | None = None,
 ) -> dict[str, Any]:
     """Reanuda la rama del departamento con la decisión validada y resincroniza el ticket."""
     config = ticket_config(ticket_id, drafter)
     with lock_for(department_thread_id(ticket_id, department_id)):
-        decision = validate_decision(ticket_id, department_id, payload)
+        decision = validate_decision(ticket_id, department_id, payload, actor=actor)
         department_approval_graph().invoke(
             Command(resume=decision), department_config(ticket_id, department_id, config),
         )
     with lock_for(ticket_thread_id(ticket_id)):
         ticket_approval_graph().invoke({"ticket_id": ticket_id, "entry": "sync"}, config)
         refresh_trace(ticket_id)
-    logger.info("RFP %s: %s registró %s en %s", ticket_id, decision["approver"],
-                decision["decision"], department_id)
+    logger.info("RFP %s: %s (%s) registró %s en %s", ticket_id, decision["approver"],
+                actor or "interno", decision["decision"], department_id)
     return approval_state(ticket_id)
 
 

@@ -188,9 +188,14 @@
         /* ─── Consulta a la API ───────────────────────────────── */
 
         async function queryKnowledge(question) {
+          // La API exige el JWT de la sesión del backoffice y limita las consultas por usuario.
+          const token = localStorage.getItem("trackflow_access_token");
           const resp = await fetch(API_BASE + "/knowledge/query", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
             body: JSON.stringify({ question }),
           });
 
