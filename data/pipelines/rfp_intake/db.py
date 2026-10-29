@@ -17,7 +17,9 @@ de pipeline en ``data/`` y no importa nada de ``services/``.
 
 from __future__ import annotations
 
+import logging
 import os
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -34,7 +36,15 @@ for _env_candidate in (REPO_ROOT / ".env", REPO_ROOT / "services" / "api" / ".en
     if _env_candidate.exists():
         load_dotenv(_env_candidate, override=False)
 
+logger = logging.getLogger(__name__)
+
 _ENGINE: Engine | None = None
+
+# Observadores de cambios del ticket: ``listener(ticket, created)`` tras cada
+# commit. Los registra la capa HTTP (notificaciones SSE) sin que este módulo
+# importe nada de ``services/``.
+TicketListener = Callable[[dict[str, Any], bool], None]
+_TICKET_LISTENERS: list[TicketListener] = []
 
 _DATETIME_FIELDS = ("created_at", "updated_at", "approved_at", "generated_at")
 
@@ -137,12 +147,44 @@ def _upsert(*instances: SQLModel) -> None:
         session.commit()
 
 
+# ── Observadores del ticket ─────────────────────────────────────────────────
+
+
+def add_ticket_listener(listener: TicketListener) -> None:
+    """Registra un observador de altas y cambios de tickets (idempotente)."""
+    if listener not in _TICKET_LISTENERS:
+        _TICKET_LISTENERS.append(listener)
+
+
+def remove_ticket_listener(listener: TicketListener) -> None:
+    """Quita un observador registrado con ``add_ticket_listener``."""
+    if listener in _TICKET_LISTENERS:
+        _TICKET_LISTENERS.remove(listener)
+
+
+def _ticket_exists(ticket_id: str) -> bool:
+    with Session(get_engine()) as session:
+        return session.get(Ticket, ticket_id) is not None
+
+
+def _notify_ticket(ticket: dict[str, Any], created: bool) -> None:
+    """Avisa a los observadores; un fallo suyo nunca rompe el pipeline."""
+    for listener in list(_TICKET_LISTENERS):
+        try:
+            listener(ticket, created)
+        except Exception:
+            logger.exception("RFP intake: falló un observador de tickets")
+
+
 # ── Escritura ───────────────────────────────────────────────────────────────
 
 
 def save_ticket(ticket: dict[str, Any]) -> None:
     """Persiste un Ticket en ``rfp_intake.tickets``."""
-    _upsert(_build(Ticket, ticket))
+    row = _build(Ticket, ticket)
+    created = not _ticket_exists(row.ticket_id)  # type: ignore[attr-defined]
+    _upsert(row)
+    _notify_ticket(_to_dict(row), created)
 
 
 def save_rfp_metadata(metadata: dict[str, Any]) -> None:
@@ -161,11 +203,14 @@ def save_intake(
     sections: list[dict[str, Any]],
 ) -> None:
     """Persiste Ticket + metadatos + secciones de forma atómica."""
-    instances = [_build(Ticket, ticket)]
+    row = _build(Ticket, ticket)
+    created = not _ticket_exists(row.ticket_id)  # type: ignore[attr-defined]
+    instances = [row]
     if metadata is not None:
         instances.append(_build(RFPMetadata, metadata))
     instances.extend(_build(DepartmentSection, s) for s in sections)
     _upsert(*instances)
+    _notify_ticket(_to_dict(row), created)
 
 
 def save_final_document(document: dict[str, Any]) -> None:
@@ -190,7 +235,9 @@ def _update(model: type[SQLModel], key: str, fields: dict[str, Any]) -> dict[str
 
 def update_ticket(ticket_id: str, **fields: Any) -> dict[str, Any]:
     """Cambia campos del ticket (p. ej. ``status``/``reason`` en la Parte 2)."""
-    return _update(Ticket, ticket_id, fields)
+    ticket = _update(Ticket, ticket_id, fields)
+    _notify_ticket(ticket, False)
+    return ticket
 
 
 def update_department_section(section_id: str, **fields: Any) -> dict[str, Any]:
@@ -269,6 +316,9 @@ __all__ = [
     "set_engine",
     "create_tables",
     "is_db_available",
+    "TicketListener",
+    "add_ticket_listener",
+    "remove_ticket_listener",
     "save_ticket",
     "save_rfp_metadata",
     "save_department_section",

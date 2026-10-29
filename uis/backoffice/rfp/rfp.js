@@ -12,11 +12,21 @@
  *                                del departamento aprueba, rechaza o pide cambios.
  * - POST /rfp/tickets/{id}/approval → abre la Parte 3 (si no se abrió sola).
  * - GET  /rfp/tickets/{id}/final-document?format=markdown → documento final.
+ * - GET  /rfp/events          → stream SSE: ``rfp_ticket_created`` (estado
+ *                                inicial ``analizando``), ``rfp_ticket_updated``
+ *                                y ``rfp_resync``.
  *
  * Modo ticket: cada PDF seleccionado se sube por separado (un ticket por
- * archivo). La vista consulta ``GET /rfp/tickets/{id}`` cada pocos segundos
- * hasta que el ticket sale de ``analizando`` y refresca la tabla mientras
- * quede alguno en curso.
+ * archivo). Sin polling ni recarga: cada evento SSE trae el ticket con sus
+ * metadatos y actualiza solo su fila (un registro por ``ticket_id``, así que
+ * replay y resync nunca duplican filas). Un ticket nuevo se resalta con la
+ * marca "Nueva" y un aviso hasta que se abre su detalle.
+ *
+ * Se lee el stream con ``fetch`` + ``ReadableStream`` (no ``EventSource``)
+ * para mandar el JWT en ``Authorization``. Reconexión con backoff exponencial
+ * (1 s → 30 s). Recuperación: se reenvía ``Last-Event-ID`` y el servidor
+ * reproduce lo perdido; si ya no puede (reinicio o buffer agotado) manda
+ * ``rfp_resync`` y solo entonces se vuelve a pedir ``GET /rfp/tickets``.
  *
  * Mismo convenio que telemetry/: API base y token desde localStorage sobre la
  * app de proveedores (sessionStorage compartida).
@@ -28,13 +38,28 @@ const TOKEN_STORAGE_KEY = "trackflow_access_token";
 const STATUS_ANALIZANDO = "analizando";
 // Estados con trabajo en segundo plano (Parte 1 análisis, Parte 2 generación).
 const IN_PROGRESS_STATUSES = new Set([STATUS_ANALIZANDO, "generando_borrador", "en_evaluación"]);
-const POLL_INTERVAL_MS = 2000;
-const POLL_TIMEOUT_MS = 180000;
-const TABLE_REFRESH_MS = 3000;
+const EVENT_TICKET_CREATED = "rfp_ticket_created";
+const EVENT_TICKET_UPDATED = "rfp_ticket_updated";
+const EVENT_RESYNC = "rfp_resync";
+const WAIT_TIMEOUT_MS = 180000;
+const NEXT_EVENT_TIMEOUT_MS = 5000;
+const STREAM_RETRY_MIN_MS = 1000;
+const STREAM_RETRY_MAX_MS = 30000;
 
-let tableRefreshTimer = null;
-// Con la Parte 2 encadenada, analisis_completo es un estado de paso.
-let autoProposal = true;
+// Tabla de tickets: un registro y una fila por ticket_id (deduplicación).
+const ticketsById = new Map();
+const rowsById = new Map();
+// Tickets llegados por SSE que el usuario aún no ha abierto.
+const unseenTicketIds = new Set();
+// Último id SSE recibido: se reenvía como Last-Event-ID al reconectar.
+let lastEventId = null;
+// Tras la primera carga, un ticket desconocido en un resync también es nuevo.
+let ticketsLoaded = false;
+// ticket_id → callbacks a los que avisar con cada evento de ese ticket.
+const ticketListeners = new Map();
+// Reconexión: cada (re)arranque del stream invalida el bucle anterior.
+let streamGeneration = 0;
+let streamAbort = null;
 
 // Estados desde los que arranca la Parte 3 (aprobación por departamento).
 const APPROVABLE_STATUSES = new Set(["esperando_aprobación", "needs_human_review"]);
@@ -74,6 +99,8 @@ const dom = {
   detailErrorMessage: document.getElementById("detailErrorMessage"),
   detailRetryButton: document.getElementById("detailRetryButton"),
   detailContent: document.getElementById("detailContent"),
+  liveStatus: document.getElementById("liveStatus"),
+  ticketNotice: document.getElementById("ticketNotice"),
 };
 
 function getApiBase() {
@@ -147,47 +174,110 @@ function departmentLabel(id) {
   return labels[id] || id;
 }
 
-function renderTickets(records) {
-  if (!records || records.length === 0) {
+function ticketTime(ticket) {
+  return Date.parse(ticket?.updated_at || "") || 0;
+}
+
+function buildTicketRow(ticket) {
+  const tr = document.createElement("tr");
+  tr.dataset.ticketId = ticket.ticket_id;
+  const isNew = unseenTicketIds.has(ticket.ticket_id);
+  if (isNew) tr.className = "ticket-new";
+
+  const ticketCell = document.createElement("td");
+  const link = document.createElement("a");
+  link.href = "#";
+  link.className = "client-row";
+  link.textContent = ticket.ticket_id || "—";
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    markTicketSeen(ticket.ticket_id);
+    loadDetail(ticket.ticket_id);
+  });
+  ticketCell.append(link);
+  if (isNew) {
+    const badge = document.createElement("span");
+    badge.className = "new-badge";
+    badge.textContent = "Nueva";
+    ticketCell.append(" ", badge);
+  }
+
+  const statusCell = document.createElement("td");
+  statusCell.innerHTML = pill(ticket.status);
+  const clientCell = document.createElement("td");
+  clientCell.textContent = ticket.client_name || "—";
+  const countryCell = document.createElement("td");
+  countryCell.textContent = ticket.client_country || "—";
+  const currencyCell = document.createElement("td");
+  currencyCell.textContent = ticket.currency || "—";
+  const volumeCell = document.createElement("td");
+  volumeCell.textContent = fmtNumber(ticket.monthly_volume);
+
+  const deptCell = document.createElement("td");
+  const depts = Array.isArray(ticket.departments_needed)
+    ? ticket.departments_needed.map(departmentLabel).join(", ")
+    : "—";
+  deptCell.textContent = depts;
+
+  tr.append(ticketCell, statusCell, clientCell, countryCell, currencyCell, volumeCell, deptCell);
+  return tr;
+}
+
+function renderTickets() {
+  rowsById.clear();
+  if (ticketsById.size === 0) {
     renderEmptyRow(dom.ticketsBody, "Sin tickets de intake todavía.");
     return;
   }
+  const records = Array.from(ticketsById.values()).sort((a, b) =>
+    String(b.created_at || "").localeCompare(String(a.created_at || ""))
+  );
   const fragment = document.createDocumentFragment();
   for (const ticket of records) {
-    const tr = document.createElement("tr");
-    const ticketCell = document.createElement("td");
-    const link = document.createElement("a");
-    link.href = "#";
-    link.className = "client-row";
-    link.textContent = ticket.ticket_id || "—";
-    link.dataset.ticketId = ticket.ticket_id;
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      loadDetail(link.dataset.ticketId);
-    });
-    ticketCell.append(link);
-
-    const statusCell = document.createElement("td");
-    statusCell.innerHTML = pill(ticket.status);
-    const clientCell = document.createElement("td");
-    clientCell.textContent = ticket.client_name || "—";
-    const countryCell = document.createElement("td");
-    countryCell.textContent = ticket.client_country || "—";
-    const currencyCell = document.createElement("td");
-    currencyCell.textContent = ticket.currency || "—";
-    const volumeCell = document.createElement("td");
-    volumeCell.textContent = fmtNumber(ticket.monthly_volume);
-
-    const deptCell = document.createElement("td");
-    const depts = Array.isArray(ticket.departments_needed)
-      ? ticket.departments_needed.map(departmentLabel).join(", ")
-      : "—";
-    deptCell.textContent = depts;
-
-    tr.append(ticketCell, statusCell, clientCell, countryCell, currencyCell, volumeCell, deptCell);
+    const tr = buildTicketRow(ticket);
+    rowsById.set(ticket.ticket_id, tr);
     fragment.append(tr);
   }
   dom.ticketsBody.replaceChildren(fragment);
+}
+
+/**
+ * Aplica un ticket (evento SSE o lista) sin volver a pedir datos: actualiza
+ * su fila o la inserta arriba. Un evento más antiguo que lo ya pintado
+ * (replay tras reconectar) se ignora.
+ */
+function upsertTicket(ticket, { created = false } = {}) {
+  const id = ticket.ticket_id;
+  const current = ticketsById.get(id);
+  if (current && ticketTime(ticket) < ticketTime(current)) return;
+  ticketsById.set(id, { ...current, ...ticket });
+  if (created && !current) {
+    unseenTicketIds.add(id);
+    announceNewTicket(ticket);
+  }
+  const row = buildTicketRow(ticketsById.get(id));
+  const existing = rowsById.get(id);
+  if (existing) existing.replaceWith(row);
+  else if (rowsById.size === 0) dom.ticketsBody.replaceChildren(row);
+  else dom.ticketsBody.prepend(row);
+  rowsById.set(id, row);
+}
+
+function announceNewTicket(ticket) {
+  dom.ticketNotice.hidden = false;
+  dom.ticketNotice.textContent = `Nueva RFP recibida: ${ticket.ticket_id} (${ticket.status || "analizando"}).`;
+}
+
+function markTicketSeen(ticketId) {
+  if (!unseenTicketIds.delete(ticketId)) return;
+  const ticket = ticketsById.get(ticketId);
+  const existing = rowsById.get(ticketId);
+  if (ticket && existing) {
+    const row = buildTicketRow(ticket);
+    existing.replaceWith(row);
+    rowsById.set(ticketId, row);
+  }
+  if (unseenTicketIds.size === 0) dom.ticketNotice.hidden = true;
 }
 
 async function loadTickets({ silent = false } = {}) {
@@ -201,11 +291,20 @@ async function loadTickets({ silent = false } = {}) {
     if (!response.ok || !result) {
       throw { status: response.status || 500 };
     }
-    const tickets = result.tickets || [];
-    renderTickets(tickets);
+    // Fusión con lo ya recibido por SSE: gana la versión más reciente.
+    for (const ticket of result.tickets || []) {
+      const current = ticketsById.get(ticket.ticket_id);
+      if (!current && ticketsLoaded) {
+        unseenTicketIds.add(ticket.ticket_id);
+        announceNewTicket(ticket);
+      }
+      if (!current || ticketTime(ticket) >= ticketTime(current)) {
+        ticketsById.set(ticket.ticket_id, { ...current, ...ticket });
+      }
+    }
+    ticketsLoaded = true;
+    renderTickets();
     hideLoading(dom.ticketsLoading);
-    scheduleTableRefresh(tickets.some((t) => IN_PROGRESS_STATUSES.has(t.status)
-      || (t.status === "analisis_completo" && autoProposal)));
   } catch (error) {
     hideLoading(dom.ticketsLoading);
     dom.ticketsError.hidden = false;
@@ -213,11 +312,10 @@ async function loadTickets({ silent = false } = {}) {
   }
 }
 
-function scheduleTableRefresh(pending) {
-  clearTimeout(tableRefreshTimer);
-  tableRefreshTimer = pending
-    ? setTimeout(() => loadTickets({ silent: true }), TABLE_REFRESH_MS)
-    : null;
+/** Recuperación sin replay posible: vuelve a pedir la lista y los detalles en espera. */
+async function resyncTickets() {
+  await loadTickets({ silent: true });
+  notifyTicketListeners(null);
 }
 
 async function fetchTicket(ticketId) {
@@ -233,17 +331,183 @@ async function fetchTicket(ticketId) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Consulta el ticket hasta un estado final (o vence el timeout). */
-async function pollTicket(ticketId, onUpdate) {
-  const deadline = Date.now() + POLL_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const detail = await fetchTicket(ticketId);
-    autoProposal = detail.auto_proposal !== false;
-    onUpdate(detail);
-    if (!isPending(detail)) return detail;
-    await sleep(POLL_INTERVAL_MS);
+/** Suscribe ``callback`` a los eventos SSE de un ticket; devuelve la baja. */
+function onTicketEvent(ticketId, callback) {
+  if (!ticketListeners.has(ticketId)) ticketListeners.set(ticketId, new Set());
+  ticketListeners.get(ticketId).add(callback);
+  return () => {
+    const callbacks = ticketListeners.get(ticketId);
+    callbacks?.delete(callback);
+    if (callbacks?.size === 0) ticketListeners.delete(ticketId);
+  };
+}
+
+function notifyTicketListeners(ticketId, ticket = null) {
+  const ids = ticketId ? [ticketId] : Array.from(ticketListeners.keys());
+  for (const id of ids) {
+    for (const callback of Array.from(ticketListeners.get(id) || [])) callback(ticket);
   }
-  throw { timeout: true };
+}
+
+/** Siguiente evento del ticket (o ``null`` si no llega a tiempo). */
+function nextTicketEvent(ticketId, timeoutMs) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      unsubscribe();
+      resolve(null);
+    }, timeoutMs);
+    const unsubscribe = onTicketEvent(ticketId, (ticket) => {
+      clearTimeout(timer);
+      unsubscribe();
+      resolve(ticket);
+    });
+  });
+}
+
+/**
+ * Espera a que el ticket salga de los estados en curso. El detalle se pide al
+ * empezar (por si ya terminó) y cuando un evento SSE trae un estado que no es
+ * de trabajo en curso; los estados intermedios se pintan con el payload.
+ */
+function waitForTicket(ticketId, onUpdate) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    let busy = false;
+    let again = false;
+    let unsubscribe = () => {};
+    const timer = setTimeout(() => finish(reject, { timeout: true }), WAIT_TIMEOUT_MS);
+
+    function finish(settle, value) {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      unsubscribe();
+      settle(value);
+    }
+
+    async function check() {
+      if (busy) {
+        again = true;
+        return;
+      }
+      busy = true;
+      try {
+        do {
+          again = false;
+          const detail = await fetchTicket(ticketId);
+          if (done) return;
+          onUpdate(detail);
+          if (!isPending(detail)) {
+            finish(resolve, detail);
+            return;
+          }
+        } while (again);
+      } catch (error) {
+        finish(reject, error);
+      } finally {
+        busy = false;
+      }
+    }
+
+    unsubscribe = onTicketEvent(ticketId, (ticket) => {
+      if (ticket && IN_PROGRESS_STATUSES.has(ticket.status)) {
+        onUpdate({ ticket });
+        return;
+      }
+      check();
+    });
+    check();
+  });
+}
+
+function setLiveStatus(state, message) {
+  dom.liveStatus.dataset.state = state;
+  dom.liveStatus.textContent = message;
+}
+
+/** Parser mínimo de ``text/event-stream`` sobre el body de ``fetch``. */
+async function readEventStream(body, onEvent) {
+  const reader = body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buffer += value;
+    let end;
+    while ((end = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      let event = "message";
+      let id = null;
+      const data = [];
+      for (const line of frame.split("\n")) {
+        if (!line || line.startsWith(":")) continue;
+        const colon = line.indexOf(":");
+        const field = colon === -1 ? line : line.slice(0, colon);
+        const text = colon === -1 ? "" : line.slice(colon + 1).replace(/^ /, "");
+        if (field === "event") event = text;
+        else if (field === "data") data.push(text);
+        else if (field === "id") id = text;
+      }
+      if (data.length) onEvent(event, data.join("\n"), id);
+    }
+  }
+}
+
+function handleStreamEvent(event, data, id) {
+  if (id) lastEventId = id;
+  if (event === EVENT_RESYNC) {
+    resyncTickets();
+    return;
+  }
+  if (event !== EVENT_TICKET_CREATED && event !== EVENT_TICKET_UPDATED) return;
+  let ticket;
+  try {
+    ticket = JSON.parse(data);
+  } catch {
+    return;
+  }
+  if (!ticket?.ticket_id) return;
+  upsertTicket(ticket, { created: event === EVENT_TICKET_CREATED });
+  notifyTicketListeners(ticket.ticket_id, ticket);
+}
+
+/** Abre ``GET /rfp/events`` y reconecta con backoff exponencial si se cae. */
+async function connectTicketStream() {
+  streamAbort?.abort();
+  const generation = ++streamGeneration;
+  const controller = new AbortController();
+  streamAbort = controller;
+  let delay = STREAM_RETRY_MIN_MS;
+
+  while (generation === streamGeneration) {
+    setLiveStatus("connecting", "Conectando…");
+    try {
+      const headers = { ...requestHeaders(), Accept: "text/event-stream" };
+      if (lastEventId) headers["Last-Event-ID"] = lastEventId;
+      const response = await fetch(`${getApiBase()}/rfp/events`, {
+        headers,
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) throw { status: response.status || 500 };
+      setLiveStatus("live", "En vivo");
+      delay = STREAM_RETRY_MIN_MS;
+      // Sin Last-Event-ID el servidor no sabe qué nos perdimos: resync.
+      if (!lastEventId) resyncTickets();
+      await readEventStream(response.body, handleStreamEvent);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (error.status === 401 || error.status === 403) {
+        setLiveStatus("error", friendlyError(error.status));
+        return;
+      }
+    }
+    if (generation !== streamGeneration) return;
+    setLiveStatus("reconnecting", "Reconectando…");
+    await sleep(delay);
+    delay = Math.min(delay * 2, STREAM_RETRY_MAX_MS);
+  }
 }
 
 function renderUploadRow(row, { filename, ticketId, status, note }) {
@@ -330,9 +594,8 @@ async function uploadOne(file) {
     }
     ticketId = ticket.ticket_id;
     renderUploadRow(row, { filename: file.name, ticketId, status: ticket.status });
-    loadTickets({ silent: true });
 
-    const detail = await pollTicket(ticketId, (d) =>
+    const detail = await waitForTicket(ticketId, (d) =>
       renderUploadRow(row, { filename: file.name, ticketId, status: d.ticket?.status })
     );
     renderUploadResult(detail);
@@ -353,7 +616,17 @@ async function submitUpload(event) {
     setFeedback(dom.uploadFeedback, "Selecciona al menos un archivo PDF.", "error");
     return;
   }
+  const previousApiBase = getApiBase();
   localStorage.setItem(API_STORAGE_KEY, dom.apiBase.value.trim());
+  if (getApiBase() !== previousApiBase) {
+    // Otro backend: otra tabla y otros ids de evento.
+    ticketsById.clear();
+    unseenTicketIds.clear();
+    lastEventId = null;
+    ticketsLoaded = false;
+    renderTickets();
+    connectTicketStream();
+  }
 
   dom.uploadBtn.disabled = true;
   dom.resultDetail.hidden = false;
@@ -369,7 +642,6 @@ async function submitUpload(event) {
     }
     dom.uploadForm.reset();
     dom.apiBase.value = getApiBase();
-    await loadTickets();
   } finally {
     dom.uploadBtn.disabled = false;
   }
@@ -563,15 +835,16 @@ function createProposal(sections, ticketId, status) {
 
 async function regenerateProposal(ticketId, button) {
   button.disabled = true;
+  // Antes del POST: el cambio a generando_borrador puede llegar antes que la respuesta.
+  const started = nextTicketEvent(ticketId, NEXT_EVENT_TIMEOUT_MS);
   try {
     const response = await fetch(
       `${getApiBase()}/rfp/tickets/${encodeURIComponent(ticketId)}/proposal`,
       { method: "POST", headers: requestHeaders() }
     );
     if (!response.ok) throw { status: response.status };
-    await sleep(POLL_INTERVAL_MS);
+    await started;
     await loadDetail(ticketId);
-    loadTickets({ silent: true });
   } catch (error) {
     button.disabled = false;
     dom.detailError.hidden = false;
@@ -772,7 +1045,6 @@ function createDecisionForm(ticketId, dep, owner) {
       const result = await response.json().catch(() => null);
       if (!response.ok) throw { status: response.status, result };
       await loadDetail(ticketId);
-      loadTickets({ silent: true });
     } catch (error) {
       button.disabled = false;
       setFeedback(feedback, apiErrorMessage(error.status || 0, error.result), "error");
@@ -803,7 +1075,6 @@ function createOpenApproval(ticketId) {
       const result = await response.json().catch(() => null);
       if (!response.ok) throw { status: response.status, result };
       await loadDetail(ticketId);
-      loadTickets({ silent: true });
     } catch (error) {
       button.disabled = false;
       setFeedback(feedback, apiErrorMessage(error.status || 0, error.result), "error");
@@ -929,6 +1200,7 @@ function init() {
     dom.detailError.hidden = true;
   });
   loadTickets();
+  connectTicketStream();
 }
 
 init();

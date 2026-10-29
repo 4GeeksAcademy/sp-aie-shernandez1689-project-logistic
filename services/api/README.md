@@ -63,6 +63,76 @@ A minimal technical view that consumes `GET /telemetry/report` and renders
 each metric as an HTML table, showing the resolved `period`. It is an
 engineering view only (no business metrics).
 
+## RFP real-time notifications (SSE)
+
+### `GET /rfp/events`
+
+Server-Sent Events stream that replaces the polling in `uis/backoffice/rfp/`.
+Implementation: `rfp_events.py` (broker) + `routes/rfp.py` (endpoint). The
+pipeline (`data/pipelines/rfp_intake/db.py`) notifies every ticket insert or
+change through `db.add_ticket_listener`, without importing `services/`.
+
+- Auth: same Bearer JWT as the rest of the backoffice API (`401` without it;
+  no event is ever sent to an unauthenticated client).
+- Headers: `Content-Type: text/event-stream`, `Cache-Control: no-cache`,
+  `Connection: keep-alive`, `X-Accel-Buffering: no`.
+- Keep-alive: `retry: 3000` and a `: connected` comment on open, then a
+  `: ping` comment every 15 s without events.
+- Named events (never the generic `message`):
+
+| `event:` | When | `data:` |
+| --- | --- | --- |
+| `rfp_ticket_created` | New ticket, in its initial status `analizando` | Ticket (BRIEFING §2.3) |
+| `rfp_ticket_updated` | Status/reason/metadata change (Parts 1–3) | Ticket (BRIEFING §2.3) |
+| `rfp_resync` | Missed events can no longer be replayed | `{"reason": "replay_unavailable"}` |
+
+Ticket payload: `ticket_id`, `rfp_id`, `status`, `reason`, `raw_pdf_path`,
+`created_at`, `updated_at` plus the RFP metadata the table shows
+(`client_name`, `client_country`, `services_requested`, `monthly_volume`,
+`deadline`, `budget_range`, `departments_needed`, `currency`; `null` until the
+analysis extracts them).
+
+```text
+id: 3f9a1c2e-1
+event: rfp_ticket_created
+data: {"ticket_id": "rfp_20261029_ab12cd34", "rfp_id": "rfp_20261029_ab12cd34-rfp", "status": "analizando", ...}
+```
+
+### Recovery after a disconnection (Last-Event-ID + short replay)
+
+Every frame carries `id: <epoch>-<seq>`. The server keeps the last 200 frames.
+When the UI reconnects it sends `Last-Event-ID` and receives only the frames
+after it. If the id belongs to another process (`epoch` differs after a
+restart) or has left the buffer, the server sends `rfp_resync` and only then
+the UI re-fetches `GET /rfp/tickets`. The UI keeps one row per `ticket_id` and
+ignores payloads older than what it already shows (`updated_at`), so replays
+and resyncs never duplicate a ticket. Reconnection uses exponential backoff
+(1 s → 30 s).
+
+The broker is per process: with several workers, each one only sees the
+tickets it processes. Run a single worker, or replace the broker with a shared
+channel (e.g. PostgreSQL `LISTEN/NOTIFY` or Redis pub/sub).
+
+Run uvicorn with `--timeout-graceful-shutdown 5`: on Python 3.12 shutdown waits
+for every open connection, and an SSE stream never closes on its own.
+
+Tests: `tests/pipelines/test_rfp_events.py` (framing, auth, replay, real HTTP)
+and `tests/pipelines/test_rfp_intake_ui.py` (Chromium: live arrival, API
+outage → backoff → recovery without duplicates).
+
+Manual check:
+
+1. Start the API and open `uis/backoffice/rfp/index.html` signed in; the
+   status shows "En vivo".
+2. Upload a PDF from another tab or with `curl`: the row appears on top with
+   the "Nueva" badge and the notice, and its status advances without reloading.
+3. Stop the API: the status shows "Reconectando…" and DevTools → Network shows
+   `/rfp/events` retries spaced 1 s, 2 s, 4 s…
+4. Restart it: the reconnection carries `Last-Event-ID`; since the restart
+   changes the `epoch`, the server answers `rfp_resync` and the table is
+   re-fetched once, with no duplicate rows. Without a restart (network blip)
+   the missed events are replayed instead.
+
 ## Run locally
 
 ```bash

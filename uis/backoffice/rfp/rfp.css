@@ -281,3 +281,64 @@
 .sales-summary {
   border-left: 4px solid var(--ok);
 }
+
+/* Estado del stream SSE de tickets (GET /rfp/events). */
+.live-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.live-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.live-status[data-state="live"]::before {
+  background: var(--ok);
+}
+
+.live-status[data-state="reconnecting"]::before {
+  background: var(--warn);
+}
+
+.live-status[data-state="error"]::before {
+  background: var(--danger);
+}
+
+/* Ticket de RFP recién llegado por SSE (hasta que se abre su detalle). */
+.ticket-notice {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-left: 4px solid var(--warn);
+  border-radius: 6px;
+  background: var(--rfp-surface);
+  color: var(--text);
+  font-weight: 600;
+}
+
+tr.ticket-new td {
+  background: rgba(253, 230, 138, 0.12);
+}
+
+tr.ticket-new td:first-child {
+  box-shadow: inset 4px 0 0 var(--warn);
+}
+
+.new-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: #3b2f00;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
