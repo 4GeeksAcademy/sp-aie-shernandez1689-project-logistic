@@ -69,6 +69,10 @@ class SectionBrief:
     source_excerpts: list[str] = field(default_factory=list)
     open_questions: list[str] = field(default_factory=list)
     guidelines: list[str] = field(default_factory=list)
+    # Parte 3: restricciones del arbitraje (BRIEFING §7) y comentarios del
+    # responsable al pedir cambios. ``volume_cap`` limita el volumen ofertado.
+    volume_cap: int | None = None
+    approval_notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -169,6 +173,11 @@ def _client_line(brief: SectionBrief, service: str, preposition: str) -> str:
         if brief.monthly_volume is not None
         else ""
     )
+    if brief.volume_cap is not None and (brief.monthly_volume or 0) > brief.volume_cap:
+        volume += (
+            f" La propuesta se limita a {format_volume(brief.volume_cap)} pedidos/mes."
+            " Es la capacidad comprometida por Warehouse Operations."
+        )
     deadline = f" Fecha límite de la propuesta: {brief.deadline}." if brief.deadline else ""
     return f"Propuesta de {service} para {client} {preposition} {site}.{volume}{deadline}"
 
@@ -425,8 +434,8 @@ class LLMDrafter:
         )
         if previous_draft and evaluation:
             user += (
-                "\n\nTu borrador anterior NO pasó la evaluación. Reescríbelo completo "
-                "corrigiendo esto:\n" + evaluation.get("feedback_for_generator", "")
+                "\n\nTu borrador anterior NO fue aceptado (evaluadores o responsable). "
+                "Reescríbelo completo corrigiendo esto:\n" + evaluation.get("feedback_for_generator", "")
                 + "\n\nBorrador anterior:\n" + previous_draft
             )
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]

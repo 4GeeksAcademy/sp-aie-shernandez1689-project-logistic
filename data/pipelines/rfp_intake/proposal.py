@@ -282,13 +282,28 @@ def build_proposal_handoff(
     }
 
 
+def run_proposal_and_approval(ticket_id: str, *, drafter: Any = None) -> dict[str, Any]:
+    """Parte 2 y, salvo ``RFP_AUTO_APPROVAL=0``, apertura de la Parte 3.
+
+    Las secciones ``needs_human_review`` también pasan a aprobación: su
+    responsable decide sobre el último borrador + EvaluationResult.
+    """
+    # Import diferido: approval → approval_graph → proposal.
+    from .approval import auto_approval_enabled, open_approval
+
+    handoff = generate_proposal(ticket_id, drafter=drafter)
+    if auto_approval_enabled():
+        open_approval(ticket_id, drafter=drafter)
+    return handoff
+
+
 def process_ticket(ticket_id: str) -> dict[str, Any]:
-    """Tarea en segundo plano del upload: Parte 1 y, si acaba bien, Parte 2."""
+    """Tarea en segundo plano del upload: Parte 1 y, si acaba bien, Partes 2 y 3."""
     result = analyze_ticket(ticket_id)
     if result.get("status") != STATUS_ANALISIS_COMPLETO or not auto_proposal_enabled():
         return result
     try:
-        generate_proposal(ticket_id)
+        run_proposal_and_approval(ticket_id)
     except Exception:
         # El ticket ya quedó en needs_human_review (o en analisis_completo si
         # el handoff no era válido); el análisis de la Parte 1 se conserva.
@@ -305,5 +320,6 @@ __all__ = [
     "build_proposal_handoff",
     "failed_checks",
     "mark_provisional",
+    "run_proposal_and_approval",
     "process_ticket",
 ]

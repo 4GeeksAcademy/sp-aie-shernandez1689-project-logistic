@@ -125,6 +125,67 @@ SECTION_HEADINGS: tuple[str, ...] = (
     "### Responsable",
 )
 
+# ── Parte 3: aprobación humana por departamento ─────────────────────────────
+
+# ``department_sections.approval_status``.
+APPROVAL_PENDIENTE = "pendiente"
+APPROVAL_CAMBIOS_SOLICITADOS = "cambios_solicitados"
+APPROVAL_APROBADA = "aprobada"
+APPROVAL_RECHAZADA = "rechazada"
+
+# Respuestas humanas admitidas al reanudar una sección interrumpida.
+DECISION_APPROVE = "approve"
+DECISION_REJECT = "reject"
+DECISION_REQUEST_CHANGES = "request_changes"
+APPROVAL_DECISIONS: tuple[str, ...] = (DECISION_APPROVE, DECISION_REJECT, DECISION_REQUEST_CHANGES)
+
+# Límite del ciclo request_changes → reescritura → nueva aprobación por
+# sección (cuenta también las reescrituras que fuerza el arbitraje). Al
+# agotarlo la sección queda rechazada.
+MAX_APPROVAL_ROUNDS = int(os.getenv("RFP_MAX_APPROVAL_ROUNDS", "3"))
+# Límite de rondas de arbitraje entre departamentos por ticket. Si el
+# conflicto sigue tras el límite, el árbitro rechaza las secciones ofensoras.
+MAX_ARBITRATION_ROUNDS = int(os.getenv("RFP_MAX_ARBITRATION_ROUNDS", "3"))
+
+# Árbitro fijo (BRIEFING §7). No hay escalera jerárquica: solo responsables
+# pares por departamento (§6) y Miguel Torres como árbitro de los triggers.
+COMMERCIAL_DIRECTOR = "Miguel Torres"
+
+# Triggers de conflicto (BRIEFING §7): se detectan en estado estructurado y
+# los resuelve el nodo de arbitraje con una regla determinista.
+TRIGGER_VOLUME_VS_CAPACITY = "volume-vs-capacity"
+TRIGGER_RETURNS_SLA_BREACH = "returns-sla-breach"
+TRIGGER_CURRENCY_MISMATCH = "currency-mismatch"
+CONFLICT_TRIGGERS: dict[str, dict[str, str]] = {
+    TRIGGER_VOLUME_VS_CAPACITY: {
+        "arbiter": COMMERCIAL_DIRECTOR,
+        "rule": "Limitar el volumen de la propuesta a la capacidad de warehouse; "
+                "lastmile revisa volumen/costo a la baja.",
+    },
+    TRIGGER_RETURNS_SLA_BREACH: {
+        # Sofía Ramos rechaza su propia sección; en otra sección arbitra Miguel Torres.
+        "arbiter": "Sofía Ramos / Miguel Torres",
+        "rule": "request_changes forzado en toda sección que prometa devoluciones en "
+                "menos de 48 h; sin documento final hasta cumplir.",
+    },
+    TRIGGER_CURRENCY_MISMATCH: {
+        "arbiter": COMMERCIAL_DIRECTOR,
+        "rule": "Reescribir las secciones ofensoras a la moneda del país del cliente; "
+                "rechazar si no se resuelve tras el límite de iteraciones.",
+    },
+}
+
+
+def ticket_thread_id(ticket_id: str) -> str:
+    """``thread_id`` del grafo coordinador de un ticket (checkpoint por ticket)."""
+    return f"rfp-{ticket_id}"
+
+
+def department_thread_id(ticket_id: str, department_id: str) -> str:
+    """``thread_id`` de la rama de aprobación de un departamento."""
+    return f"rfp-{ticket_id}:{department_id}"
+
+
 # ── Rutas de datos locales ──────────────────────────────────────────────────
 # Solo artefactos de archivo (PDFs). Ticket/metadatos/secciones se persisten
 # en PostgreSQL (ver db.py); no hay estado local en archivos.

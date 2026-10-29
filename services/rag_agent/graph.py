@@ -64,7 +64,6 @@ import operator
 import re
 from typing import Annotated, Any, TypedDict
 
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.config import get_config
 from langgraph.graph import END, START, StateGraph
 
@@ -86,6 +85,7 @@ from data.pipelines.rag import (
 from services.rag_agent import guardrail_observability as obs
 from services.rag_agent import tracing
 from services.rag_agent import mcp_client
+from data.pipelines.checkpointer import get_checkpointer
 from services.rag_agent.memory_nodes import (
     consolidate_node,
     memorize_node,
@@ -928,8 +928,9 @@ _builder.add_conditional_edges(
 _builder.add_edge("error", "finalize")
 _builder.add_edge("finalize", END)
 
-# MemorySaver: checkpoint en cada transición de estado relevante.
-graph = _builder.compile(checkpointer=MemorySaver())
+# Checkpoint en cada transición de estado relevante. Backend persistente
+# (Postgres o SQLite) según entorno; ver data/pipelines/checkpointer.py.
+graph = _builder.compile(checkpointer=get_checkpointer())
 
 
 def run(question: str, *, thread_id: str = "default") -> dict[str, Any]:

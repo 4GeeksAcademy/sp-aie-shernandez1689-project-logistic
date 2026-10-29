@@ -14,7 +14,15 @@ con los endpoints del tramo de recepción de RFPs:
   borradores y EvaluationResult), resumen para Ventas y handoffs.
 - ``POST /rfp/tickets/{ticket_id}/proposal`` — (re)lanza la Parte 2 en
   segundo plano (``202``). Tras el upload se encadena sola salvo
-  ``RFP_AUTO_PROPOSAL=0``.
+  ``RFP_AUTO_PROPOSAL=0``; al acabar abre la Parte 3 salvo
+  ``RFP_AUTO_APPROVAL=0``.
+- ``POST /rfp/tickets/{ticket_id}/approval`` — abre (o resincroniza) la
+  aprobación por departamento (Parte 3).
+- ``POST /rfp/tickets/{ticket_id}/sections/{department_id}/decision`` — el
+  responsable del departamento aprueba, rechaza o pide cambios. La respuesta
+  se valida (422/409) antes de reanudar la rama interrumpida del grafo.
+- ``GET  /rfp/tickets/{ticket_id}/final-document`` — documento final
+  (``?format=markdown`` lo devuelve como ``text/markdown``).
 
 Regla estricta de capas (Brifing-pipeline.md §5): este router **importa
 únicamente** funciones de ``data/pipelines/rfp_intake/`` (proceso, clasificador,
@@ -37,9 +45,11 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Query,
     UploadFile,
     status,
 )
+from fastapi.responses import PlainTextResponse
 
 # ── Acceso al paquete data.pipelines (mismo patrón que routes/telemetry.py) ──
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -48,13 +58,20 @@ if str(REPO_ROOT) not in sys.path:
 
 from auth import get_current_user  # noqa: E402
 from data.pipelines.rfp_intake import (  # noqa: E402
+    ApprovalDecision,
+    ApprovalError,
     ProposalNotReadyError,
     db,
-    generate_proposal,
+    get_final_document,
+    open_approval,
     process_ticket,
     recover_stale_tickets,
     register_upload,
+    run_proposal_and_approval,
+    submit_decision,
 )
+from data.pipelines.rfp_intake.approval import auto_approval_enabled  # noqa: E402
+from data.pipelines.rfp_intake.config import STATUS_TERMINADO  # noqa: E402
 from data.pipelines.rfp_intake.proposal import (  # noqa: E402
     auto_proposal_enabled,
     load_handoff,
@@ -191,14 +208,22 @@ def get_ticket_detail(
         "handoff": metadata.get("handoff"),
         # Parte 2 → Parte 3: borradores evaluados (needs_human_review incluidas).
         "proposal_handoff": metadata.get("proposal_handoff"),
-        # La UI sabe si analisis_completo es transitorio (Parte 2 encadenada).
+        # Parte 3: decisiones por departamento, conflictos §7, arbitrajes, trace.
+        "approval": metadata.get("approval"),
+        # Solo existe al cerrar el ticket (todas las secciones aprobadas).
+        "final_document": (
+            db.get_final_document(ticket_id) if ticket["status"] == STATUS_TERMINADO else None
+        ),
+        # La UI sabe si analisis_completo es transitorio (Parte 2 encadenada)
+        # y si la Parte 3 se abre sola al acabar la Parte 2.
         "auto_proposal": auto_proposal_enabled(),
+        "auto_approval": auto_approval_enabled(),
     }
 
 
 def _run_proposal(ticket_id: str) -> None:
     try:
-        generate_proposal(ticket_id)
+        run_proposal_and_approval(ticket_id)
     except Exception:
         logger.exception("RFP propuesta: falló la generación de %s", ticket_id)
 
@@ -221,6 +246,71 @@ def regenerate_proposal(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     background_tasks.add_task(_run_proposal, ticket_id)
     return {"ticket_id": ticket_id, "status": ticket["status"], "queued": True}
+
+
+def _approval_http_error(exc: ApprovalError) -> HTTPException:
+    detail: Any = getattr(exc, "errors", None) or str(exc)
+    return HTTPException(status_code=exc.status_code, detail=detail)
+
+
+@router.post("/tickets/{ticket_id}/approval")
+def start_approval(
+    ticket_id: str,
+    _user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Abre la aprobación por departamento (Parte 3) o la resincroniza."""
+    try:
+        return {"ticket_id": ticket_id, "approval": open_approval(ticket_id)}
+    except db.DatabaseNotConfiguredError as exc:
+        raise _db_unavailable(exc) from exc
+    except ApprovalError as exc:
+        raise _approval_http_error(exc) from exc
+
+
+@router.post("/tickets/{ticket_id}/sections/{department_id}/decision")
+def record_decision(
+    ticket_id: str,
+    department_id: str,
+    decision: ApprovalDecision,
+    _user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Decisión del responsable: aprobar, rechazar o pedir cambios.
+
+    FastAPI valida el formato (422) y el pipeline valida el contexto
+    (responsable correcto, sección esperando decisión, conflictos abiertos)
+    antes de reanudar la rama interrumpida.
+    """
+    try:
+        approval = submit_decision(ticket_id, department_id, decision)
+    except db.DatabaseNotConfiguredError as exc:
+        raise _db_unavailable(exc) from exc
+    except ApprovalError as exc:
+        raise _approval_http_error(exc) from exc
+    ticket = db.get_ticket(ticket_id) or {}
+    return {"ticket_id": ticket_id, "status": ticket.get("status"), "approval": approval}
+
+
+@router.get("/tickets/{ticket_id}/final-document", response_model=None)
+def final_document(
+    ticket_id: str,
+    format: str = Query("json", pattern="^(json|markdown)$"),
+    _user: Any = Depends(get_current_user),
+) -> Any:
+    """Documento final consolidado (solo con todas las secciones aprobadas)."""
+    try:
+        document = get_final_document(ticket_id)
+    except db.DatabaseNotConfiguredError as exc:
+        raise _db_unavailable(exc) from exc
+    except ApprovalError as exc:
+        raise _approval_http_error(exc) from exc
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"El ticket {ticket_id} aún no tiene documento final.",
+        )
+    if format == "markdown":
+        return PlainTextResponse(document["content"], media_type="text/markdown; charset=utf-8")
+    return document
 
 
 async def rfp_recovery_loop() -> None:

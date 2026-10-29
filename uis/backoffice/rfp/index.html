@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f4efe7" />
-    <title>TrackFlow | Intake de RFPs</title>
+    <title>TrackFlow | RFPs: intake, propuesta y aprobación</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -20,7 +20,7 @@
       <header class="topbar" role="banner">
         <div>
           <p class="eyebrow">TrackFlow Backoffice · Intake</p>
-          <h1>Recepción de RFP (Hito 9, Parte 1)</h1>
+          <h1>RFPs: recepción, propuesta y aprobación (Hito 9, Partes 1–3)</h1>
         </div>
         <nav class="menu-links" aria-label="Navegación principal">
           <a href="../application/app/incidents/panel.html">Panel incidencias</a>
@@ -101,7 +101,9 @@
         <div class="panel-head">
           <h2 id="detail-title">Detalle del ticket</h2>
           <p>
-            Consume <code>GET /rfp/tickets/{ticket_id}</code>.
+            Consume <code>GET /rfp/tickets/{ticket_id}</code>. En
+            <code>esperando_aprobación</code> cada responsable registra aquí la
+            decisión de su sección (Parte 3).
           </p>
         </div>
         <div id="detailLoading" class="summary-state" role="status" aria-live="polite" hidden>

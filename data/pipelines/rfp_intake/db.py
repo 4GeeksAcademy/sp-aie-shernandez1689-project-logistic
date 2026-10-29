@@ -26,7 +26,7 @@ from sqlalchemy.engine import Engine, create_engine, make_url
 from sqlmodel import Session, SQLModel, select
 
 from .config import REPO_ROOT
-from .models import DepartmentSection, RFPMetadata, Ticket
+from .models import DepartmentSection, FinalDocument, RFPMetadata, Ticket
 
 # Mismo comportamiento que services/api/db_telemetry.py: carga el .env de la
 # raíz del monorepo y el de services/api si existen (desarrollo).
@@ -36,7 +36,7 @@ for _env_candidate in (REPO_ROOT / ".env", REPO_ROOT / "services" / "api" / ".en
 
 _ENGINE: Engine | None = None
 
-_DATETIME_FIELDS = ("created_at", "updated_at", "approved_at")
+_DATETIME_FIELDS = ("created_at", "updated_at", "approved_at", "generated_at")
 
 
 class DatabaseNotConfiguredError(RuntimeError):
@@ -91,7 +91,7 @@ def create_tables(engine: Engine | None = None) -> None:
 
     En Supabase el esquema se aplica con ``migrations/001_rfp_intake.sql``.
     """
-    tables = [m.__table__ for m in (Ticket, RFPMetadata, DepartmentSection)]  # type: ignore[attr-defined]
+    tables = [m.__table__ for m in (Ticket, RFPMetadata, DepartmentSection, FinalDocument)]  # type: ignore[attr-defined]
     SQLModel.metadata.create_all(engine or get_engine(), tables=tables)
 
 
@@ -166,6 +166,11 @@ def save_intake(
         instances.append(_build(RFPMetadata, metadata))
     instances.extend(_build(DepartmentSection, s) for s in sections)
     _upsert(*instances)
+
+
+def save_final_document(document: dict[str, Any]) -> None:
+    """Persiste el documento final de un ticket (Parte 3)."""
+    _upsert(_build(FinalDocument, document))
 
 
 def _update(model: type[SQLModel], key: str, fields: dict[str, Any]) -> dict[str, Any]:
@@ -251,6 +256,13 @@ def get_department_sections(ticket_id: str) -> list[dict[str, Any]]:
         return [_to_dict(row) for row in rows]
 
 
+def get_final_document(ticket_id: str) -> dict[str, Any] | None:
+    """Documento final de un ticket, si ya se generó."""
+    with Session(get_engine()) as session:
+        row = session.get(FinalDocument, ticket_id)
+        return _to_dict(row) if row is not None else None
+
+
 __all__ = [
     "DatabaseNotConfiguredError",
     "get_engine",
@@ -269,4 +281,6 @@ __all__ = [
     "get_ticket",
     "get_rfp_metadata",
     "get_department_sections",
+    "save_final_document",
+    "get_final_document",
 ]

@@ -8,6 +8,10 @@
  *                                (202); el pipeline corre en segundo plano.
  * - GET  /rfp/tickets         → lista tickets de intake (recientes primero).
  * - GET  /rfp/tickets/{id}    → detalle: metadatos + secciones por departamento.
+ * - POST /rfp/tickets/{id}/sections/{dep}/decision → Parte 3: el responsable
+ *                                del departamento aprueba, rechaza o pide cambios.
+ * - POST /rfp/tickets/{id}/approval → abre la Parte 3 (si no se abrió sola).
+ * - GET  /rfp/tickets/{id}/final-document?format=markdown → documento final.
  *
  * Modo ticket: cada PDF seleccionado se sube por separado (un ticket por
  * archivo). La vista consulta ``GET /rfp/tickets/{id}`` cada pocos segundos
@@ -32,10 +36,22 @@ let tableRefreshTimer = null;
 // Con la Parte 2 encadenada, analisis_completo es un estado de paso.
 let autoProposal = true;
 
+// Estados desde los que arranca la Parte 3 (aprobación por departamento).
+const APPROVABLE_STATUSES = new Set(["esperando_aprobación", "needs_human_review"]);
+// Estados desde los que se puede relanzar la Parte 2.
+const REGENERABLE_STATUSES = new Set(["analisis_completo", "needs_human_review"]);
+const DECISIONS = [
+  ["approve", "Aprobar"],
+  ["request_changes", "Solicitar cambios"],
+  ["reject", "Rechazar"],
+];
+const MIN_COMMENT_CHARS = 10;
+
 /** ¿Sigue el ticket con trabajo en segundo plano? */
 function isPending(detail) {
   const status = detail.ticket?.status;
   if (IN_PROGRESS_STATUSES.has(status)) return true;
+  if (APPROVABLE_STATUSES.has(status) && detail.auto_approval !== false && !detail.approval) return true;
   return status === "analisis_completo" && detail.auto_proposal !== false && !detail.proposal_handoff;
 }
 
@@ -532,7 +548,8 @@ function createProposal(sections, ticketId, status) {
     }
     box.append(item);
   }
-  if (!IN_PROGRESS_STATUSES.has(status) && status !== "descartado" && status !== STATUS_ANALIZANDO) {
+  // Con la Parte 3 abierta los cambios se piden al responsable, no regenerando.
+  if (REGENERABLE_STATUSES.has(status)) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "primary";
@@ -609,11 +626,247 @@ async function loadDetail(ticketId) {
     if (result.handoff) {
       container.append(createProposal(result.departments || [], ticketId, result.ticket?.status));
     }
+    if (result.approval) {
+      container.append(createApproval(result.approval, ticketId));
+    } else if (APPROVABLE_STATUSES.has(result.ticket?.status)) {
+      container.append(createOpenApproval(ticketId));
+    }
+    if (result.final_document) container.append(createFinalDocument(result.final_document));
   } catch (error) {
     hideLoading(dom.detailLoading);
     dom.detailError.hidden = false;
     dom.detailErrorMessage.textContent = friendlyError(error.status || 0);
   }
+}
+
+// ── Parte 3: aprobación por departamento ────────────────────────────────────
+
+function apiErrorMessage(status, result) {
+  const detail = result?.detail;
+  if (Array.isArray(detail)) return detail.map((e) => e.msg).join("; ");
+  if (typeof detail === "string" && detail) return detail;
+  return friendlyError(status);
+}
+
+function createApproval(approval, ticketId) {
+  const box = document.createElement("div");
+  box.className = "detail-section approval-section";
+  const h4 = document.createElement("h4");
+  h4.textContent = "Aprobación por departamento (Parte 3)";
+  box.append(h4);
+  box.append(createSubheading(approval.status === "terminado"
+    ? "Todas las secciones están aprobadas: documento final generado."
+    : "Cada responsable decide su sección de forma independiente; las demás no esperan."));
+
+  const conflicts = approval.conflicts || [];
+  if (conflicts.length) {
+    box.append(createProvisionalWarning(
+      "Conflictos abiertos entre departamentos (BRIEFING §7)",
+      conflicts.map((c) => `[${c.trigger}] ${c.detail} Árbitro: ${[...new Set(Object.values(c.arbiters))].join(", ")}.`)
+    ));
+  }
+  const arbitrations = approval.arbitrations || [];
+  if (arbitrations.length) {
+    box.append(createSubheading(`Arbitrajes aplicados (${approval.arbitration_rounds}/${approval.max_arbitration_rounds} rondas)`));
+    box.append(createList(arbitrations.flatMap((a) => a.conflicts.map((c) =>
+      `Ronda ${a.round} · ${c.trigger} · árbitro ${[...new Set(Object.values(c.arbiters))].join(", ")} · `
+      + `${a.outcome === "reject" ? "rechaza" : "pide cambios en"} ${c.offenders.map(departmentLabel).join(", ")}`))));
+  }
+
+  for (const [dep, section] of Object.entries(approval.departments || {})) {
+    box.append(createApprovalCard(ticketId, dep, section));
+  }
+  if ((approval.trace || []).length) box.append(createTrace(approval.trace));
+  return box;
+}
+
+function createApprovalCard(ticketId, dep, section) {
+  const card = document.createElement("div");
+  card.className = "aspect approval-card";
+  card.dataset.department = dep;
+  const head = document.createElement("strong");
+  head.textContent = `${departmentLabel(dep)} · ${section.owner} · `;
+  const badge = document.createElement("span");
+  badge.className = `status-pill status-approval-${section.approval_status}`;
+  badge.textContent = section.approval_status.replace("_", " ");
+  head.append(badge);
+  card.append(head);
+
+  const rounds = document.createElement("p");
+  const minutes = section.approval_minutes !== null && section.approval_minutes !== undefined
+    ? ` · Tiempo hasta la decisión: ${section.approval_minutes} min` : "";
+  rounds.textContent = `Rondas de cambios: ${section.revisions}/${section.max_revisions}${minutes}`;
+  card.append(rounds);
+
+  const decisions = section.decisions || [];
+  if (decisions.length) {
+    card.append(createSubheading("Historial de decisiones"));
+    card.append(createList(decisions.map((d) =>
+      `${d.decision} · ${d.approver}${d.source === "arbitration" ? " (arbitraje)" : ""}`
+      + `${d.comments ? ` — «${d.comments}»` : ""}`)));
+  }
+  if (section.awaiting) card.append(createDecisionForm(ticketId, dep, section.owner));
+  return card;
+}
+
+function createDecisionForm(ticketId, dep, owner) {
+  const form = document.createElement("form");
+  form.className = "decision-form";
+  form.setAttribute("aria-label", `Decisión de ${owner} sobre ${departmentLabel(dep)}`);
+  const fieldset = document.createElement("fieldset");
+  const legend = document.createElement("legend");
+  legend.textContent = `Decisión de ${owner} (responsable de ${departmentLabel(dep)})`;
+  fieldset.append(legend);
+  for (const [value, label] of DECISIONS) {
+    const option = document.createElement("label");
+    option.className = "decision-option";
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = `decision-${dep}`;
+    radio.value = value;
+    radio.required = true;
+    option.append(radio, ` ${label}`);
+    fieldset.append(option);
+  }
+  const commentsLabel = document.createElement("label");
+  commentsLabel.textContent = "Comentarios";
+  const comments = document.createElement("textarea");
+  comments.name = "comments";
+  comments.rows = 3;
+  comments.maxLength = 2000;
+  comments.placeholder = `Obligatorio al rechazar o pedir cambios (mín. ${MIN_COMMENT_CHARS} caracteres).`;
+  commentsLabel.append(comments);
+  const button = document.createElement("button");
+  button.type = "submit";
+  button.className = "primary";
+  button.textContent = "Registrar decisión";
+  const feedback = document.createElement("p");
+  feedback.className = "feedback";
+  feedback.setAttribute("role", "status");
+  fieldset.append(commentsLabel, button, feedback);
+  form.append(fieldset);
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const decision = form.querySelector(`input[name="decision-${dep}"]:checked`)?.value;
+    const text = comments.value.trim();
+    if (!decision) {
+      setFeedback(feedback, "Elige una decisión.", "error");
+      return;
+    }
+    if (decision !== "approve" && text.length < MIN_COMMENT_CHARS) {
+      setFeedback(feedback, `Explica el motivo (mín. ${MIN_COMMENT_CHARS} caracteres).`, "error");
+      return;
+    }
+    button.disabled = true;
+    setFeedback(feedback, decision === "request_changes" ? "Reescribiendo la sección…" : "Registrando…");
+    try {
+      const response = await fetch(
+        `${getApiBase()}/rfp/tickets/${encodeURIComponent(ticketId)}/sections/${encodeURIComponent(dep)}/decision`,
+        {
+          method: "POST",
+          headers: { ...requestHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ decision, approver: owner, comments: text || null }),
+        }
+      );
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw { status: response.status, result };
+      await loadDetail(ticketId);
+      loadTickets({ silent: true });
+    } catch (error) {
+      button.disabled = false;
+      setFeedback(feedback, apiErrorMessage(error.status || 0, error.result), "error");
+    }
+  });
+  return form;
+}
+
+function createOpenApproval(ticketId) {
+  const box = document.createElement("div");
+  box.className = "detail-section";
+  const h4 = document.createElement("h4");
+  h4.textContent = "Aprobación por departamento (Parte 3)";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "primary";
+  button.textContent = "Abrir aprobación";
+  const feedback = document.createElement("p");
+  feedback.className = "feedback";
+  feedback.setAttribute("role", "status");
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      const response = await fetch(
+        `${getApiBase()}/rfp/tickets/${encodeURIComponent(ticketId)}/approval`,
+        { method: "POST", headers: requestHeaders() }
+      );
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw { status: response.status, result };
+      await loadDetail(ticketId);
+      loadTickets({ silent: true });
+    } catch (error) {
+      button.disabled = false;
+      setFeedback(feedback, apiErrorMessage(error.status || 0, error.result), "error");
+    }
+  });
+  box.append(h4, button, feedback);
+  return box;
+}
+
+function createTrace(trace) {
+  const details = document.createElement("details");
+  details.className = "approval-trace";
+  const summary = document.createElement("summary");
+  summary.textContent = `Trazabilidad (${trace.length} ejecuciones de nodo)`;
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap";
+  const table = document.createElement("table");
+  table.innerHTML = "<thead><tr><th>Timestamp</th><th>Nodo</th><th>Agente</th><th>Hilo</th><th>Output</th></tr></thead>";
+  const body = document.createElement("tbody");
+  for (const entry of trace) {
+    const tr = document.createElement("tr");
+    for (const value of [entry.timestamp, entry.node, entry.agent, entry.thread_id,
+      JSON.stringify(entry.output)]) {
+      const td = document.createElement("td");
+      td.textContent = value ?? "—";
+      tr.append(td);
+    }
+    body.append(tr);
+  }
+  table.append(body);
+  wrap.append(table);
+  details.append(summary, wrap);
+  return details;
+}
+
+function createFinalDocument(doc) {
+  const box = document.createElement("div");
+  box.className = "detail-section final-document";
+  const h4 = document.createElement("h4");
+  h4.textContent = "Documento final";
+  const dl = document.createElement("dl");
+  dl.className = "rfp-result-grid";
+  dl.append(
+    createKv("Moneda", doc.currency || "—"),
+    createKv("Secciones", (doc.sections || []).map((s) => departmentLabel(s.department_id)).join(", ")),
+    createKv("Generado", doc.generated_at || "—")
+  );
+  const download = document.createElement("button");
+  download.type = "button";
+  download.textContent = "Descargar Markdown";
+  download.addEventListener("click", () => {
+    const url = URL.createObjectURL(new Blob([doc.content], { type: "text/markdown" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${doc.ticket_id}-propuesta.md`;
+    link.click();
+    URL.revokeObjectURL(url);
+  });
+  const pre = document.createElement("pre");
+  pre.className = "rfp-draft";
+  pre.textContent = doc.content;
+  box.append(h4, dl, download, pre);
+  return box;
 }
 
 function createKv(dt, dd) {
