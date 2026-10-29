@@ -7,8 +7,9 @@ Funciones públicas
 retrieve(query: str, *, k: int = 5, min_score: float) -> list[dict]
     Recupera los chunks más relevantes desde Qdrant para una consulta.
 
-generate_answer(question: str, context: list[dict]) -> str
-    Arma el prompt con el contexto y llama al LLM de generación.
+generate_answer(question: str, context: list[dict], *, on_token=None) -> str
+    Arma el prompt con el contexto y llama al LLM de generación. Con
+    ``on_token`` pide la respuesta en streaming y entrega cada token según llega.
 
 query(question: str, *, k: int = 5, min_score: float | None = None) -> str
     Orquesta retrieve() + generate_answer() — devuelve solo la respuesta texto.
@@ -16,8 +17,10 @@ query(question: str, *, k: int = 5, min_score: float | None = None) -> str
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -43,6 +46,53 @@ QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:6333")
 QDRANT_API_KEY: str | None = os.getenv("QDRANT_API_KEY", None)
 
 _qdrant: QdrantClient | None = None
+
+# Callback de streaming: recibe cada fragmento de texto generado por el LLM.
+TokenCallback = Callable[[str], None]
+
+
+class StreamAborted(Exception):
+    """El consumidor del stream cancela la generación desde ``on_token``.
+
+    Nunca se traduce al texto de error genérico: se propaga hasta quien
+    ejecuta el grafo (p. ej. ``cancel`` del chat en tiempo real).
+    """
+
+
+def _complete_chat(
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    on_token: TokenCallback | None,
+) -> str:
+    """POST ``/chat/completions``; con ``on_token`` pide ``stream`` (SSE).
+
+    En streaming cada ``choices[0].delta.content`` se entrega a ``on_token``
+    en cuanto llega y se devuelve el texto completo concatenado.
+    """
+    url = f"{LLM_BASE_URL}/chat/completions"
+    with httpx.Client(timeout=30.0) as client:
+        if on_token is None:
+            resp = client.post(url, headers=headers, json=payload)
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+
+        parts: list[str] = []
+        with client.stream(
+            "POST", url, headers=headers, json={**payload, "stream": True}
+        ) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[len("data:"):].strip()
+                if data == "[DONE]":
+                    break
+                choices = json.loads(data).get("choices") or []
+                token = (choices[0].get("delta") or {}).get("content") if choices else None
+                if token:
+                    on_token(token)
+                    parts.append(token)
+        return "".join(parts)
 
 
 def _get_qdrant() -> QdrantClient:
@@ -156,7 +206,12 @@ def retrieve(
 # ── Generate answer (prompt + LLM) ─────────────────────────────────────
 
 
-def generate_answer(question: str, context: list[dict[str, Any]]) -> str:
+def generate_answer(
+    question: str,
+    context: list[dict[str, Any]],
+    *,
+    on_token: TokenCallback | None = None,
+) -> str:
     """Arma el prompt con el contexto recuperado y llama al LLM de generación.
 
     Parameters
@@ -166,6 +221,10 @@ def generate_answer(question: str, context: list[dict[str, Any]]) -> str:
     context : list[dict]
         Lista de fragmentos recuperados por retrieve(). Cada dict debe
         contener al menos 'text', 'source_document', 'section'.
+    on_token : callable, optional
+        Si se indica, la respuesta se pide en streaming y cada token se
+        entrega aquí según llega (``StreamAborted`` lanzado desde el
+        callback detiene la generación y se propaga).
 
     Returns
     -------
@@ -211,15 +270,9 @@ def generate_answer(question: str, context: list[dict[str, Any]]) -> str:
     }
 
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
-                f"{LLM_BASE_URL}/chat/completions",
-                headers=headers,
-                json=payload,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            answer: str = data["choices"][0]["message"]["content"]
+        answer: str = _complete_chat(headers, payload, on_token)
+    except StreamAborted:
+        raise
     except Exception as exc:
         logger.exception("Error al llamar al LLM: %s", exc)
         answer = (
@@ -240,7 +293,9 @@ def generate_answer(question: str, context: list[dict[str, Any]]) -> str:
 # contexto recuperado.
 
 
-def generate_casual_answer(question: str) -> str:
+def generate_casual_answer(
+    question: str, *, on_token: TokenCallback | None = None
+) -> str:
     """Responde una pregunta general/casual permitida con el LLM.
 
     Se usa SOLO tras clasificar la pregunta como ``GuardrailState.CASUAL``
@@ -252,6 +307,8 @@ def generate_casual_answer(question: str) -> str:
     ----------
     question : str
         Pregunta general/casual del usuario (previamente clasificada).
+    on_token : callable, optional
+        Igual que en ``generate_answer``: streaming token a token.
 
     Returns
     -------
@@ -281,15 +338,9 @@ def generate_casual_answer(question: str) -> str:
         "temperature": 0.1,
     }
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
-                f"{LLM_BASE_URL}/chat/completions",
-                headers=headers,
-                json=payload,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            answer: str = data["choices"][0]["message"]["content"]
+        answer: str = _complete_chat(headers, payload, on_token)
+    except StreamAborted:
+        raise
     except Exception as exc:
         logger.exception("Error al llamar al LLM (casual): %s", exc)
         answer = (

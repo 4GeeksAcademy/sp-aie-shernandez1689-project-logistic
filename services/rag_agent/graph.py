@@ -64,7 +64,7 @@ import operator
 import re
 from typing import Annotated, Any, TypedDict
 
-from langgraph.config import get_config
+from langgraph.config import get_config, get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
 from data.pipelines.guardrails import (
@@ -78,6 +78,7 @@ from data.pipelines.guardrails import (
 )
 from data.pipelines.rag import (
     DEFAULT_MIN_SCORE,
+    TokenCallback,
     generate_answer,
     generate_casual_answer,
     retrieve,
@@ -262,6 +263,32 @@ def _thread_id() -> str:
     return cfg.get("configurable", {}).get("thread_id", "default")
 
 
+def _streaming_kwargs() -> dict[str, TokenCallback]:
+    """``{"on_token": ...}`` para el modo ``custom`` de ``graph.stream``, o ``{}``.
+
+    Solo cuando quien ejecuta el grafo lo pide (``configurable.stream_tokens``,
+    p. ej. el chat WebSocket): ``graph.invoke`` de ``POST /agent/query`` sigue
+    con exactamente la misma llamada al LLM, sin streaming.
+    ``configurable.token_gate`` (opcional) se llama antes de cada token: puede
+    bloquear (pausa) o lanzar ``StreamAborted`` (cancelación).
+    """
+    try:
+        configurable = get_config().get("configurable", {})
+    except RuntimeError:
+        return {}
+    if not configurable.get("stream_tokens"):
+        return {}
+    writer = get_stream_writer()
+    gate = configurable.get("token_gate")
+
+    def sink(token: str) -> None:
+        if gate is not None:
+            gate()
+        writer({"token": token})
+
+    return {"on_token": sink}
+
+
 def retrieve_node(state: AgentState) -> dict[str, Any]:
     """Ejecuta retrieve() sobre la base de conocimiento (reutilizado)."""
     context = retrieve(
@@ -387,6 +414,7 @@ def generate_node(state: AgentState) -> dict[str, Any]:
         answer = generate_answer(
             question=state["question"],
             context=combined_context,
+            **_streaming_kwargs(),
         )
 
     # Validación de salida (guardarraíl de contenido):
@@ -754,7 +782,7 @@ def casual_node(state: AgentState) -> dict[str, Any]:
     cierra la respuesta reconduciendo hacia el contexto de la empresa").
     """
     question = state.get("question") or ""
-    answer = generate_casual_answer(question)
+    answer = generate_casual_answer(question, **_streaming_kwargs())
     answer = (answer or "").strip()
     if not answer:
         answer = GUARDRAIL_DOMAIN_REDIRECT
