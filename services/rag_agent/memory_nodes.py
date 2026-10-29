@@ -435,8 +435,11 @@ def remember_node(state: dict[str, Any]) -> dict[str, Any]:
             if prefs:
                 context["prefs"] = prefs
 
-        if question and len(question) >= _MIN_QUESTION_LENGTH:
-            context["semantic_hits"] = _run_async(memory.recall(question, limit=3))
+        # Solo memoria del propio usuario; sin usuario no hay recall.
+        if uid and question and len(question) >= _MIN_QUESTION_LENGTH:
+            context["semantic_hits"] = _run_async(
+                memory.recall(question, user_id=uid, limit=3)
+            )
 
         episode = _run_async(memory.get_episode(thread_id))
         if episode:

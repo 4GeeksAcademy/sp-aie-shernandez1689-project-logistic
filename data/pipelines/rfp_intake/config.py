@@ -34,6 +34,20 @@ DEPARTMENT_OWNERS: dict[str, str] = {
     "reverse": "Sofía Ramos",
 }
 
+
+def approver_emails(department_id: str) -> frozenset[str]:
+    """Cuentas (email del JWT) que deciden la sección del departamento (Parte 3).
+
+    ``RFP_APPROVER_EMAILS=warehouse=ana@x;lastmile=carlos@x;reverse=sofia@x,suplente@x``.
+    Un departamento sin cuentas configuradas no lo decide nadie por la API
+    (fail-closed). Se lee en cada llamada para poder cambiarlo sin reiniciar.
+    """
+    for entry in os.getenv("RFP_APPROVER_EMAILS", "").split(";"):
+        dep, _, emails = entry.partition("=")
+        if dep.strip() == department_id:
+            return frozenset(e.strip().lower() for e in emails.split(",") if e.strip())
+    return frozenset()
+
 # Mapeo servicio solicitado → department_id (BRIEFING §2.1).
 SERVICE_TO_DEPARTMENT: dict[str, str] = {
     "warehouse": "warehouse",

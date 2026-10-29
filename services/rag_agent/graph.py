@@ -370,7 +370,10 @@ def generate_node(state: AgentState) -> dict[str, Any]:
         if isinstance(hits, list) and hits:
             memory_lines.append(
                 "Hechos recordados relevantes:\n"
-                + "\n".join(f"  - {h}" for h in hits[:3])
+                + "\n".join(
+                    f"  - {h.get('text', '') if isinstance(h, dict) else h}"
+                    for h in hits[:3]
+                )
             )
 
     if tool_answers and not kb_context:
@@ -392,24 +395,27 @@ def generate_node(state: AgentState) -> dict[str, Any]:
         # llegar al LLM. Cualquier instrucción incrustada en un documento
         # recuperado se neutraliza; el modelo lo trata como contenido sobre
         # el que responder, nunca como órdenes que obedecer.
-        combined_context = isolate_context_chunks(tool_context + kb_context)
+        # La memoria también es contenido externo: la escribió un usuario
+        # (hechos, preferencias) y vuelve en otra corrida.
+        memory_chunks = (
+            [{"text": "\n".join(memory_lines), "source_document": "agent_memory", "section": "memoria"}]
+            if memory_lines
+            else []
+        )
+        external = memory_chunks + tool_context + kb_context
+        combined_context = isolate_context_chunks(external)
         # Observabilidad: solo se cuenta como evento si se detectó una
         # inyección real (delimitador de instrucción o reescritura de reglas
         # incrustada en el contenido recuperado/tool); el aislamiento por sí
         # solo (defensa normal) no es un bloqueo/redirección.
         if any(
             detect_content_injection(c.get("text", ""))
-            for c in (tool_context + kb_context)
+            for c in external
         ):
             obs.record(
                 state="injection_neutralized", kind="content", node="generate",
                 thread_id=_thread_id(),
                 detail="instrucción incrustada en contenido externo neutralizada",
-            )
-        if memory_lines:
-            combined_context = (
-                [{"text": "\n".join(memory_lines), "source_document": "agent_memory", "section": "memoria"}]
-                + combined_context
             )
         answer = generate_answer(
             question=state["question"],

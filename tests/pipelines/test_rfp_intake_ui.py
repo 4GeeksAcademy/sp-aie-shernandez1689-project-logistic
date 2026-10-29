@@ -114,6 +114,11 @@ def stack(tmp_path, monkeypatch):
         )
     monkeypatch.setattr(auth, "USER_DB_PATH", users_db)
     monkeypatch.setenv("JWT_SECRET_KEY", "e2e-secret")
+    # La misma cuenta decide todas las secciones en el E2E.
+    monkeypatch.setenv(
+        "RFP_APPROVER_EMAILS",
+        ";".join(f"{dep}=ventas@trackflow.example" for dep in ("warehouse", "lastmile", "reverse")),
+    )
     token = jwt.encode(
         {"sub": "u-sales", "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
         "e2e-secret",

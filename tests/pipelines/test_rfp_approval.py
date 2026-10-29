@@ -775,6 +775,10 @@ class TestApprovalRoutes:
         monkeypatch.setattr(pipeline_mod, "raw_rfp_dir", lambda: tmp_path)
         monkeypatch.setenv("RFP_RECOVERY_INTERVAL_SECONDS", "0")
         monkeypatch.setenv("RFP_GENERATOR", "template")
+        monkeypatch.setenv(
+            "RFP_APPROVER_EMAILS",
+            "warehouse=admin@example.com;lastmile=admin@example.com;reverse=admin@example.com",
+        )
         app.dependency_overrides[get_current_user] = lambda: CurrentUser(
             id="test-admin", email="admin@example.com", role="admin",
         )
@@ -815,6 +819,51 @@ class TestApprovalRoutes:
         detail = client.get(f"/rfp/tickets/{ticket_id}").json()
         assert detail["ticket"]["status"] == "terminado"
         assert detail["final_document"]["ticket_id"] == ticket_id
+
+    def _login_as(self, client, email):
+        from auth import CurrentUser, get_current_user
+
+        client.app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+            id=email.split("@")[0], email=email, role="user",
+        )
+
+    def _ticket_waiting_for_approval(self, client):
+        files = {"file": ("trackflow-request-1.pdf", SAMPLE_PDFS[1].read_bytes(), "application/pdf")}
+        ticket_id = client.post("/rfp/upload", files=files).json()["ticket_id"]
+        return ticket_id, f"/rfp/tickets/{ticket_id}/sections/{{dep}}/decision"
+
+    def test_approver_name_in_body_does_not_impersonate_the_owner(self, client, sqlite_db, monkeypatch):
+        """G1 (informe NIST): escribir "Sofía Ramos" no basta para decidir su sección."""
+        monkeypatch.setenv(
+            "RFP_APPROVER_EMAILS",
+            "warehouse=ana@trackflow.example;reverse=Sofia@TrackFlow.example",
+        )
+        ticket_id, url = self._ticket_waiting_for_approval(client)
+
+        for intruder in ("intruso@trackflow.example", "ana@trackflow.example"):
+            self._login_as(client, intruder)
+            resp = client.post(url.format(dep="reverse"), json={"decision": "approve", "approver": SOFIA})
+            assert resp.status_code == 403, resp.text
+            assert "Reverse Logistics" in resp.json()["detail"]
+
+        reverse = _sections(sqlite_db, ticket_id)["reverse"]
+        assert reverse["approval_status"] != "aprobada"
+        assert not reverse.get("approval_history")
+
+        self._login_as(client, "sofia@trackflow.example")  # el email no distingue mayúsculas
+        resp = client.post(url.format(dep="reverse"), json={"decision": "approve", "approver": SOFIA})
+        assert resp.status_code == 200, resp.text
+        reverse = _sections(sqlite_db, ticket_id)["reverse"]
+        assert reverse["approval_status"] == "aprobada"
+        assert reverse["approval_history"][-1]["approved_by"] == "sofia@trackflow.example"
+
+    def test_department_without_configured_approvers_is_closed(self, client, monkeypatch):
+        monkeypatch.setenv("RFP_APPROVER_EMAILS", "reverse=sofia@trackflow.example")
+        _, url = self._ticket_waiting_for_approval(client)
+
+        self._login_as(client, "admin@example.com")
+        resp = client.post(url.format(dep="warehouse"), json={"decision": "approve", "approver": ANA})
+        assert resp.status_code == 403, resp.text
 
     def test_open_approval_route(self, client, sqlite_db, monkeypatch):
         monkeypatch.setenv("RFP_AUTO_APPROVAL", "0")

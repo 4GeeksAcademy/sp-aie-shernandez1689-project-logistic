@@ -40,6 +40,7 @@ from agent_chat import (
     chat_service,
 )
 from auth import CurrentUser, authenticate_token, get_current_user
+from rate_limit import llm_rate_limit
 from services.rag_agent.graph import graph
 from services.rag_agent import guardrail_observability as obs
 from services.rag_agent.tracing import TRACES_DIR, load_trace
@@ -61,10 +62,14 @@ class AgentQueryResponse(BaseModel):
 
 
 @router.post("/query", response_model=AgentQueryResponse)
-def agent_query(request: AgentQueryRequest) -> Any:
-    """Ejecuta el grafo del agente para una pregunta."""
+def agent_query(
+    request: AgentQueryRequest,
+    current_user: CurrentUser = Depends(llm_rate_limit),
+) -> Any:
+    """Ejecuta el grafo del agente para una pregunta (JWT + rate limit por usuario)."""
     thread_id = uuid.uuid4().hex
-    config = {"configurable": {"thread_id": thread_id}}
+    # user_id: la memoria del agente solo se recupera para su dueño.
+    config = {"configurable": {"thread_id": thread_id, "user_id": current_user.id}}
     try:
         state = graph.invoke({"question": request.question}, config)
     except Exception as exc:  # fallo en cualquier nodo del grafo

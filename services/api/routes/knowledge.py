@@ -24,8 +24,11 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+from auth import CurrentUser
+from rate_limit import llm_rate_limit
 
 # Única importación del pipeline — sin lógica duplicada.
 from data.pipelines.rag import query as rag_query
@@ -54,7 +57,10 @@ class QueryResponse(BaseModel):
 
 
 @router.post("/query", response_model=QueryResponse)
-async def query_endpoint(request: QueryRequest) -> QueryResponse:
+async def query_endpoint(
+    request: QueryRequest,
+    _user: CurrentUser = Depends(llm_rate_limit),
+) -> QueryResponse:
     """Responde una pregunta usando la base de conocimiento de TrackFlow.
 
     El endpoint delega completamente en query() del pipeline RAG:

@@ -86,6 +86,7 @@ from fastapi import WebSocket
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from auth import CurrentUser
+from rate_limit import llm_limiter, retry_after_seconds
 from data.pipelines.rag import StreamAborted
 from services.rag_agent import tracing
 
@@ -601,6 +602,12 @@ class ChatService:
                 )
             elif session.closed:
                 await conn.send_error("session_closed", "La sesión de chat está cerrada.")
+            elif (wait := llm_limiter.hit(conn.user.id)) is not None:
+                await conn.send_error(
+                    "rate_limited",
+                    "Límite de consultas al modelo alcanzado. "
+                    f"Reintenta en {retry_after_seconds(wait)} s.",
+                )
             else:
                 self.submit_message(session, text, graph)
         elif command.command == COMMAND_INTERRUPT:

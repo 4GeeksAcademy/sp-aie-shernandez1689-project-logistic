@@ -140,6 +140,16 @@ Manual check:
    re-fetched once, with no duplicate rows. Without a restart (network blip)
    the missed events are replayed instead.
 
+## Model endpoints: authentication and rate limiting
+
+`POST /agent/query`, `POST /api/rag/query` and `POST /knowledge/query` require
+the backoffice Bearer JWT (`401` without it). Every user has one budget of
+`LLM_RATE_LIMIT_PER_MINUTE` model calls (default 20) in a sliding 60 s window,
+shared by those three routes and the chat `send_message` command. Over the
+budget: `429` with `Retry-After`, or `chat_error` `rate_limited` on the
+socket. Implementation: `rate_limit.py`. The state is per process (one
+worker, like the chat bus); with several workers move it to Redis.
+
 ## Support agent real-time chat (WebSocket)
 
 Extends `POST /agent/query` (request/response) with a streaming chat over the
@@ -184,7 +194,7 @@ Frames are JSON `{"command"|"event": ..., "data": {...}}`; every event carries
 | `generation_failed` | `message_id, message` |
 | `control_applied` | `action, actor_id, timestamp` |
 | `chat_session_closed` | `reason` |
-| `chat_error` | `code, message` (only to the connection that sent the command) |
+| `chat_error` | `code, message` (only to the connection that sent the command; `rate_limited` when the user's model-call budget is spent) |
 
 Messages: `{message_id, role: user|assistant, content, status, created_at,
 reply_to}`, `status` = `complete | streaming | interrupted | failed`.
