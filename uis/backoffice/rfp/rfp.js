@@ -382,11 +382,31 @@ function createSalesSummary(summary) {
   box.className = "detail-section sales-summary";
   const h4 = document.createElement("h4");
   h4.textContent = "Resumen para Ventas";
-  box.append(h4, createSubheading("Qué pedir a quién"));
+  box.append(h4);
+  const provisional = summary.proposal?.provisional_sections || [];
+  if (provisional.length) {
+    box.append(createProvisionalWarning(
+      `Propuesta con ${provisional.length} sección(es) provisional(es): no enviar al cliente sin revisión.`,
+      provisional.map((p) => `${departmentLabel(p.department_id)}: revisar con ${p.owner} `
+        + `(pendiente: ${(p.pending || []).join(", ") || "evaluación"}; ${p.iterations} iteraciones)`)
+    ));
+  }
+  box.append(createSubheading("Qué pedir a quién"));
   box.append(createList((summary.requests || []).map((r) => `${r.owner} (${departmentLabel(r.department_id)}): ${r.ask}`)));
   const questions = summary.client_questions || [];
   box.append(createSubheading(`Preguntas para el cliente (${questions.length})`));
   box.append(questions.length ? createList(questions) : createSubheading("Ninguna: la RFP trae todo lo necesario."));
+  return box;
+}
+
+function createProvisionalWarning(title, items) {
+  const box = document.createElement("div");
+  box.className = "provisional-warning";
+  box.setAttribute("role", "alert");
+  const strong = document.createElement("strong");
+  strong.textContent = title;
+  box.append(strong);
+  if (items.length) box.append(createList(items));
   return box;
 }
 
@@ -490,7 +510,14 @@ function createProposal(sections, ticketId, status) {
     head.append(badge);
     const iterations = document.createElement("p");
     iterations.textContent = `Iteraciones generador-evaluador: ${section.iterations || 0}`;
-    item.append(head, iterations);
+    item.append(head);
+    if (section.generation_status === "needs_human_review") {
+      item.append(createProvisionalWarning(
+        `Borrador provisional: agotó el límite sin pasar la evaluación. Revisar con ${section.department_owner || "el responsable"} antes de enviarlo.`,
+        []
+      ));
+    }
+    item.append(iterations);
     const evaluations = section.evaluation_results || [];
     if (evaluations.length) item.append(createEvaluation(evaluations[evaluations.length - 1]));
     if (section.draft_content) {

@@ -23,7 +23,12 @@ from data.pipelines.rfp_intake.evaluators import (  # noqa: E402
     evaluate_section,
 )
 from data.pipelines.rfp_intake.generator import (  # noqa: E402
+    DEPARTMENT_GENERATORS,
+    LastMileGenerator,
     LLMDrafter,
+    ReverseGenerator,
+    WarehouseGenerator,
+    generator_for,
     TemplateDrafter,
     build_section_briefs,
     generate_section,
@@ -82,6 +87,36 @@ def luna():
 # ===================================================================
 
 
+class TestDepartmentAgents:
+    def test_one_generator_agent_per_department(self, monkeypatch):
+        monkeypatch.setenv("RFP_GENERATOR", "template")
+        assert DEPARTMENT_GENERATORS == {
+            "warehouse": WarehouseGenerator, "lastmile": LastMileGenerator, "reverse": ReverseGenerator,
+        }
+        for dep, cls in DEPARTMENT_GENERATORS.items():
+            agent = generator_for(dep)
+            assert type(agent) is cls and agent.name == f"{dep}-template"
+
+    def test_llm_agent_is_per_department(self, modaviva, monkeypatch):
+        monkeypatch.setenv("RFP_GENERATOR", "llm")
+        agent = generator_for("reverse")
+        assert isinstance(agent, LLMDrafter) and agent.name == "reverse-llm"
+        system = agent.messages(modaviva["reverse"])[0]["content"]
+        assert "Reverse Logistics" in system and "Sofía Ramos" in system
+        assert "transportistas_por_destino" not in system  # solo su catálogo
+
+    def test_agent_refuses_other_departments_brief(self, modaviva):
+        with pytest.raises(ValueError):
+            WarehouseGenerator().draft(modaviva["reverse"])
+        with pytest.raises(ValueError):
+            LLMDrafter("warehouse", api_key="x").draft(modaviva["reverse"])
+
+    def test_generate_section_uses_the_departments_agent(self, modaviva, monkeypatch):
+        monkeypatch.setenv("RFP_GENERATOR", "template")
+        assert generate_section(modaviva["reverse"])["generator"] == "reverse-template"
+        assert generate_section(modaviva["warehouse"])["generator"] == "warehouse-template"
+
+
 class TestGenerator:
     def test_brief_comes_from_handoff(self, modaviva):
         brief = modaviva["reverse"]
@@ -122,7 +157,7 @@ class TestGenerator:
     def test_llm_failure_falls_back_to_template(self, modaviva, monkeypatch):
         monkeypatch.delenv("LLM_API_KEY", raising=False)
         result = generate_section(modaviva["reverse"], drafter=LLMDrafter(api_key=None))
-        assert result["generator"].startswith("template (fallback")
+        assert result["generator"].startswith("reverse-template (fallback")
         assert result["content"].startswith("## Propuesta económica")
 
 
@@ -171,6 +206,19 @@ class TestEvaluators:
         sentence = " ".join(["almacenamiento logístico integral con cobertura"] * 20)
         check = evaluate_readability(f"## T\n\n{sentence}.\n")
         assert check.passed is False
+
+    def test_readability_feedback_quotes_the_long_sentence(self, modaviva):
+        brief = modaviva["warehouse"]
+        long_one = ("Nuestro equipo de almacén en Zaragoza prepara, etiqueta, controla y despacha "
+                    "cada pedido de su catálogo con un proceso que combina picking por lote, "
+                    "control de calidad y reempaquetado según el canal de venta que usted elija "
+                    "para cada referencia y temporada.")
+        draft = TemplateDrafter().draft(brief).replace("### SLA comprometido", long_one + "\n\n### SLA comprometido")
+        draft = draft + "\n" + "\n".join([long_one] * 4) + "\n"
+        result = evaluate_section(draft, brief)
+        assert result.readability["pass"] is False
+        assert result.readability["details"]["long_sentences"][0]["words"] > 22
+        assert "«Nuestro equipo de almacén en Zaragoza" in result.feedback_for_generator
 
     def test_failed_evaluation_feedback_is_actionable(self, modaviva):
         brief = modaviva["reverse"]

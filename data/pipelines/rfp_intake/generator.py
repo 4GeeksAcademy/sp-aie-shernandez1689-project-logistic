@@ -8,18 +8,22 @@ metadatos compartidos. El generador no abre el PDF ni el Markdown de la RFP.
 Salida: el borrador en Markdown de la sección de propuesta económica del
 departamento, con el formato de ``config.SECTION_HEADINGS``.
 
-Dos redactores con la misma interfaz ``draft(brief, previous_draft, evaluation)``:
+Un agente generador por departamento (``DEPARTMENT_GENERATORS``), todos con
+la interfaz ``draft(brief, previous_draft, evaluation)``:
 
-- ``TemplateDrafter`` (por defecto, determinista): compone la sección con las
-  cifras del brief (cliente) y de ``catalog`` (TrackFlow). Con feedback añade
+- ``WarehouseGenerator`` / ``LastMileGenerator`` / ``ReverseGenerator``
+  (por defecto, deterministas): cada uno redacta alcance y precios de SU
+  departamento con las cifras del brief (cliente) y de ``catalog``
+  (TrackFlow), y rechaza briefs de otro departamento. Con feedback declaran
   como pendiente lo que el evaluador de pertinencia echó en falta.
-- ``LLMDrafter``: mismo contrato vía API compatible con OpenAI (mismas
-  variables ``LLM_API_KEY``/``LLM_MODEL_ID``/``LLM_BASE_URL`` que el RAG). En
-  reintentos recibe el borrador anterior y el ``feedback_for_generator``. Si
-  la llamada falla, ``generate_section`` cae al redactor de plantilla.
+- ``LLMDrafter(department_id)``: el agente LLM de ese departamento (API
+  compatible con OpenAI, mismas ``LLM_API_KEY``/``LLM_MODEL_ID``/
+  ``LLM_BASE_URL`` que el RAG); su prompt solo lleva lo de su departamento.
+  En reintentos recibe el borrador anterior y el ``feedback_for_generator``;
+  si falla, redacta el agente de plantilla del mismo departamento.
 
-``RFP_GENERATOR=template|llm`` fuerza uno; sin la variable se usa el LLM solo
-si hay ``LLM_API_KEY``.
+``generator_for(department_id)`` elige el agente: ``RFP_GENERATOR=template|llm``
+fuerza uno; sin la variable se usa el LLM solo si hay ``LLM_API_KEY``.
 """
 
 from __future__ import annotations
@@ -33,7 +37,13 @@ from typing import Any, Protocol
 import httpx
 
 from . import catalog
-from .config import DEPARTMENT_LABELS, DEPARTMENT_OWNERS, PROPOSAL_GUIDELINES, SECTION_HEADINGS
+from .config import (
+    DEPARTMENT_ASKS,
+    DEPARTMENT_LABELS,
+    DEPARTMENT_OWNERS,
+    PROPOSAL_GUIDELINES,
+    SECTION_HEADINGS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +126,7 @@ def format_volume(value: int) -> str:
     return f"{value:,}".replace(",", ".")
 
 
-# ── Redactores ──────────────────────────────────────────────────────────────
+# ── Agentes generadores ─────────────────────────────────────────────────────
 
 
 class Drafter(Protocol):
@@ -145,8 +155,176 @@ def _mentions(excerpts: list[str], *terms: str) -> bool:
     return any(term in corpus for term in terms)
 
 
+def _budget(brief: SectionBrief) -> list[str]:
+    if not brief.budget_range:
+        return []
+    return [f"Presupuesto de referencia indicado en la RFP: {brief.budget_range}."]
+
+
+def _client_line(brief: SectionBrief, service: str, preposition: str) -> str:
+    client = brief.client_name or "el cliente"
+    site = catalog.SITES.get(brief.currency or "", "nuestro centro más cercano")
+    volume = (
+        f" La RFP indica un volumen de {format_volume(brief.monthly_volume)} pedidos/mes."
+        if brief.monthly_volume is not None
+        else ""
+    )
+    deadline = f" Fecha límite de la propuesta: {brief.deadline}." if brief.deadline else ""
+    return f"Propuesta de {service} para {client} {preposition} {site}.{volume}{deadline}"
+
+
+class DepartmentGenerator:
+    """Agente generador determinista de UN departamento.
+
+    El esqueleto (encabezados de ``SECTION_HEADINGS``, SLA, tabla de
+    descuentos, pendientes, responsable) es común; alcance y precios los
+    redacta cada subclase con sus datos del catálogo. Rechaza briefs de otro
+    departamento: cada sección la escribe solo su agente.
+    """
+
+    department_id: str = ""
+
+    @property
+    def name(self) -> str:
+        return f"{self.department_id}-template"
+
+    def draft(
+        self,
+        brief: SectionBrief,
+        previous_draft: str | None = None,
+        evaluation: dict[str, Any] | None = None,
+    ) -> str:
+        if brief.department_id != self.department_id:
+            raise ValueError(
+                f"{type(self).__name__} solo redacta la sección {self.department_id}, "
+                f"no {brief.department_id}"
+            )
+        h = section_headings(brief)
+        lines: list[str] = [h[0], "", h[1], *self.scope(brief), "", h[2], *self.prices(brief)]
+        lines += ["", h[3], *self.sla(), "", h[4], *self.discounts(), "", h[5]]
+        pending = list(brief.open_questions)
+        if evaluation:
+            # Feedback del evaluador de pertinencia: lo que falta se declara
+            # como pendiente en vez de inventarlo.
+            for aspect in evaluation.get("relevance", {}).get("missing_aspects", []):
+                pending.append(f"Por confirmar con el cliente: {aspect}.")
+        if brief.currency is None:
+            pending.append("País de operación del cliente, que define la moneda de la propuesta.")
+        lines += [f"- {q}" for q in dict.fromkeys(pending)] or [
+            "- Ninguna: la RFP aporta los datos necesarios para esta sección."
+        ]
+        lines += ["", h[6], f"{brief.owner} ({brief.department_label}) valida esta sección."]
+        return "\n".join(lines).strip() + "\n"
+
+    def scope(self, brief: SectionBrief) -> list[str]:
+        raise NotImplementedError
+
+    def prices(self, brief: SectionBrief) -> list[str]:
+        raise NotImplementedError
+
+    def sla(self) -> list[str]:
+        sla = catalog.ON_TIME_SLA[self.department_id]
+        return [
+            f"TrackFlow se compromete a un SLA de cumplimiento a tiempo del {sla['pct']}% "
+            f"en {sla['metric']}.",
+            catalog.PEAK_DEMAND_NOTE,
+        ]
+
+    def discounts(self) -> list[str]:
+        table = catalog.VOLUME_DISCOUNTS[self.department_id]
+        return [*_table((table["unit"], "Descuento"), list(table["tiers"])), "", self.discount_note]
+
+    discount_note = catalog.DISCOUNT_APPROVAL_NOTE
+
+
+class WarehouseGenerator(DepartmentGenerator):
+    """Warehouse Operations (Ana Whitfield): capacidad, costo por pallet/SKU, onboarding."""
+
+    department_id = "warehouse"
+
+    def scope(self, brief: SectionBrief) -> list[str]:
+        return [
+            _client_line(brief, "almacenamiento", "en nuestro centro de"),
+            "Capacidad: reservamos las posiciones de palet que necesite su catálogo. "
+            "La cifra exacta se fija al confirmar el número de SKUs.",
+            catalog.PENDING_QUOTES["warehouse"]["onboarding"],
+        ]
+
+    def prices(self, brief: SectionBrief) -> list[str]:
+        currency = brief.currency or ""
+        prices = catalog.WAREHOUSE_PRICES.get(currency)
+        if not prices:
+            # La KB solo tiene tarifas en EUR: en USD no se convierte ni inventa.
+            return [catalog.PENDING_QUOTES["warehouse"]["USD"], *_budget(brief)]
+        return [
+            *_table(("Concepto", f"Precio ({currency})"), list(prices)),
+            "",
+            f"Los primeros {catalog.STORAGE_GRACE_DAYS} días de almacenaje de cada unidad no tienen cargo.",
+            *_budget(brief),
+        ]
+
+
+class LastMileGenerator(DepartmentGenerator):
+    """Last Mile and Carrier Management (Carlos Vega): costo por envío, transportistas, SLA."""
+
+    department_id = "lastmile"
+
+    def scope(self, brief: SectionBrief) -> list[str]:
+        rows = [tuple(r) for r in catalog.CARRIERS.get(brief.currency or "", ())]
+        return [
+            _client_line(brief, "entrega de última milla", "desde"),
+            "Transportistas disponibles según destino:",
+            "",
+            *_table(("Transportista", "Zona de destino", "Servicio"), rows),
+        ]
+
+    def prices(self, brief: SectionBrief) -> list[str]:
+        currency = brief.currency or ""
+        rows = list(catalog.DELIVERY_TIMES.get(currency, ()))
+        budget = _budget(brief)
+        return [
+            catalog.PENDING_QUOTES["lastmile"]["base"],
+            "",
+            *_table(("Servicio", "Plazo de entrega", f"Costo ({currency})"), rows),
+            *([""] + budget if budget else []),
+        ]
+
+
+class ReverseGenerator(DepartmentGenerator):
+    """Reverse Logistics (Sofía Ramos): costo y tiempo de procesamiento de devoluciones."""
+
+    department_id = "reverse"
+    discount_note = (
+        "Cualquier descuento en tarifas de devolución requiere aprobación de "
+        "Miguel Torres (Dirección Comercial)."
+    )
+
+    def scope(self, brief: SectionBrief) -> list[str]:
+        refurbish = (
+            " Incluye el reacondicionamiento de producto que pide la RFP."
+            if _mentions(brief.source_excerpts, "reacondicion", "refurbish", "recondition")
+            else ""
+        )
+        return [
+            _client_line(brief, "gestión de devoluciones", "en nuestro centro de") + refurbish,
+            *[f"- {term}" for term in catalog.RETURNS_TERMS],
+            f"- {catalog.INTERNATIONAL_RETURNS_NOTE}",
+        ]
+
+    def prices(self, brief: SectionBrief) -> list[str]:
+        return [catalog.PENDING_QUOTES["reverse"]["base"], *_budget(brief)]
+
+
+# Un agente generador por departamento (BRIEFING §2.1).
+DEPARTMENT_GENERATORS: dict[str, type[DepartmentGenerator]] = {
+    "warehouse": WarehouseGenerator,
+    "lastmile": LastMileGenerator,
+    "reverse": ReverseGenerator,
+}
+
+
 class TemplateDrafter:
-    """Redactor determinista: plantilla + cifras del brief y del catálogo."""
+    """Fachada: enruta cada brief al agente de plantilla de su departamento."""
 
     name = "template"
 
@@ -156,112 +334,13 @@ class TemplateDrafter:
         previous_draft: str | None = None,
         evaluation: dict[str, Any] | None = None,
     ) -> str:
-        h = section_headings(brief)
-        currency = brief.currency
-        lines: list[str] = [h[0], "", h[1], *self._scope(brief), "", h[2]]
-        lines += self._prices(brief)
-        lines += ["", h[3], *self._sla(brief), "", h[4], *self._discounts(brief), "", h[5]]
-        pending = list(brief.open_questions)
-        if evaluation:
-            # Feedback del evaluador de pertinencia: lo que falta se declara
-            # como pendiente en vez de inventarlo.
-            for aspect in evaluation.get("relevance", {}).get("missing_aspects", []):
-                pending.append(f"Por confirmar con el cliente: {aspect}.")
-        if currency is None:
-            pending.append("País de operación del cliente, que define la moneda de la propuesta.")
-        lines += [f"- {q}" for q in dict.fromkeys(pending)] or [
-            "- Ninguna: la RFP aporta los datos necesarios para esta sección."
-        ]
-        lines += ["", h[6], f"{brief.owner} ({brief.department_label}) valida esta sección."]
-        return "\n".join(lines).strip() + "\n"
-
-    # Secciones ---------------------------------------------------------
-
-    def _scope(self, brief: SectionBrief) -> list[str]:
-        client = brief.client_name or "el cliente"
-        site = catalog.SITES.get(brief.currency or "", "nuestro centro más cercano")
-        volume = (
-            f" La RFP indica un volumen de {format_volume(brief.monthly_volume)} pedidos/mes."
-            if brief.monthly_volume is not None
-            else ""
-        )
-        deadline = f" Fecha límite de la propuesta: {brief.deadline}." if brief.deadline else ""
-        dep = brief.department_id
-        if dep == "warehouse":
-            pending = catalog.PENDING_QUOTES["warehouse"]
-            return [
-                f"Propuesta de almacenamiento para {client} en nuestro centro de {site}.{volume}{deadline}",
-                "Capacidad: reservamos las posiciones de palet que necesite su catálogo. "
-                "La cifra exacta se fija al confirmar el número de SKUs.",
-                pending["onboarding"],
-            ]
-        if dep == "lastmile":
-            rows = [tuple(r) for r in catalog.CARRIERS.get(brief.currency or "", ())]
-            return [
-                f"Propuesta de entrega de última milla para {client} desde {site}.{volume}{deadline}",
-                "Transportistas disponibles según destino:",
-                "",
-                *_table(("Transportista", "Zona de destino", "Servicio"), rows),
-            ]
-        refurbish = (
-            " Incluye el reacondicionamiento de producto que pide la RFP."
-            if _mentions(brief.source_excerpts, "reacondicion", "refurbish", "recondition")
-            else ""
-        )
-        return [
-            f"Propuesta de gestión de devoluciones para {client} en nuestro centro de {site}.{volume}{deadline}{refurbish}",
-            *[f"- {term}" for term in catalog.RETURNS_TERMS],
-            f"- {catalog.INTERNATIONAL_RETURNS_NOTE}",
-        ]
-
-    def _prices(self, brief: SectionBrief) -> list[str]:
-        dep, currency = brief.department_id, brief.currency or ""
-        budget = (
-            [f"Presupuesto de referencia indicado en la RFP: {brief.budget_range}."]
-            if brief.budget_range
-            else []
-        )
-        if dep == "warehouse":
-            prices = catalog.WAREHOUSE_PRICES.get(currency)
-            if not prices:
-                return [catalog.PENDING_QUOTES["warehouse"]["USD"], *budget]
-            return [
-                *_table(("Concepto", f"Precio ({currency})"), list(prices)),
-                "",
-                f"Los primeros {catalog.STORAGE_GRACE_DAYS} días de almacenaje de cada unidad no tienen cargo.",
-                *budget,
-            ]
-        if dep == "lastmile":
-            rows = list(catalog.DELIVERY_TIMES.get(currency, ()))
-            return [
-                catalog.PENDING_QUOTES["lastmile"]["base"],
-                "",
-                *_table(("Servicio", "Plazo de entrega", f"Costo ({currency})"), rows),
-                *([""] + budget if budget else []),
-            ]
-        return [catalog.PENDING_QUOTES["reverse"]["base"], *budget]
-
-    def _sla(self, brief: SectionBrief) -> list[str]:
-        sla = catalog.ON_TIME_SLA[brief.department_id]
-        return [
-            f"TrackFlow se compromete a un SLA de cumplimiento a tiempo del {sla['pct']}% "
-            f"en {sla['metric']}.",
-            catalog.PEAK_DEMAND_NOTE,
-        ]
-
-    def _discounts(self, brief: SectionBrief) -> list[str]:
-        table = catalog.VOLUME_DISCOUNTS[brief.department_id]
-        note = (
-            "Cualquier descuento en tarifas de devolución requiere aprobación de "
-            "Miguel Torres (Dirección Comercial)."
-            if brief.department_id == "reverse"
-            else catalog.DISCOUNT_APPROVAL_NOTE
-        )
-        return [*_table((table["unit"], "Descuento"), list(table["tiers"])), "", note]
+        agent = DEPARTMENT_GENERATORS[brief.department_id]()
+        return agent.draft(brief, previous_draft, evaluation)
 
 
 _LLM_SYSTEM_PROMPT = """Eres el redactor de propuestas económicas de TrackFlow (operador logístico binacional: Los Angeles, EE. UU. y Zaragoza, España).
-Escribes UNA sección de la propuesta: la del departamento indicado. En español, frases cortas (máx. 20 palabras), tono comercial sobrio.
+Escribes UNA sección de la propuesta: la de {label} (responsable: {owner}). En español, frases cortas (máx. 20 palabras), tono comercial sobrio.
+Tu sección aporta: {asks}. No redactes contenido de otros departamentos.
 
 Formato obligatorio (Markdown, estos encabezados exactos y en este orden):
 {headings}
@@ -273,9 +352,9 @@ Lineamientos obligatorios:
 - Menciona la excepción del SLA en picos de demanda declarados.
 
 Datos permitidos: SOLO los del brief (cliente) y los del catálogo (TrackFlow). No inventes cifras.
-Si falta un precio, escribe "a cotizar por <responsable>". Lista lo que falta en "Información pendiente del cliente".
+Si falta un precio, escribe "a cotizar por {owner}". Lista lo que falta en "Información pendiente del cliente".
 
-Catálogo de TrackFlow:
+Catálogo de TrackFlow para {label}:
 {catalog}"""
 
 
@@ -303,21 +382,29 @@ def _catalog_for(brief: SectionBrief) -> dict[str, Any]:
 
 
 class LLMDrafter:
-    """Redactor con LLM (API compatible con OpenAI, mismo proveedor que el RAG)."""
+    """Agente generador con LLM (API compatible con OpenAI, mismo proveedor que el RAG).
 
-    name = "llm"
+    Con ``department_id`` es el agente LLM de ese departamento: su prompt solo
+    lleva lo que aporta ese departamento y su catálogo, y rechaza otros briefs.
+    """
 
     def __init__(
         self,
+        department_id: str | None = None,
         api_key: str | None = None,
         model: str | None = None,
         base_url: str | None = None,
         timeout: float = 60.0,
     ) -> None:
+        self.department_id = department_id
         self.api_key = api_key or os.getenv("LLM_API_KEY")
         self.model = model or os.getenv("LLM_MODEL_ID", "gpt-4o-mini")
         self.base_url = base_url or os.getenv("LLM_BASE_URL", "https://api.4geeks.com/v1")
         self.timeout = timeout
+
+    @property
+    def name(self) -> str:
+        return f"{self.department_id}-llm" if self.department_id else "llm"
 
     def messages(
         self,
@@ -326,6 +413,9 @@ class LLMDrafter:
         evaluation: dict[str, Any] | None = None,
     ) -> list[dict[str, str]]:
         system = _LLM_SYSTEM_PROMPT.format(
+            label=brief.department_label,
+            owner=brief.owner,
+            asks=DEPARTMENT_ASKS[brief.department_id],
             headings="\n".join(section_headings(brief)),
             guidelines="\n".join(f"- {g}" for g in brief.guidelines),
             catalog=json.dumps(_catalog_for(brief), ensure_ascii=False, indent=1),
@@ -347,6 +437,8 @@ class LLMDrafter:
         previous_draft: str | None = None,
         evaluation: dict[str, Any] | None = None,
     ) -> str:
+        if self.department_id and brief.department_id != self.department_id:
+            raise ValueError(f"{self.name} no redacta la sección {brief.department_id}")
         if not self.api_key:
             raise DrafterError("LLM_API_KEY no configurada")
         payload = {
@@ -370,12 +462,21 @@ class LLMDrafter:
         return content.strip() + "\n"
 
 
-def default_drafter() -> Drafter:
-    """Redactor según ``RFP_GENERATOR`` (o LLM si hay ``LLM_API_KEY``)."""
+def _llm_mode() -> bool:
     mode = os.getenv("RFP_GENERATOR", "").strip().lower()
-    if mode == "llm" or (not mode and os.getenv("LLM_API_KEY")):
-        return LLMDrafter()
-    return TemplateDrafter()
+    return mode == "llm" or (not mode and bool(os.getenv("LLM_API_KEY")))
+
+
+def generator_for(department_id: str) -> Drafter:
+    """Agente generador del departamento según ``RFP_GENERATOR`` (o LLM si hay ``LLM_API_KEY``)."""
+    if _llm_mode():
+        return LLMDrafter(department_id)
+    return DEPARTMENT_GENERATORS[department_id]()
+
+
+def default_drafter() -> Drafter:
+    """Redactor para cualquier departamento (compatibilidad; prefiere ``generator_for``)."""
+    return LLMDrafter() if _llm_mode() else TemplateDrafter()
 
 
 def generate_section(
@@ -385,17 +486,19 @@ def generate_section(
     previous_draft: str | None = None,
     evaluation: dict[str, Any] | None = None,
 ) -> dict[str, str]:
-    """Agente generador: devuelve ``{"content", "generator"}`` para la sección.
+    """Ejecuta el agente generador del departamento del brief.
 
-    ``evaluation`` es el EvaluationResult del intento anterior (su
-    ``feedback_for_generator`` guía la reescritura).
+    Devuelve ``{"content", "generator"}``. ``evaluation`` es el
+    EvaluationResult del intento anterior (su ``feedback_for_generator``
+    guía la reescritura). Si el LLM falla, redacta el agente de plantilla del
+    mismo departamento.
     """
-    drafter = drafter or default_drafter()
+    drafter = drafter or generator_for(brief.department_id)
     try:
         return {"content": drafter.draft(brief, previous_draft, evaluation), "generator": drafter.name}
     except DrafterError as exc:
         logger.warning("RFP generador %s falló para %s: %s", drafter.name, brief.section_id, exc)
-        fallback = TemplateDrafter()
+        fallback = DEPARTMENT_GENERATORS[brief.department_id]()
         return {
             "content": fallback.draft(brief, previous_draft, evaluation),
             "generator": f"{fallback.name} (fallback: {exc})",
@@ -408,8 +511,14 @@ __all__ = [
     "section_headings",
     "Drafter",
     "DrafterError",
+    "DepartmentGenerator",
+    "WarehouseGenerator",
+    "LastMileGenerator",
+    "ReverseGenerator",
+    "DEPARTMENT_GENERATORS",
     "TemplateDrafter",
     "LLMDrafter",
+    "generator_for",
     "default_drafter",
     "generate_section",
 ]

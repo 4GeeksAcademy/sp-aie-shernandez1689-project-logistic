@@ -119,6 +119,38 @@ class TestProposalGraph:
         earliest_end = min(e for _, e in spans.values())
         assert latest_start < earliest_end  # hay un instante en que corren los tres
 
+    def test_one_section_node_per_department(self):
+        nodes = set(proposal_graph_mod.proposal_graph.get_graph().nodes)
+        assert {"section_warehouse", "section_lastmile", "section_reverse"} <= nodes
+
+    def test_failing_department_does_not_take_down_the_others(self, tmp_path):
+        class Crashes(TemplateDrafter):
+            def draft(self, brief, previous_draft=None, evaluation=None):
+                if brief.department_id == "reverse":
+                    raise RuntimeError("boom")
+                return super().draft(brief, previous_draft, evaluation)
+
+        results = {r["department_id"]: r for r in run_proposal_graph(_briefs(1, tmp_path), drafter=Crashes())}
+        assert results["warehouse"]["generation_status"] == "evaluacion_superada"
+        assert results["reverse"]["generation_status"] == "needs_human_review"
+        assert "boom" in results["reverse"]["error"]
+
+    def test_slow_department_does_not_block_the_others(self, tmp_path):
+        """warehouse termina su ciclo mientras reverse sigue generando."""
+        class SlowReverse(TemplateDrafter):
+            def draft(self, brief, previous_draft=None, evaluation=None):
+                if brief.department_id == "reverse":
+                    time.sleep(0.6)
+                return super().draft(brief, previous_draft, evaluation)
+
+        done: dict[str, float] = {}
+        run_proposal_graph(
+            _briefs(1, tmp_path), drafter=SlowReverse(),
+            progress=lambda e, sid, p: done.setdefault(sid.rsplit("_", 1)[-1], time.monotonic())
+            if e == "evaluated" else None,
+        )
+        assert done["warehouse"] + 0.3 < done["reverse"]
+
     @pytest.mark.parametrize("idx,departments", [
         (1, ["warehouse", "reverse"]), (2, ["warehouse", "lastmile"]),
     ])
@@ -248,6 +280,37 @@ class TestGenerateProposal:
         assert set(by_dep) == {"warehouse", "reverse"}
         assert by_dep["reverse"]["draft_content"] == reverse["draft_content"]
         assert by_dep["reverse"]["evaluation"] == reverse["evaluation_results"][-1]
+
+        # Provisional visible para Ventas: cabecera en el texto, bandera y resumen.
+        assert reverse["draft_content"].startswith("> **BORRADOR PROVISIONAL**")
+        assert "returns-min-48h" in reverse["draft_content"].splitlines()[0]
+        assert "Sofía Ramos" in reverse["draft_content"].splitlines()[0]
+        assert not reverse["drafts"][-1]["content"].startswith(">")  # historial intacto
+        assert not warehouse["draft_content"].startswith(">")
+        assert by_dep["reverse"]["provisional"] is True
+        assert by_dep["warehouse"]["provisional"] is False
+        proposal_summary = sqlite_db.get_rfp_metadata(analyzed)["sales_summary"]["proposal"]
+        assert proposal_summary["status"] == "needs_human_review"
+        [flagged] = proposal_summary["provisional_sections"]
+        assert flagged["department_id"] == "reverse" and flagged["owner"] == "Sofía Ramos"
+        assert "returns-min-48h" in flagged["pending"]
+
+    def test_ticket_reason_shows_live_progress_per_section(self, sqlite_db, analyzed, monkeypatch):
+        reasons: list[str] = []
+        original = sqlite_db.update_ticket
+
+        def spy(ticket_id, **fields):
+            if "reason" in fields:
+                reasons.append(fields["reason"])
+            return original(ticket_id, **fields)
+
+        monkeypatch.setattr(sqlite_db, "update_ticket", spy)
+        drafter = BadThenGoodDrafter(bad_departments={"reverse"})
+        proposal.generate_proposal(analyzed, drafter=drafter)
+
+        assert any("reverse: borrador 1 no pasó la evaluación" in r for r in reasons)
+        assert any("reverse: generando borrador 2" in r for r in reasons)
+        assert any("warehouse: borrador 1 aprobado por los evaluadores" in r for r in reasons)
 
     def test_input_is_handoff_not_raw_pdf(self, sqlite_db, analyzed, tmp_path):
         """Sin PDF ni Markdown en disco la Parte 2 funciona igual."""

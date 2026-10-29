@@ -100,6 +100,15 @@
   color: #7a2a8f;
 }
 
+.provisional-warning {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #c88ad8;
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: rgba(122, 42, 143, 0.12);
+}
+
 .rfp-draft {
   white-space: pre-wrap;
   font-family: "JetBrains Mono", ui-monospace, monospace;

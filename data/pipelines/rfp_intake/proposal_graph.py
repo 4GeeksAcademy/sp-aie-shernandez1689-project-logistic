@@ -5,9 +5,14 @@ Grafo LangGraph dedicado, como el de la Parte 1. Entrada: los
 el Markdown). Un ciclo generador-evaluador por departamento, todos en
 paralelo::
 
-    START ─► dispatch ─┬─ Send ─► section(warehouse) ─┐
-                       ├─ Send ─► section(lastmile)  ─┼─► collect ─► END
-                       └─ Send ─► section(reverse)   ─┘
+    START ─► dispatch ─┬─ Send ─► section_warehouse ─┐
+                       ├─ Send ─► section_lastmile  ─┼─► collect ─► END
+                       └─ Send ─► section_reverse   ─┘
+
+Cada ``section_<dep>`` usa el agente generador de su departamento
+(``generator.generator_for``) y corre en su propio hilo: un departamento
+lento o que falla no frena ni tumba a los demás (un error queda en su
+sección como ``needs_human_review`` con ``error``).
 
 Cada ``section`` es un subgrafo con los tres evaluadores en paralelo::
 
@@ -27,6 +32,7 @@ pipeline persiste el avance: ``drafting``, ``evaluating``, ``evaluated``).
 
 from __future__ import annotations
 
+import logging
 import operator
 from datetime import datetime, timezone
 from typing import Annotated, Any, Callable, TypedDict
@@ -36,6 +42,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
 from .config import (
+    DEPARTMENT_IDS,
     MAX_GENERATION_ITERATIONS,
     SECTION_APROBADA_EVALUACION,
     SECTION_NEEDS_HUMAN_REVIEW,
@@ -47,6 +54,8 @@ from .evaluators import (
     evaluate_relevance,
 )
 from .generator import SectionBrief, generate_section
+
+logger = logging.getLogger(__name__)
 
 EVALUATOR_NODES = ("readability", "relevance", "compliance")
 
@@ -172,24 +181,51 @@ section_graph = _section.compile()
 # ── Grafo de propuesta ──────────────────────────────────────────────────────
 
 
+def section_node(department_id: str) -> str:
+    return f"section_{department_id}"
+
+
 def dispatch(state: ProposalState) -> list[Send] | str:
     """Un ciclo generador-evaluador por departamento del handoff, en paralelo."""
     sends = [
-        Send("section", {"brief": brief, "max_iterations": state.get("max_iterations")})
+        Send(section_node(brief.department_id),
+             {"brief": brief, "max_iterations": state.get("max_iterations")})
         for brief in state["briefs"]
     ]
     return sends or "collect"
+
+
+def _failed_section(brief: SectionBrief, limit: int, exc: Exception) -> dict[str, Any]:
+    """Resultado de una sección cuyo ciclo falló: va a revisión humana, no tumba al resto."""
+    return {
+        "section_id": brief.section_id,
+        "department_id": brief.department_id,
+        "owner": brief.owner,
+        "iterations": 0,
+        "max_iterations": limit,
+        "generation_status": SECTION_NEEDS_HUMAN_REVIEW,
+        "draft_content": None,
+        "generator": None,
+        "drafts": [],
+        "evaluation": None,
+        "evaluation_results": [],
+        "error": f"error interno en el ciclo: {type(exc).__name__}: {exc}",
+    }
 
 
 def section(state: SectionState, config: RunnableConfig) -> dict[str, Any]:
     """Ejecuta el subgrafo de una sección y resume su resultado."""
     brief = state["brief"]
     limit = state.get("max_iterations") or MAX_GENERATION_ITERATIONS
-    # Cada iteración son 3 supersteps (generate, evaluadores, aggregate).
-    final = section_graph.invoke(
-        {"brief": brief, "max_iterations": limit, "iteration": 0, "drafts": [], "evaluations": []},
-        config={**config, "recursion_limit": 4 * limit + 5},
-    )
+    try:
+        # Cada iteración son 3 supersteps (generate, evaluadores, aggregate).
+        final = section_graph.invoke(
+            {"brief": brief, "max_iterations": limit, "iteration": 0, "drafts": [], "evaluations": []},
+            config={**config, "recursion_limit": 4 * limit + 5},
+        )
+    except Exception as exc:
+        logger.exception("RFP propuesta: falló la sección %s", brief.section_id)
+        return {"results": [_failed_section(brief, limit, exc)]}
     evaluation = final["evaluation"]
     return {"results": [{
         "section_id": brief.section_id,
@@ -213,10 +249,12 @@ def collect(state: ProposalState) -> dict[str, Any]:
 
 
 _proposal = StateGraph(ProposalState)
-_proposal.add_node("section", section)
+_SECTION_NODES = [section_node(dep) for dep in DEPARTMENT_IDS]
+for _node in _SECTION_NODES:
+    _proposal.add_node(_node, section)
+    _proposal.add_edge(_node, "collect")
 _proposal.add_node("collect", collect)
-_proposal.add_conditional_edges(START, dispatch, ["section", "collect"])
-_proposal.add_edge("section", "collect")
+_proposal.add_conditional_edges(START, dispatch, [*_SECTION_NODES, "collect"])
 _proposal.add_edge("collect", END)
 
 proposal_graph = _proposal.compile()
@@ -240,6 +278,7 @@ def run_proposal_graph(
 
 __all__ = [
     "EVALUATOR_NODES",
+    "section_node",
     "section_graph",
     "proposal_graph",
     "run_proposal_graph",

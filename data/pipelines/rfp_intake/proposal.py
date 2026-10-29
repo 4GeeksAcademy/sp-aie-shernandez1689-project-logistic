@@ -14,7 +14,9 @@ Estados del ticket (BRIEFING §2.3)::
 - ``en_evaluación`` en cuanto el primer borrador pasa a los evaluadores; se
   mantiene durante el ciclo generador-evaluador.
 - ``needs_human_review`` si alguna sección agota el límite de iteraciones
-  (o la generación falla): el ticket no se descarta.
+  (o la generación falla): el ticket no se descarta. Esas secciones llevan
+  una cabecera "BORRADOR PROVISIONAL" en ``draft_content`` y figuran en
+  ``sales_summary.proposal.provisional_sections`` para Ventas.
 - ``esperando_aprobación`` si todas las secciones pasan: listas para la
   aprobación por departamento de la Parte 3.
 
@@ -117,22 +119,24 @@ def generate_proposal(
     # serializan para no competir por la conexión.
     lock = threading.Lock()
     state = {"ticket_status": STATUS_GENERANDO_BORRADOR}
+    departments = {b.section_id: b.department_id for b in briefs}
+    # Última novedad por sección: el motivo del ticket la muestra en vivo.
+    live: dict[str, str] = {b.section_id: "en cola" for b in briefs}
 
     def progress(event: str, section_id: str, payload: dict[str, Any]) -> None:
         with lock:
+            iteration = payload["iteration"]
             if event == "drafting":
                 db.update_department_section(section_id, generation_status=SECTION_GENERANDO)
+                live[section_id] = f"generando borrador {iteration}"
             elif event == "evaluating":
                 db.update_department_section(
                     section_id,
                     generation_status=SECTION_EN_EVALUACION,
                     draft_content=payload["content"],
-                    iterations=payload["iteration"],
+                    iterations=iteration,
                 )
-                if state["ticket_status"] != STATUS_EN_EVALUACION:
-                    db.update_ticket(ticket_id, status=STATUS_EN_EVALUACION,
-                                     reason="ciclo generador-evaluador en curso")
-                    state["ticket_status"] = STATUS_EN_EVALUACION
+                live[section_id] = f"evaluando borrador {iteration}"
             elif event == "evaluated":
                 db.update_department_section(
                     section_id,
@@ -140,6 +144,17 @@ def generate_proposal(
                     drafts=payload["drafts"],
                     evaluation_results=payload["evaluations"],
                 )
+                passed = payload["evaluation"]["overall_pass"]
+                live[section_id] = (
+                    f"borrador {iteration} aprobado por los evaluadores" if passed
+                    else f"borrador {iteration} no pasó la evaluación"
+                )
+            reason = "; ".join(f"{departments[s]}: {msg}" for s, msg in live.items())
+            if event == "evaluating" and state["ticket_status"] != STATUS_EN_EVALUACION:
+                state["ticket_status"] = STATUS_EN_EVALUACION
+                db.update_ticket(ticket_id, status=STATUS_EN_EVALUACION, reason=reason)
+            else:
+                db.update_ticket(ticket_id, reason=reason)
 
     try:
         results = run_proposal_graph(briefs, drafter=drafter, progress=progress, max_iterations=limit)
@@ -150,6 +165,8 @@ def generate_proposal(
         raise
 
     for result in results:
+        if result["generation_status"] == SECTION_NEEDS_HUMAN_REVIEW:
+            mark_provisional(result)
         db.update_department_section(
             result["section_id"],
             generation_status=result["generation_status"],
@@ -162,7 +179,11 @@ def generate_proposal(
     review = [r["section_id"] for r in results if r["generation_status"] == SECTION_NEEDS_HUMAN_REVIEW]
     final_status = STATUS_NEEDS_HUMAN_REVIEW if review else STATUS_ESPERANDO_APROBACION
     proposal_handoff = build_proposal_handoff(ticket_id, handoff, results, final_status, limit)
-    db.update_rfp_metadata(ticket_id, proposal_handoff=proposal_handoff)
+    db.update_rfp_metadata(
+        ticket_id,
+        proposal_handoff=proposal_handoff,
+        sales_summary=_sales_summary_with_proposal(metadata.get("sales_summary"), results, final_status),
+    )
     reason = (
         f"{len(review)} de {len(results)} secciones agotaron {limit} iteraciones: revisión humana"
         if review
@@ -170,6 +191,56 @@ def generate_proposal(
     )
     db.update_ticket(ticket_id, status=final_status, reason=reason)
     return proposal_handoff
+
+
+def failed_checks(evaluation: dict[str, Any] | None) -> list[str]:
+    """Qué no superó la sección: ``rule_ids`` de cumplimiento + relevance/readability."""
+    if evaluation is None:  # el ciclo falló antes de evaluar
+        return ["error"]
+    checks = list(evaluation["compliance"].get("rule_ids") or [])
+    for name in ("relevance", "readability"):
+        if not evaluation[name]["pass"]:
+            checks.append(name)
+    return checks
+
+
+def provisional_banner(result: dict[str, Any]) -> str:
+    """Cabecera que viaja con el texto: quien copie el borrador ve que es provisional."""
+    checks = ", ".join(failed_checks(result["evaluation"])) or "evaluación"
+    return (
+        f"> **BORRADOR PROVISIONAL** — no superó la evaluación tras {result['iterations']} "
+        f"iteraciones (pendiente: {checks}). Revisar con {result['owner']} antes de "
+        "enviarlo al cliente.\n\n"
+    )
+
+
+def mark_provisional(result: dict[str, Any]) -> None:
+    """Marca una sección ``needs_human_review``: cabecera en ``draft_content`` + bandera.
+
+    El historial ``drafts`` conserva el texto tal como salió del generador;
+    la aprobación de la Parte 3 debe quitar la cabecera.
+    """
+    result["provisional"] = True
+    result["draft_content"] = provisional_banner(result) + (result["draft_content"] or "")
+
+
+def _sales_summary_with_proposal(
+    summary: dict[str, Any] | None, results: list[dict[str, Any]], status: str
+) -> dict[str, Any] | None:
+    """Añade al resumen de Ventas el estado de la propuesta y qué secciones son provisionales."""
+    if summary is None:
+        return None
+    provisional = [
+        {
+            "department_id": r["department_id"],
+            "owner": r["owner"],
+            "iterations": r["iterations"],
+            "pending": failed_checks(r["evaluation"]),
+        }
+        for r in results
+        if r.get("provisional")
+    ]
+    return {**summary, "proposal": {"status": status, "provisional_sections": provisional}}
 
 
 def build_proposal_handoff(
@@ -198,10 +269,12 @@ def build_proposal_handoff(
                 "department_id": r["department_id"],
                 "owner": r["owner"],
                 "generation_status": r["generation_status"],
+                "provisional": bool(r.get("provisional")),
                 "iterations": r["iterations"],
                 "generator": r["generator"],
                 "draft_content": r["draft_content"],
                 "evaluation": r["evaluation"],
+                "error": r.get("error"),
             }
             for r in results
         ],
@@ -230,5 +303,7 @@ __all__ = [
     "load_handoff",
     "generate_proposal",
     "build_proposal_handoff",
+    "failed_checks",
+    "mark_provisional",
     "process_ticket",
 ]

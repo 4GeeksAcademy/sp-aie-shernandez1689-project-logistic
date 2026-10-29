@@ -117,9 +117,23 @@ def prose_of(draft: str) -> str:
     return "\n".join(lines)
 
 
+# Frases citadas en el feedback cuando la legibilidad falla.
+MAX_QUOTED_SENTENCES = 3
+
+
+def long_sentences(text: str, limit: int = MAX_WORDS_PER_SENTENCE) -> list[dict[str, Any]]:
+    """Frases de la prosa con más de ``limit`` palabras, de la más larga a la más corta."""
+    sentences = list(dict.fromkeys(
+        s.strip() for s in re.split(r"(?<=[.!?:])\s+|\n+", text) if s.strip()
+    ))
+    found = [{"text": s, "words": len(s.split())} for s in sentences if len(s.split()) > limit]
+    return sorted(found, key=lambda s: -s["words"])
+
+
 def evaluate_readability(draft: str) -> ReadabilityCheck:
     """Legibilidad con py-readability-metrics (vía ``compute_readability_metrics``)."""
-    stats = compute_readability_metrics(prose_of(draft))
+    text = prose_of(draft)
+    stats = compute_readability_metrics(text)
     words = stats["num_words"]
     per_sentence = stats["avg_words_per_sentence"]
     grade = stats["flesch_kincaid"]
@@ -147,6 +161,8 @@ def evaluate_readability(draft: str) -> ReadabilityCheck:
             "max_flesch_kincaid": MAX_FK_GRADE,
         },
         "problems": problems,
+        # Las frases que hay que partir: el feedback las cita textualmente.
+        "long_sentences": long_sentences(text)[:MAX_QUOTED_SENTENCES],
     }
     return ReadabilityCheck(passed=not problems, score=grade, details=details)
 
@@ -497,6 +513,10 @@ def evaluate_compliance(draft: str, brief: SectionBrief) -> ComplianceCheck:
 # ── Resultado combinado ─────────────────────────────────────────────────────
 
 
+def _clip(text: str, limit: int = 140) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
 def build_feedback(
     readability: ReadabilityCheck,
     relevance: RelevanceCheck,
@@ -505,9 +525,17 @@ def build_feedback(
 ) -> str:
     """Instrucciones concretas para el generador, una por fallo."""
     actions: list[str] = []
+    quoted = "; ".join(
+        f"«{_clip(s['text'])}» ({s['words']} palabras)"
+        for s in readability.details.get("long_sentences", [])
+    )
     for problem in readability.details.get("problems", []):
         if problem.startswith("frases largas") or problem.startswith("texto denso"):
-            actions.append(f"Legibilidad: {problem}. Divide las frases en otras de menos de {MAX_WORDS_PER_SENTENCE} palabras.")
+            target = f" Empieza por estas: {quoted}." if quoted else ""
+            actions.append(
+                f"Legibilidad: {problem}. Divide las frases en otras de menos de "
+                f"{MAX_WORDS_PER_SENTENCE} palabras.{target}"
+            )
         else:
             actions.append(f"Legibilidad: {problem}.")
     for aspect in relevance.missing_aspects:
@@ -571,4 +599,5 @@ __all__ = [
     "combine",
     "evaluate_section",
     "prose_of",
+    "long_sentences",
 ]
