@@ -71,7 +71,7 @@ class MemoryVectorStore:
             memory_type="person_role",
             metadata={"person": "Ana", "role": "Head of Warehouse Operations"},
         )
-        results = await store.search("¿quién es Ana?", limit=3)
+        results = await store.search("¿quién es Ana?", limit=3, user_id="usr_1")
     """
 
     def __init__(
@@ -218,6 +218,7 @@ class MemoryVectorStore:
         limit: int = 5,
         memory_type: str | None = None,
         min_score: float = 0.45,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Busca hechos en memoria por similitud semántica.
 
@@ -226,31 +227,39 @@ class MemoryVectorStore:
             limit: Máximo de resultados.
             memory_type: Filtrar por tipo de memoria (opcional).
             min_score: Umbral mínimo de similitud coseno.
+            user_id: Dueño de la memoria. Solo se devuelven puntos con
+                ``metadata.user_id`` igual a este valor; sin ``user_id`` no
+                se devuelve nada (un usuario nunca recupera memoria de otro).
 
         Returns:
             Lista de dicts con keys: id, memory_type, text, metadata,
             score, created_at, expires_at.
         """
+        if not user_id:
+            return []
         query_vector = await self._embed(query)
 
-        filter_cond = None
+        must = [
+            qmodels.FieldCondition(
+                key="metadata.user_id",
+                match=qmodels.MatchValue(value=user_id),
+            ),
+        ]
         if memory_type:
-            filter_cond = qmodels.Filter(
-                must=[
-                    qmodels.FieldCondition(
-                        key="memory_type",
-                        match=qmodels.MatchValue(value=memory_type),
-                    ),
-                ]
+            must.append(
+                qmodels.FieldCondition(
+                    key="memory_type",
+                    match=qmodels.MatchValue(value=memory_type),
+                )
             )
 
-        hits = self._client.search(
+        hits = self._client.query_points(
             collection_name=COLLECTION_NAME,
-            query_lector=query_vector,
+            query=query_vector,
             limit=limit,
             score_threshold=min_score,
-            query_filde_r=filter_cond,
-        )
+            query_filter=qmodels.Filter(must=must),
+        ).points
 
         results: list[dict[str, Any]] = []
         for hit in hits:

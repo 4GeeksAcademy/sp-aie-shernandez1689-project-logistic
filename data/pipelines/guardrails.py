@@ -726,6 +726,30 @@ def sanitize_external_content(text: str) -> str:
     return raw.strip()
 
 
+def wrap_untrusted_text(text: str) -> str:
+    """Sanitiza un texto externo multilínea y lo marca como dato no confiable.
+
+    Equivale a ``isolate_context_chunks`` para un único texto, pero sanitiza
+    línea a línea para conservar los saltos de línea y la sangría (Markdown,
+    JSON indentado), que ``sanitize_external_content`` compacta.
+
+    Parameters
+    ----------
+    text : str
+        Texto externo bruto (p. ej. extractos de un documento subido).
+
+    Returns
+    -------
+    str
+        El marcador de dato no confiable seguido del texto neutralizado.
+    """
+    lines = []
+    for line in (text or "").splitlines():
+        indent = line[: len(line) - len(line.lstrip())]
+        lines.append(indent + sanitize_external_content(line))
+    return f"{_UNTRUSTED_MARKER}\n" + "\n".join(lines)
+
+
 def isolate_context_chunks(chunks: list[dict]) -> list[dict]:
     """Aísla y sanitiza una lista de fragmentos (RAG / tool / memoria).
 

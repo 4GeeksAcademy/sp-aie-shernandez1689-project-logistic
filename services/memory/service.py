@@ -57,13 +57,16 @@ class MemoryService:
         """
         return await self._kv.read(key)
 
-    async def recall(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+    async def recall(
+        self, query: str, user_id: str | None, limit: int = 5,
+    ) -> list[dict[str, Any]]:
         """Busca en memoria vectorial por similitud semántica.
 
         El agente usa este método cuando no sabe exactamente qué buscar
-        y necesita encontrar hechos relacionados semánticamente.
+        y necesita encontrar hechos relacionados semánticamente. Solo
+        devuelve memoria de ``user_id``; sin usuario, nada.
         """
-        return await self._vec.search(query, limit=limit)
+        return await self._vec.search(query, limit=limit, user_id=user_id)
 
     async def get_user_prefs(self, user_id: str) -> dict[str, Any]:
         """Recupera todas las preferencias conocidas de un usuario."""
@@ -85,6 +88,7 @@ class MemoryService:
         value: Any,
         ttl_days: int | None = None,
         vectorize: bool = True,
+        user_id: str | None = None,
     ) -> None:
         """Memoriza un hecho en la KV store y opcionalmente en vectorial.
 
@@ -93,6 +97,8 @@ class MemoryService:
             value: Valor del hecho (string, dict, etc.).
             ttl_days: Días hasta expiración (None = permanente).
             vectorize: Si True, también indexa en Qdrant para búsqueda semántica.
+            user_id: Dueño del hecho. Sin dueño, el punto vectorial no lo
+                recupera ``recall`` para ningún usuario.
 
         Raises:
             ValueError: si la clave o el valor violan las reglas de negocio.
@@ -106,7 +112,7 @@ class MemoryService:
             await self._vec.store(
                 text=text,
                 memory_type=memory_type,
-                metadata={"key": key, "value": value},
+                metadata={"key": key, "value": value, "user_id": user_id},
                 ttl_days=ttl_days,
             )
 
@@ -171,7 +177,7 @@ class MemoryService:
         Solo los hechos aprobados explícitamente se almacenan como
         permanentes. El agente nunca memoriza información no verificada.
         """
-        await self.store_fact(fact_key, fact_value, vectorize=True)
+        await self.store_fact(fact_key, fact_value, vectorize=True, user_id=user_id)
         if user_id:
             approval_key = f"user:{user_id}:approved:{fact_key.replace(':', '_')}"
             await self._kv.write(approval_key, {
@@ -216,7 +222,7 @@ class MemoryService:
         if session_id:
             context["episode"] = await self.get_episode(session_id)
         if query:
-            context["semantic_hits"] = await self.recall(query, limit=3)
+            context["semantic_hits"] = await self.recall(query, user_id=user_id, limit=3)
 
         return context
 
