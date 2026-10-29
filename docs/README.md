@@ -6,3 +6,8 @@ This folder holds **cross-cutting documentation** for the monorepo: architecture
 - **Recommendation**: organize docs by topic (architecture, deployment, data, security, observability, etc.) and keep links from each component’s README to these guides.
 
 > _Spanish version: [README.es.md](./README.es.md)._
+
+## Seguridad
+
+- [security/owasp-top10-audit.md](./security/owasp-top10-audit.md) — Auditoría OWASP Top 10 (2021) de las 10 categorías, con carril agente separado.
+- [security/critical-fixes-evidence.md](./security/critical-fixes-evidence.md) — Fixes críticos con evidencias antes/después reproducibles.
