@@ -67,10 +67,14 @@
         <div class="panel-head">
           <h2 id="tickets-title">Tickets de intake</h2>
           <p>
-            Consume <code>GET /rfp/tickets</code> (más recientes primero). Se
-            refresca sola mientras haya tickets en <code>analizando</code>.
+            Consume <code>GET /rfp/tickets</code> (más recientes primero) y se
+            actualiza en tiempo real con <code>GET /rfp/events</code> (SSE).
+          </p>
+          <p id="liveStatus" class="live-status" data-state="connecting" role="status" aria-live="polite">
+            Conectando…
           </p>
         </div>
+        <p id="ticketNotice" class="ticket-notice" role="status" aria-live="polite" hidden></p>
         <div id="ticketsLoading" class="summary-state" role="status" aria-live="polite">
           <span class="loading-spinner" aria-hidden="true"></span>
           <p>Cargando tickets…</p>
