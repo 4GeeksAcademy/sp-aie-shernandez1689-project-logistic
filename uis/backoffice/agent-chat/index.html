@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#071521" />
+    <title>TrackFlow | Chat de soporte en tiempo real</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../../application/app/suppliers/styles.css" />
+    <link rel="stylesheet" href="./chat.css" />
+  </head>
+  <body>
+    <div class="backdrop" aria-hidden="true"></div>
+
+    <main class="page">
+      <header class="topbar" role="banner">
+        <div>
+          <p class="eyebrow">TrackFlow Backoffice · first_line_cx</p>
+          <h1>Chat de soporte en tiempo real</h1>
+        </div>
+        <nav class="menu-links" aria-label="Navegación principal">
+          <a href="../knowledge/index.html">Consulta RAG</a>
+          <a href="../rfp/index.html">RFP</a>
+          <a href="../../index.html">Inicio</a>
+        </nav>
+      </header>
+
+      <section class="panel" aria-labelledby="chat-title">
+        <div class="panel-head chat-head">
+          <div>
+            <h2 id="chat-title">Conversación</h2>
+            <p>
+              Sesión <code id="flowId">—</code> · la respuesta llega token a token. Escribe
+              mientras el agente responde para interrumpirlo.
+            </p>
+          </div>
+          <span id="chatStatus" class="chat-status" data-state="connecting" role="status">
+            Conectando…
+          </span>
+        </div>
+
+        <ol id="chatLog" class="chat-log" aria-live="polite" aria-label="Mensajes"></ol>
+        <p id="chatStep" class="chat-step" hidden></p>
+        <p id="chatError" class="chat-error" role="alert" hidden></p>
+
+        <form id="chatForm" class="chat-form">
+          <label for="chatInput" class="sr-only">Tu mensaje</label>
+          <textarea
+            id="chatInput"
+            rows="2"
+            maxlength="1000"
+            placeholder="Ej: ¿Cuál es el plazo para devolver un pedido?"
+            required
+            disabled
+          ></textarea>
+          <div class="chat-actions">
+            <button type="submit" id="sendBtn" disabled>Enviar</button>
+            <button type="button" id="stopBtn" class="danger" hidden>Detener respuesta</button>
+            <button type="button" id="newSessionBtn" class="ghost" hidden>Nueva sesión</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel" aria-labelledby="control-title">
+        <div class="panel-head">
+          <h2 id="control-title">Control de operador</h2>
+          <p>
+            Ingeniería u operaciones (Los Ángeles o Zaragoza) pueden pausar, reanudar o
+            cancelar la generación de cualquier sesión de chat abierta. Requiere sesión
+            iniciada en el backoffice.
+          </p>
+        </div>
+        <form id="controlForm" class="control-form">
+          <label for="controlFlowId">
+            flow_id
+            <input id="controlFlowId" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <div class="chat-actions">
+            <button type="button" data-action="pause">Pausar</button>
+            <button type="button" data-action="resume">Reanudar</button>
+            <button type="button" data-action="cancel" class="danger">Cancelar</button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <script src="./chat.js"></script>
+  </body>
+</html>
