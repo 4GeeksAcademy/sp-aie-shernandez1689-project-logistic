@@ -105,6 +105,18 @@ def end_run(final_state: dict[str, Any]) -> Path:
     return path
 
 
+def abort_run(thread_id: str, reason: str) -> None:
+    """Cierra el trace de una corrida cortada antes de ``finalize``.
+
+    Sin esto ``_active`` seguiría abierto y la siguiente corrida añadiría
+    sus pasos al trace viejo. Solo cierra si el trace activo es de
+    ``thread_id`` (no toca el de otra corrida).
+    """
+    if _active is None or _active["thread_id"] != thread_id:
+        return
+    end_run({"aborted": reason})
+
+
 def _routing_summary(steps: list[dict[str, Any]]) -> dict[str, Any]:
     """Resume las fuentes realmente ejecutadas, no solo las intenciones.
 

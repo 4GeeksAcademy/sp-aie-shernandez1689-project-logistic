@@ -1,65 +1,58 @@
 """Grafo de agente RAG con LangGraph (TrackFlow).
 
-Estado mínimo del grafo
------------------------
+Estado del grafo
+----------------
 - question: pregunta del usuario (entrada).
 - context:  chunks recuperados por el nodo retrieve (salida -> entrada).
 - answer:   respuesta final generada o mensaje honesto de fallback.
 - incident_query: petición de consulta de ticket (salida de intent).
 - inventory_query: petición de consulta de inventario (salida de intent).
-- tool_answers / tool_context: resúmenes de las tools para componer la
-  respuesta final (acumulados con reductor si corren dos tools).
+- tool_answers / tool_context: resúmenes de las tools (acumulados con reductor).
+- memory_context: contexto recuperado de la memoria persistente (preferencias,
+  hechos aprobados, episodios anteriores). NO es el historial de la
+  conversación — el grafo sigue siendo stateless por corrida.
+- _memory_proposal: propuesta de memoria generada por ``memorize_node``
+  al final de la corrida. Contiene tipo (preference|fact|none), payload
+  con la información a persistir, y se incrusta como pregunta en la
+  respuesta al usuario. ``remember_node`` de la SIGUIENTE corrida la
+  procesa si el usuario confirma o rechaza.
 
-No se incluye el historial completo de la conversación: el grafo es
-stateless por corrida y cada corrida se inspecciona/retoma vía
-checkpointing (thread_id), por lo que el historial no es necesario en
-el estado.
+ACTUALIZACIÓN — Memoria persistente con flujo de propuesta (2026-10-27)
+-----------------------------------------------------------------------
+Se implementa un diseño de **memoria por propuesta explícita**:
 
-Nodos y aristas
----------------
-  START -> validate -> (pregunta vacía?) -> error -> finalize -> END
+1. ``remember``: Al inicio de la corrida, carga memoria existente Y
+   procesa propuestas pendientes del checkpoint anterior usando un
+   clasificador de intención estructurado (accept|reject|edit|topic_change).
+   Si el usuario además hace una nueva pregunta tras resolver la propuesta,
+   la conversación continúa con normalidad (no salta a finalize).
 
-  intent  decide de forma AUTOMÁTICA (sin que el usuario indique la fuente)
-  si la pregunta necesita el RAG, una tool o ambos:
+2. ``memorize``: Después de ``generate`` (antes de ``finalize``),
+   auto-evalúa la interacción. Si ya hay una propuesta pendiente sin
+   resolver, NO genera una segunda. **Nunca escribe directamente a memoria.**
 
-  - Solo RAG -> retrieve -> (context?) -> generate -> finalize -> END
-                                   -> no_context -> finalize
-    - Solo tool -> tool(s) -> generate -> finalize -> END
-  - RAG + tool -> tool(s) -> retrieve -> generate (compone tool+context)
-    -> finalize -> END
+3. **Auditoría**: Cada propuesta, aceptación, rechazo, edición o descarte
+   se registra en ``data/audit/memory_proposals.jsonl`` con marca de tiempo,
+   mensaje origen y resultado.
 
-tools para comprobar si la knowledge base aporta contexto; el resultado de
-El nodo ``intent`` detecta la intención de ticket/incidencia y/o de
-stock/inventario de forma independiente: puede decidir 0, 1 o 2 tools, y
-cada tool hace UNA sola cosa. Las consultas operativas van solo a las tools;
-las preguntas documentales van solo al RAG; una pregunta que pide ambas
-fuentes ejecuta las tools y después ``retrieve``. El trace registra las
-fuentes realmente ejecutadas y su orden. El usuario nunca indica qué fuente
-usar: lo decide el grafo.
+4. **Cambio de tema = descarte**: Si el usuario cambia de tema sin
+   responder clara y directamente a la propuesta, se descarta automáticamente.
+   Nunca se asume aprobación por silencio o ambigüedad.
 
-Si una tool no puede confirmar el dato (timeout, fallo o inexistencia), el nodo
-produce una respuesta honesta sin inventar un estado ni una cifra.
+Nodos y aristas (con memoria por propuesta)
+---------------------------------------------
+  START -> validate -> (error?) -> remember -> (answer? -> finalize)
+                                            -> (else -> intent -> ...)
+  ... -> generate -> memorize -> finalize -> END
 
-Contrato: retrieve_node llama a retrieve() y generate_node llama a
-generate_answer(question, context) con el contexto que retrieve_node
-produjo y, si hubo consulta de tool, con un contexto extra que resume el
-resultado de la tool. Nunca se usa query() (evitaría doble recuperación).
-
-El grafo se compila al importar el módulo: un error estructural (nodo
-sin conexión, estado mal tipado) falla de forma clara antes de cualquier
-ejecución.
+  El resto del flujo (intent → tools → retrieve → generate) permanece
+  igual. Los detalles de las aristas están documentados más abajo.
 
 ACTUALIZACIÓN — Migración a MCP (2026-10-27)
 ---------------------------------------------
 Los nodos ``incident_lookup`` e ``inventory_lookup`` ya no importan las
-tools directas en-proceso (``services/rag_agent/tools/incident_lookup.py``
-y ``inventory_lookup.py``). En su lugar se conectan al TrackFlow MCP
+tools directas en-proceso. En su lugar se conectan al TrackFlow MCP
 Server (``mcps/trackflow-server``) via ``langchain-mcp-adapters``.
-
-El contrato de salida (dict JSON-serializable con campos ``resolved``,
-``error``, ``ticket_id``/``product``, etc.) se mantiene idéntico para que
-los nodos ``generate`` / ``tracing`` y las aristas condicionales no
-requieran cambios.
 
 Las tools directas antiguas están marcadas como ``DEPRECATED`` y no deben
 usarse. Ver ``services/rag_agent/tools/DEPRECATED.md``.
@@ -71,15 +64,44 @@ import operator
 import re
 from typing import Annotated, Any, TypedDict
 
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.config import get_config
+from langgraph.config import get_config, get_stream_writer
 from langgraph.graph import END, START, StateGraph
 
-from data.pipelines.rag import DEFAULT_MIN_SCORE, generate_answer, retrieve
+from data.pipelines.guardrails import (
+    GuardrailState,
+    classify_bounds,
+    detect_content_injection,
+    isolate_context_chunks,
+    redirect_response,
+    sanitize_external_content,
+    validate_output,
+)
+from data.pipelines.rag import (
+    DEFAULT_MIN_SCORE,
+    TokenCallback,
+    generate_answer,
+    generate_casual_answer,
+    retrieve,
+)
+from services.rag_agent import guardrail_observability as obs
 from services.rag_agent import tracing
 from services.rag_agent import mcp_client
+from data.pipelines.checkpointer import get_checkpointer
+from services.rag_agent.memory_nodes import (
+    consolidate_node,
+    memorize_node,
+    remember_node,
+)
 
 DEFAULT_K = 5
+
+# Respuesta de respaldo (defense-in-depth) cuando generate_node se alcanza con
+# un estado de guardarraíl bloqueado (jailbreak / off_domain / personal_task).
+GUARDRAIL_DOMAIN_REDIRECT = (
+    "Solo puedo ayudarte con asuntos de TrackFlow — SLAs, devoluciones, "
+    "transportistas, tarifas, tickets e inventario. "
+    "¿En qué puedo ayudarte con tus operaciones hoy?"
+)
 
 # Detección heurística de intención de consulta de ticket de soporte.
 _INCIDENT_INTENT_RE = re.compile(
@@ -153,7 +175,20 @@ def _extract_ticket_id(question: str) -> str | None:
 
 
 class AgentState(TypedDict, total=False):
-    """Información mínima que un nodo necesita para decidir el siguiente paso."""
+    """Información mínima que un nodo necesita para decidir el siguiente paso.
+
+    Nodos de memoria:
+    - memory_context: contexto recuperado de los stores KV/vectorial
+      (preferencias, hechos aprobados, episodios anteriores). Lo produce
+      el nodo ``remember`` y lo consume ``generate``.
+    - _memory_loaded: flag interno (remember ejecutado).
+    - _memorized: metadatos de lo guardado por ``memorize``.
+    - _memory_proposal: propuesta de memoria generada por ``memorize``.
+      Solo puede haber una pendiente a la vez.
+    - _memory_intent_classification: etiqueta estructurada del clasificador
+      de intención (accept|reject|edit|topic_change|ambiguous) producida
+      por ``remember``.
+    """
 
     question: str
     context: list[dict[str, Any]]
@@ -170,7 +205,26 @@ class AgentState(TypedDict, total=False):
     # Reductores de lista: si corren dos tools, ambas aportan al acumulado.
     tool_answers: Annotated[list[str], operator.add]
     tool_context: Annotated[list[dict[str, Any]], operator.add]
-
+    # Memoria persistente (nodos remember / memorize).
+    memory_context: dict[str, Any]
+    _memory_loaded: bool
+    _memorized: dict[str, Any]
+    # Propuesta de memoria generada por generate_node para que el usuario
+    # confirme en la siguiente interacción. Contiene:
+    #   - "text": pregunta en lenguaje natural para el usuario
+    #   - "type": tipo de memoria propuesta (preference | fact | none)
+    #   - "payload": dict con la información a persisitir si se acepta
+    _memory_proposal: dict[str, Any]    # Clasificación de intención estructurada del mensaje del usuario
+    # frente a la propuesta pendiente (producida por remember_node).
+    # Valores: "accept" | "reject" | "edit" | "topic_change" | "ambiguous"
+    _memory_intent_classification: str | None
+    # Consolidación de memoria.
+    consolidation_pending: bool
+    _consolidation_report: dict[str, Any]
+    # Guardarraíl: resultado de classify_bounds sobre la pregunta.
+    # Valores: "jailbreak" | "off_domain" | "domain" | "small_talk" |
+    #          "personal_task" | "casual"
+    guardrail_state: str
 
 # ── Nodos ───────────────────────────────────────────────────────────────
 # Cada nodo registra su salida en el trace (tracing.add_step) para que la
@@ -182,14 +236,57 @@ def validate(state: AgentState) -> dict[str, Any]:
     question = (state.get("question") or "").strip()
     # Abre el trace de la corrida en el primer paso (thread_id del run).
     tracing.ensure_started(_thread_id(), state.get("question") or "")
-    out = {"error": "La pregunta está vacía."} if not question else {"question": question}
+    if not question:
+        out = {"error": "La pregunta está vacía."}
+        tracing.add_step("validate", out)
+        obs.record(
+            state="structural_empty", kind="structural", node="validate",
+            thread_id=_thread_id(), detail="pregunta vacía / entrada malformada",
+        )
+        return out
+    out = {"question": question}
     tracing.add_step("validate", out)
     return out
 
 
 def _thread_id() -> str:
-    cfg = get_config()
+    """Devuelve el thread_id del run actual (o "default" fuera de un run).
+
+    ``get_config`` solo está disponible dentro de un runnable (LangGraph);
+    fuera de él (p. ej. tests que llaman a un nodo directamente) se
+    degrada a "default" sin lanzar.
+    """
+    try:
+        cfg = get_config()
+    except RuntimeError:
+        return "default"
     return cfg.get("configurable", {}).get("thread_id", "default")
+
+
+def _streaming_kwargs() -> dict[str, TokenCallback]:
+    """``{"on_token": ...}`` para el modo ``custom`` de ``graph.stream``, o ``{}``.
+
+    Solo cuando quien ejecuta el grafo lo pide (``configurable.stream_tokens``,
+    p. ej. el chat WebSocket): ``graph.invoke`` de ``POST /agent/query`` sigue
+    con exactamente la misma llamada al LLM, sin streaming.
+    ``configurable.token_gate`` (opcional) se llama antes de cada token: puede
+    bloquear (pausa) o lanzar ``StreamAborted`` (cancelación).
+    """
+    try:
+        configurable = get_config().get("configurable", {})
+    except RuntimeError:
+        return {}
+    if not configurable.get("stream_tokens"):
+        return {}
+    writer = get_stream_writer()
+    gate = configurable.get("token_gate")
+
+    def sink(token: str) -> None:
+        if gate is not None:
+            gate()
+        writer({"token": token})
+
+    return {"on_token": sink}
 
 
 def retrieve_node(state: AgentState) -> dict[str, Any]:
@@ -213,20 +310,144 @@ def generate_node(state: AgentState) -> dict[str, Any]:
 
     Decide de forma automática qué hay que componer según lo que corrió:
     - Tool(s) sin contexto KB   -> usa el resumen de la tool (sin LLM).
-    - KB (con o sin tool)       -> LLC compone tool(s) + contexto KB en una
+    - KB (con o sin tool)       -> LLM compone tool(s) + contexto KB en una
       única respuesta ("RAG y/o tool" según lo que haya aportado).
+
+    Si el nodo ``remember`` cargó ``memory_context`` (preferencias, hechos
+    aprobados, episodios anteriores), se inyecta en la respuesta como
+    contexto adicional para personalización.
     """
     tool_context = state.get("tool_context") or []
     kb_context = state.get("context") or []
     tool_answers = state.get("tool_answers") or []
+    memory_ctx = state.get("memory_context") or {}
+
+    # Defense-in-depth: si por cualquier camino futuro el flujo llega aquí con
+    # un estado de guardarraíl bloqueante, NUNCA se abre el LLM: se devuelve
+    # la redirección (o la respuesta ya fijada por el nodo guardrail).
+    gr_state = state.get("guardrail_state")
+    if gr_state in (
+        GuardrailState.JAILBREAK.value,
+        GuardrailState.OFF_DOMAIN.value,
+        GuardrailState.PERSONAL_TASK.value,
+    ):
+        answer = state.get("answer") or GUARDRAIL_DOMAIN_REDIRECT
+        tracing.add_step("generate", {"answer": answer})
+        obs.record(
+            state=str(gr_state) if isinstance(gr_state, str) else "defense_in_depth",
+            kind="security"
+            if gr_state == GuardrailState.JAILBREAK.value
+            else "content",
+            node="generate",
+            thread_id=_thread_id(),
+            detail="defensa en profundidad: LLM nunca abierto con estado bloqueante",
+        )
+        return {"answer": answer}
+
+    # Inyectar memoria como prefacio contextual si existe.
+    memory_lines = []
+
+    # Mensaje de resultado de propuesta de memoria (aceptada/rechazada/editada)
+    proposal_result = memory_ctx.get("_proposal_result")
+    if proposal_result:
+        memory_lines.append(proposal_result)
+
+    if memory_ctx.get("prefs"):
+        prefs = memory_ctx["prefs"]
+        if isinstance(prefs, dict):
+            pref_strs = [f"  - {k}: {v}" for k, v in prefs.items()]
+            memory_lines.append("Preferencias del usuario:\n" + "\n".join(pref_strs))
+    if memory_ctx.get("episodes"):
+        episodes = memory_ctx["episodes"]
+        if isinstance(episodes, list) and episodes:
+            last = episodes[-1]
+            if isinstance(last, dict) and last.get("summary"):
+                memory_lines.append(
+                    f"Resumen del episodio anterior: {last['summary']}"
+                )
+    if memory_ctx.get("semantic_hits"):
+        hits = memory_ctx["semantic_hits"]
+        if isinstance(hits, list) and hits:
+            memory_lines.append(
+                "Hechos recordados relevantes:\n"
+                + "\n".join(
+                    f"  - {h.get('text', '') if isinstance(h, dict) else h}"
+                    for h in hits[:3]
+                )
+            )
 
     if tool_answers and not kb_context:
         # Tool-only: no hay KB para anclar; la respuesta ES el resumen honesto
-        # de la tool (no se inventa contexto).
-        answer = "\n".join(tool_answers)
+        # de la tool (no se inventa contexto). El texto de la tool se aísla
+        # como dato no confiable (anti-inyección) por si un resultado externo
+        # incrustara instrucciones.
+        safe_tool_answers = [
+            sanitize_external_content(a) for a in (tool_answers or [])
+        ]
+        if memory_lines:
+            answer = "\n".join(memory_lines + [""] + safe_tool_answers)
+        else:
+            answer = "\n".join(safe_tool_answers)
     else:
         # RAG (y tool si la hubo): el LLM compone una única respuesta.
-        answer = generate_answer(question=state["question"], context=tool_context + kb_context)
+        # ANTI-INYECCIÓN: el contenido externo (fragmentos RAG + resúmenes
+        # de tools + memoria) se aísla como DATO NO CONFIABLE antes de
+        # llegar al LLM. Cualquier instrucción incrustada en un documento
+        # recuperado se neutraliza; el modelo lo trata como contenido sobre
+        # el que responder, nunca como órdenes que obedecer.
+        # La memoria también es contenido externo: la escribió un usuario
+        # (hechos, preferencias) y vuelve en otra corrida.
+        memory_chunks = (
+            [{"text": "\n".join(memory_lines), "source_document": "agent_memory", "section": "memoria"}]
+            if memory_lines
+            else []
+        )
+        external = memory_chunks + tool_context + kb_context
+        combined_context = isolate_context_chunks(external)
+        # Observabilidad: solo se cuenta como evento si se detectó una
+        # inyección real (delimitador de instrucción o reescritura de reglas
+        # incrustada en el contenido recuperado/tool); el aislamiento por sí
+        # solo (defensa normal) no es un bloqueo/redirección.
+        if any(
+            detect_content_injection(c.get("text", ""))
+            for c in external
+        ):
+            obs.record(
+                state="injection_neutralized", kind="content", node="generate",
+                thread_id=_thread_id(),
+                detail="instrucción incrustada en contenido externo neutralizada",
+            )
+        answer = generate_answer(
+            question=state["question"],
+            context=combined_context,
+            **_streaming_kwargs(),
+        )
+
+    # Validación de salida (guardarraíl de contenido):
+    #  - Si la pregunta es casual (permitida), se fuerza un cierre con
+    #    redirección al contexto de la empresa.
+    #  - Se valida que la respuesta no filtre instrucciones internas, datos
+    #    sensibles del BRIEFING ni formato malformado; si no es válida, se
+    #    sustituye por una respuesta segura.
+    if gr_state == GuardrailState.CASUAL.value:
+        answer = (answer or "").strip()
+        if not answer:
+            answer = GUARDRAIL_DOMAIN_REDIRECT
+        else:
+            answer = answer.rstrip() + (
+                "\n\nY hablando de logística: solo puedo ayudarte con asuntos "
+                "de TrackFlow — SLAs, devoluciones, transportistas, tarifas, "
+                "tickets e inventario. ¿En qué puedo ayudarte hoy?"
+            )
+    else:
+        valid, _reason = validate_output(answer)
+        if not valid:
+            answer = GUARDRAIL_DOMAIN_REDIRECT
+            obs.record(
+                state="validate_output", kind="content", node="generate",
+                thread_id=_thread_id(),
+                detail="respuesta no válida sustituida por redirección segura",
+            )
 
     tracing.add_step("generate", {"answer": answer})
     return {"answer": answer}
@@ -421,12 +642,210 @@ def finalize(state: AgentState) -> dict[str, Any]:
     return {}
 
 
-# ── Aristas condicionales ───────────────────────────────────────────────
+# ── Nodo guardarraíl ────────────────────────────────────────────────────
+#
+# Primera línea de defensa DETERMINISTA (sin LLM): clasifica la pregunta con
+# ``classify_bounds`` ANTES de abrir el LLM, retrieve o tools. Según el estado:
+#
+#   - jailbreak     -> rechazo firme + redirección (el LLM NUNCA se abre).
+#   - personal_task -> rechazo: solicitud de uso personal ajena al dominio de
+#                      TrackFlow + redirección al propósito del agente.
+#   - off_domain    -> fuera del dominio comercial -> redirección (sin LLM).
+#   - small_talk    -> saludo cortés -> respuesta breve + redirección suave.
+#   - casual        -> pregunta general permitida -> se responde con LLM y
+#                      la respuesta cierra redirigiendo al contexto empresa.
+#   - domain        -> dentro del dominio -> flujo normal (LLM + tools).
+
+
+def guardrail_node(state: AgentState) -> dict[str, Any]:
+    """Clasifica la pregunta y, si es bloqueante, produce la respuesta final.
+
+    Reglas de prioridad:
+    - El jailbreak SIEMPRE es bloqueante (aunque haya propuesta de memoria
+      pendiente): nunca se trata como confirmación.
+    - personal_task y off_domain bloquean la corrida (sin LLM ni tools).
+    - small_talk se responde breve y se redirige suavemente (sin LLM).
+    - casual se marca como permisible (el LLM responderá y un post-proceso
+      añadirá la redirección al cierre).
+    - domain continúa con el flujo normal.
+    """
+    question = state.get("question") or ""
+    gr_state = classify_bounds(question)
+
+    out: dict[str, Any] = {"guardrail_state": gr_state.value}
+
+    # Respuestas con redirección (cortan la corrida, salvo la propuesta de
+    # memoria que se procesa primero en el estado "recuerda").
+    if gr_state is GuardrailState.JAILBREAK:
+        out["answer"] = (
+            "No puedo ignorar mis instrucciones ni cambiar mi rol: soy el "
+            "asistente de TrackFlow. " + redirect_response()
+        )
+        tracing.add_step("guardrail", {"state": gr_state.value, "answer": out["answer"]})
+        obs.record(
+            state="jailbreak", kind="security", node="guardrail",
+            thread_id=_thread_id(), detail="intento de manipulación del sistema",
+        )
+        return out
+
+    if gr_state is GuardrailState.PERSONAL_TASK:
+        out["answer"] = (
+            "No puedo ayudarte con esa tarea: es un uso personal ajeno a mi "
+            "propósito. " + redirect_response()
+        )
+        tracing.add_step("guardrail", {"state": gr_state.value, "answer": out["answer"]})
+        obs.record(
+            state="personal_task", kind="content", node="guardrail",
+            thread_id=_thread_id(), detail="uso personal rechazado y redirigido",
+        )
+        return out
+
+    if gr_state is GuardrailState.OFF_DOMAIN:
+        out["answer"] = redirect_response()
+        tracing.add_step("guardrail", {"state": gr_state.value, "answer": out["answer"]})
+        obs.record(
+            state="off_domain", kind="content", node="guardrail",
+            thread_id=_thread_id(), detail="fuera del dominio de TrackFlow",
+        )
+        return out
+
+    if gr_state is GuardrailState.SMALL_TALK:
+        out["answer"] = "¡Hola!" if "hola" in question.lower() else redirect_response()
+        # Si hay propuesta de memoria pendiente, la respuesta final la genera
+        # remember_node al procesar la propuesta (no esta redirección suave).
+        tracing.add_step("guardrail", {"state": gr_state.value, "answer": out["answer"]})
+        obs.record(
+            state="small_talk", kind="content", node="guardrail",
+            thread_id=_thread_id(), detail="saludo: redirección suave al dominio",
+        )
+        return out
+
+    if gr_state is GuardrailState.CASUAL:
+        # Pregunta general permitida: NUNCA bloquea (el LLM responde). La
+        # redirección al cierre la añade generate_node (validate_output).
+        out["answer"] = ""  # limpiar cualquier respuesta obsoleta del estado.
+        tracing.add_step("guardrail", {"state": gr_state.value, "answer": "casual_allowed"})
+        obs.record(
+            state="casual", kind="content", node="guardrail",
+            thread_id=_thread_id(), detail="casual permitido con cierre al dominio",
+        )
+        return out
+
+    # DOMAIN (y cualquier otro estado no bloqueante): limpiar respuestas
+    # obsoletas del checkpoint y continuar el flujo normal.
+    out["answer"] = ""
+    tracing.add_step("guardrail", {"state": gr_state.value, "answer": "continue"})
+    return out
+
+
+def route_after_guardrail(state: AgentState) -> str:
+    """Tras el guardarraíl decide: continuar (remember) o finalizar.
+
+    - jailbreak / personal_task / off_domain: respuesta ya generada -> finalize
+      (pero si hay propuesta de memoria pendiente y es small_talk/off_domain,
+      primero se procesa en remember; el jailbreak y personal_task siempre
+      rechazan y cortan).
+    - small_talk con propuesta pendiente -> remember (procesa la propuesta).
+    - small_talk sin propuesta -> finalize.
+    - casual -> casual (nodo dedicado: responde con LLM + redirección al
+      cierre; sin retrieve/tools porque la KB no contiene esos datos).
+    - domain -> remember (flujo normal).
+    """
+    gr_state = state.get("guardrail_state")
+
+    if gr_state == GuardrailState.JAILBREAK.value:
+        return "finalize"
+    if gr_state in (GuardrailState.PERSONAL_TASK.value, GuardrailState.OFF_DOMAIN.value):
+        # Si hay propuesta de memoria pendiente, se procesa primero (remember)
+        # y la nueva respuesta bloqueada será la de la propuesta resuelta.
+        pending = state.get("_memory_proposal") or {}
+        proposal_type = pending.get("type")
+        if proposal_type not in (None, "none", ""):
+            return "remember"
+        return "finalize"
+    if gr_state == GuardrailState.SMALL_TALK.value:
+        pending = state.get("_memory_proposal") or {}
+        proposal_type = pending.get("type")
+        if proposal_type not in (None, "none", ""):
+            return "remember"
+        return "finalize"
+    if gr_state == GuardrailState.CASUAL.value:
+        return "casual"
+    # domain y resto -> flujo normal.
+    return "remember"
+
+
+def casual_node(state: AgentState) -> dict[str, Any]:
+    """Responde una pregunta general/casual PERMITIDA y cierra redirigiendo.
+
+    Solo se alcanza cuando ``guardrail_node`` clasificó la pregunta como
+    ``GuardrailState.CASUAL`` (hora, fecha, conversión simple). La base de
+    conocimiento de TrackFlow NO contiene estos datos, por lo que se consulta
+    el LLM directamente (``generate_casual_answer``) sin retrieve() ni tools.
+
+    La respuesta es la del LLM + una frase final que redirige al contexto de
+    la empresa (requisito de la tarea: "permite preguntas casuales pero
+    cierra la respuesta reconduciendo hacia el contexto de la empresa").
+    """
+    question = state.get("question") or ""
+    answer = generate_casual_answer(question, **_streaming_kwargs())
+    answer = (answer or "").strip()
+    if not answer:
+        answer = GUARDRAIL_DOMAIN_REDIRECT
+    else:
+        # Asegurar el cierre con redirección al dominio (si el LLM no lo hizo).
+        if "TrackFlow" not in answer:
+            answer = answer.rstrip() + (
+                "\n\nY hablando de logística: solo puedo ayudarte con asuntos "
+                "de TrackFlow — SLAs, devoluciones, transportistas, tarifas, "
+                "tickets e inventario. ¿En qué puedo ayudarte hoy?"
+            )
+    out = {"answer": answer}
+    tracing.add_step("casual", out)
+    return out
 
 
 def route_after_validate(state: AgentState) -> str:
     if state.get("error"):
         return "error"
+    return "guardrail"
+
+
+def route_after_remember(state: AgentState) -> str:
+    """Tras cargar memoria, decide el siguiente paso.
+
+    Si ``remember_node`` ya generó una respuesta y la clasificación de
+    intención indica que fue una confirmación pura (sin nueva pregunta),
+    salta directamente a ``finalize``.
+
+    Si el usuario combinó la respuesta a la propuesta con una nueva
+    pregunta (ej. "sí, y dime el stock del SKU X"), la propuesta se
+    resuelve pero la conversación continúa: routea a ``intent`` para
+    procesar la nueva pregunta con el mismo mensaje.
+
+    Si no había propuesta pendiente, sigue a ``intent`` como siempre.
+    """
+    from services.rag_agent.memory_nodes import _is_pure_confirmation
+
+    has_answer = bool(state.get("answer"))
+    intent_class = state.get("_memory_intent_classification")
+
+    if intent_class in ("accept", "reject"):
+        if has_answer:
+            # Si el mensaje era solo confirmación (sin nueva pregunta), finaliza
+            question = (state.get("question") or "").strip()
+            if _is_pure_confirmation(question):
+                return "finalize"
+            # Mensaje combinado: confirmación + nueva pregunta → sigue a intent
+            return "intent"
+
+    if intent_class in ("edit", "topic_change", "ambiguous"):
+        # Propuesta descartada, el usuario preguntó algo → continúa
+        return "intent"
+
+    # Sin propuesta pendiente: comportamiento normal
+    if has_answer:
+        return "finalize"
     return "intent"
 
 
@@ -465,22 +884,56 @@ def route_after_retrieve(state: AgentState) -> str:
     return "no_context"
 
 
+def route_after_generate(state: AgentState) -> str:
+    """Tras generar la respuesta, se memoriza la interacción."""
+    return "memorize"
+
+
+def route_after_no_context(state: AgentState) -> str:
+    """Tras no_context también se memoriza (por si hay preferencias)."""
+    return "memorize"
+
+
+def route_after_memorize(state: AgentState) -> str:
+    """Tras memorize, va a consolidate si hay solicitud pendiente, o finaliza."""
+    if state.get("consolidation_pending"):
+        return "consolidate"
+    return "finalize"
+
+
+def route_after_consolidate(state: AgentState) -> str:
+    """Tras consolidación, siempre finaliza."""
+    return "finalize"
+
+
 # ── Construcción y compilación (antes de cualquier ejecución) ───────────
 
 _builder = StateGraph(AgentState)
 _builder.add_node("validate", validate)
+_builder.add_node("guardrail", guardrail_node)
+_builder.add_node("casual", casual_node)
+_builder.add_node("remember", remember_node)
 _builder.add_node("intent", intent_node)
 _builder.add_node("incident_lookup", incident_lookup_node)
 _builder.add_node("inventory_lookup", inventory_lookup_node)
 _builder.add_node("retrieve", retrieve_node)
 _builder.add_node("generate", generate_node)
 _builder.add_node("no_context", no_context)
+_builder.add_node("memorize", memorize_node)
+_builder.add_node("consolidate", consolidate_node)
 _builder.add_node("error", error_node)
 _builder.add_node("finalize", finalize)
 
 _builder.add_edge(START, "validate")
 _builder.add_conditional_edges(
-    "validate", route_after_validate, ["error", "intent"]
+    "validate", route_after_validate, ["error", "guardrail"]
+)
+_builder.add_conditional_edges(
+    "guardrail", route_after_guardrail, ["casual", "remember", "finalize"]
+)
+_builder.add_edge("casual", "finalize")
+_builder.add_conditional_edges(
+    "remember", route_after_remember, ["intent", "finalize"]
 )
 _builder.add_conditional_edges(
     "intent", route_after_intent, ["incident_lookup", "inventory_lookup", "retrieve"]
@@ -494,13 +947,24 @@ _builder.add_conditional_edges("inventory_lookup", route_after_inventory_lookup,
 _builder.add_conditional_edges(
     "retrieve", route_after_retrieve, ["generate", "no_context"]
 )
-_builder.add_edge("generate", "finalize")
-_builder.add_edge("no_context", "finalize")
+_builder.add_conditional_edges(
+    "generate", route_after_generate, ["memorize"]
+)
+_builder.add_conditional_edges(
+    "no_context", route_after_no_context, ["memorize"]
+)
+_builder.add_conditional_edges(
+    "memorize", route_after_memorize, ["consolidate", "finalize"]
+)
+_builder.add_conditional_edges(
+    "consolidate", route_after_consolidate, ["finalize"]
+)
 _builder.add_edge("error", "finalize")
 _builder.add_edge("finalize", END)
 
-# MemorySaver: checkpoint en cada transición de estado relevante.
-graph = _builder.compile(checkpointer=MemorySaver())
+# Checkpoint en cada transición de estado relevante. Backend persistente
+# (Postgres o SQLite) según entorno; ver data/pipelines/checkpointer.py.
+graph = _builder.compile(checkpointer=get_checkpointer())
 
 
 def run(question: str, *, thread_id: str = "default") -> dict[str, Any]:

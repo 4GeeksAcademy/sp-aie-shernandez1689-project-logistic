@@ -8,10 +8,21 @@ de datos ni APIs externas.
 
 from __future__ import annotations
 
+import os
+import tempfile
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
+
+# El grafo del agente (services/rag_agent/graph.py) construye su checkpointer
+# al importarse: en tests usa un SQLite temporal, nunca DATABASE_URL ni
+# data/checkpoints/.
+os.environ.setdefault("AGENT_CHECKPOINTER", "sqlite")
+os.environ.setdefault(
+    "AGENT_CHECKPOINT_SQLITE_PATH",
+    os.path.join(tempfile.mkdtemp(prefix="agent-ckpt-"), "checkpoints.sqlite"),
+)
 
 
 # ── Timestamp de referencia (lunes de la semana ISO) ──────────────────────

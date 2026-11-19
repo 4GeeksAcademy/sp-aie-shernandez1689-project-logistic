@@ -61,6 +61,11 @@ def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> CurrentUser:
     token = credentials.credentials.strip() if credentials else ""
+    return authenticate_token(token)
+
+
+def authenticate_token(token: str) -> CurrentUser:
+    """Valida un JWT de user-api (también fuera de HTTP, p. ej. WebSocket)."""
     if not token:
         raise _unauthorized("Missing Bearer token")
 

@@ -25,8 +25,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+from auth import CurrentUser
+from rate_limit import llm_rate_limit
 
 # Importamos retrieve() y generate_answer() por separado
 from data.pipelines.rag import generate_answer, retrieve
@@ -64,7 +67,10 @@ class QueryResponse(BaseModel):
 
 
 @router.post("/query", response_model=QueryResponse)
-async def query_endpoint(request: QueryRequest) -> Any:
+async def query_endpoint(
+    request: QueryRequest,
+    _user: CurrentUser = Depends(llm_rate_limit),
+) -> Any:
     """Responde una pregunta usando la base de conocimiento de TrackFlow.
 
     Orquesta retrieve(llamada a Qdrant) → generate_answer(llamada al LLM)

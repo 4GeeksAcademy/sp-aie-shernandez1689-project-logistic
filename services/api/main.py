@@ -1,8 +1,11 @@
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+import os
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlmodel import SQLModel
 
@@ -15,6 +18,12 @@ from routes.telemetry import router as telemetry_router
 
 # Router de reporting — separado de telemetry (Brifing-pipeline.md §6-§7).
 from services.reporting import router as reporting_router  # noqa: E402
+
+# RFP Intake router — tramo de recepción de RFPs (Hito 9, Parte 1).
+#  POST /rfp/upload              — sube PDF y procesa: ticket analizado/descartado
+#  GET  /rfp/tickets             — lista tickets de intake
+#  GET  /rfp/tickets/{ticket_id} — detalle con metadatos + departamentos
+from routes.rfp import rfp_recovery_loop, router as rfp_router  # noqa: E402
 
 # RAG router — base de conocimiento de TrackFlow.
 from routes.rag import router as rag_router  # noqa: E402
@@ -39,14 +48,37 @@ async def lifespan(application: FastAPI):
         logging.getLogger(__name__).warning(
             "DATABASE_URL is not configured; telemetry table creation skipped"
         )
+    # Barrido de tickets RFP atascados en "analizando" (proceso caído a mitad).
+    recovery = asyncio.create_task(rfp_recovery_loop())
     yield
+    recovery.cancel()
+    with suppress(asyncio.CancelledError):
+        await recovery
 
 
 app = FastAPI(title="TrackFlow Operations API", lifespan=lifespan)
+
+# CORS: las páginas de uis/backoffice se sirven desde otro origen. Mismo
+# contrato que services/user-api (variable CORS_ALLOW_ORIGINS, mismos defaults).
+raw_cors_origins = os.getenv(
+    "CORS_ALLOW_ORIGINS",
+    "http://127.0.0.1:5500,http://localhost:5500,http://127.0.0.1:3000,http://localhost:3000",
+)
+allowed_origins = [origin.strip() for origin in raw_cors_origins.split(",") if origin.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(incidents_router)
 app.include_router(suppliers_router)
 app.include_router(telemetry_router)
 app.include_router(tasks_router)
+app.include_router(rfp_router)
 
 # Endpoints de reporting del pipeline (weekly warehouse client performance).
 # Contrato exacto definido en data/pipelines/PIPELINE_DESIGN.md §5.2.
