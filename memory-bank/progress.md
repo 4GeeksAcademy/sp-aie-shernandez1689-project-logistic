@@ -1,6 +1,50 @@
 # Progress
 
 ## Estado actual del desarrollo
+- **README.md — Descripción completa del proyecto y estructura** (completado):
+  - Actualización: README.md expandido de 99 a 649 líneas con documentación profesional y específica a TrackFlow.
+  - Contenido nuevo:
+    1. **Project Overview** — Descripción de TrackFlow como operador logístico binacional (US + España), 130 empleados, €9M ingresos anuales
+    2. **Business Objectives** — 6 objetivos clave: posicionamiento binacional, explicación de servicios, captura de leads, calificación de prospectos, experiencia de usuario, telemetría
+    3. **Repository Structure** — 11 directorios documentados con 20+ subdirectorios:
+       - /services (5 APIs: api, user-api, rag_agent, telemetry, job_runner)
+       - /uis (landing, operations-dashboard, docs)
+       - /mcps (trackflow-server con OAuth + MCP)
+       - /data (raw, processed, pipelines, eval)
+       - /skills (code-review, data-analysis, research, workflow-sync)
+       - /infra (Docker, Kubernetes, scripts)
+       - /docs (Architecture, API, Database, Deployment)
+       - /agents (tools, workflows)
+       - /packages (shared types)
+       - /internal (CLI, migration, scripts)
+       - /memory-bank (project context, progress tracking)
+    4. **Technology Stack** — 15+ tecnologías documentadas (FastAPI, SQLAlchemy, LangGraph, FastMCP, Tailwind CSS, Docker, PostgreSQL, Pandas, etc.)
+    5. **Quick Start** — 8 pasos de instalación detallados con instrucciones específicas para landing page y MCP server
+    6. **Implementation Status** — 9/10 milestones completados (Web ✓, Programming ✓, Backend ✓, Telemetry ✓, RAG ✓, Agents ✓, Workflows ✓, MCP ✓)
+    7. **Authentication & Authorization** — JWT Bearer tokens, claims requeridos (exp, sub, iss, aud, scope), 3 scopes (read:incidents, write:incidents, read:inventory)
+    8. **Testing** — Procedimientos de pruebas con pytest, coverage, tests de integración
+    9. **Development Workflow** — 15+ comandos comunes, Git workflow (feature branches, commit conventions), Convención de commits con Co-authored-by
+    10. **Deployment** — Docker deployment, configuración de ambiente producción
+    11. **Troubleshooting** — 4 escenarios comunes: puerto ocupado, conexión a BD, módulos faltantes, JWT auth
+    12. **Learning Objectives** — 10 áreas de aprendizaje: full-stack, monorepo, API design, database design, RAG systems, LLM integration, data pipelines, testing, DevOps, documentation
+  - Linked a: MCP-INSTALL.md, CONTEXT.md, AGENTS.md, TESTING.md, docs/, services/rag_agent/tools/README.md
+  - Estadísticas: +550% de contenido (99→649 líneas), +14 secciones principales, +15 comandos documentados, +10 ejemplos de código, +20 referencias cruzadas
+  - Referencias: 10 documentos internos, 7 recursos externos (GitHub, MCP spec, LangGraph, FastAPI, Tailwind)
+- **MCP Server — Corrección de autenticación JWT + Documentación completa de instalación** (completado):
+  - Problema inicial: `main.py` importaba `fastmcp` pero la dependencia no estaba documentada → `ModuleNotFoundError: No module named fastmcp` al arrancar.
+  - Solución entregada:
+    1. `fastmcp>=4.1.0` **ya estaba** en `mcps/trackflow-server/requirements.txt` — solo requería instalación con `pip install -r requirements.txt`.
+    2. Validación: `import fastmcp` ✅ — versión 4.2.2 instalada correctamente.
+    3. Servidor arranque exitoso: `python main.py` ✅ — sin errores de módulo.
+    4. Autenticación: Corregida validación de token JWT agregando parámetro `audience=RESOURCE_ID` a `jwt.decode()` en `_verify_token()` para validar el claim `aud` correctamente.
+    5. Verificación: OAuth metadata endpoint ✅ (200 OK), acceso autenticado al MCP SSE ✅ (ya no devuelve 401).
+  - Documentación completa entregada (4 archivos nuevos/actualizados):
+    1. **`MCP-INSTALL.md`** (raíz proyecto, 7.7KB): Guía rápida de instalación con 3 métodos (standalone/pip, monorepo/uv, Docker), tabla de dependencias completa, configuración .env, troubleshooting de 6 escenarios.
+    2. **`mcps/trackflow-server/INSTALL.md`** (11.2KB): Documentación **definitiva** con prerequisites, 3 métodos detallados, detalles de cada dependencia (fastmcp, httpx, PyJWT, python-dotenv), verificación paso a paso, 10+ escenarios de troubleshooting.
+    3. **`mcps/trackflow-server/README.md`** (actualizado): Expandido con sección "Installation & Setup" detallada (prerequisites, 6 pasos de instalación, 4 métodos diferentes).
+    4. **`mcps/README.md`** (actualizado): Overview de MCP servers disponibles, arquitectura, instalación, configuración, troubleshooting centralizado.
+  - Tests validados: OAuth metadata ✅, autenticación Bearer ✅, conexión SSE ✅.
+  - Cambios en code: 1 línea agregada en `mcps/trackflow-server/main.py` para validar `audience`.
 - INFORME NIST — PRÁCTICAS SEGURAS DE IA (rama `feature/nist-security-practices`, pendiente de commit). Fuente: `Brifing-seguridad.md` §1-§6.
   - `docs/security/nist/README.md`: §1 credenciales (sin secretos en el repo; `LLM_API_KEY`/`EMBEDDINGS_API_KEY`/`QDRANT_API_KEY`/`MCP_TOKEN` sin documentar en ningún `.env.example`; `REPORTING_RUN_TOKEN` fail-open). §2 mapa de los 10 puntos donde un LLM recibe input externo (U1-U3 usuario, K1-K2 KB semántica/memoria, T1-T2 MCP, D1-D3 RFP). El LLM no hace tool calling.
   - Fixes con test antes/después (`tests/pipelines/test_prompt_injection_nist.py`, 11 tests; antes 10 fallan, después 11/11):

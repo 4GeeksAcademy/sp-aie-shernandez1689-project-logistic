@@ -212,6 +212,7 @@ def _verify_token(token: str) -> AuthInfo:
             JWT_SECRET_KEY,
             algorithms=[JWT_ALGORITHM],
             options={"require": ["exp", "sub"]},
+            audience=RESOURCE_ID,
         )
     except jwt.ExpiredSignatureError:
         raise ValueError("Token expired")
