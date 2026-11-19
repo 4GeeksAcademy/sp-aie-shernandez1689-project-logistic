@@ -3,7 +3,7 @@
 **Rama:** `feature/owasp-top10-audit` · **Fecha:** 2026-10-29 · **Sistemas:** Los Ángeles (EE. UU.) y Zaragoza (España)
 **Referencia:** Brifing-seguridad.md §7 — "Baseline servidor / red: documenta SSH, usuario no-root y firewall. Público: HTTPS API + frontend; SSH ops."
 
-Este documento es la **evidencia de endurecimiento** de los puntos 1, 2 y 3 de la verificación de seguridad:
+Este documento es la **configuración de referencia** (no la evidencia de aplicación, ver §6) de los puntos 1, 2 y 3 de la verificación de seguridad:
 
 | # | Requisito | Sección aquí |
 |---|---|---|
@@ -11,21 +11,35 @@ Este documento es la **evidencia de endurecimiento** de los puntos 1, 2 y 3 de l
 | 2 | Existe un usuario dedicado no-root para tareas operativas, con permisos de carpetas explícitos | §3 |
 | 3 | El firewall solo expone los puertos estrictamente necesarios; el resto están cerrados | §4 |
 
+> ### ⚠ Estado: configuración definida, aplicación NO verificada
+>
+> | Qué **sí** contiene este documento | Qué **no** contiene |
+> |---|---|
+> | La configuración objetivo de SSH, usuario operativo y firewall (§2-§4) | Prueba de que esa configuración esté aplicada en Los Ángeles o Zaragoza |
+> | Un script que recoge la evidencia real ([`scripts/collect-hardening-evidence.sh`](./scripts/collect-hardening-evidence.sh)) | Ninguna salida real de `sshd -T`, `id`, `ufw status` ni `ss -ltn` |
+> | El criterio para dar cada requisito por cumplido (§6) | — |
+>
+> **Conclusión para la auditoría:** los requisitos 1-3 están **diseñados pero no verificados**. Ver §6 para el motivo, el riesgo residual y cómo cerrarlo.
+
 ---
 
 ## 0. Modelo de despliegue de referencia
 
 Los servicios del monorepo se publican según `docker-compose.yml` (puertos resueltos desde `.env`):
 
-| Servicio | Puerto interno | Publicación pública | Uso |
+| Servicio | Puerto interno | Publicación en el host | Uso |
 |---|---|---|---|
-| Backend API (`services/api`, uvicorn) | 8000 | `BACKEND_PORT` | HTTPS API + WebSocket `/agent/ws` |
-| Frontend website (Next.js) | 3000 | `WEBSITE_PORT` | Sitio público |
-| Frontend backoffice (Next.js) | 3001 | `BACKOFFICE_PORT` | Consola de operaciones |
-| Redis (broker Celery) | 6379 | `REDIS_PORT` | Broker interno |
-| Flower (monitor Celery) | 5555 | 5555 | Monitor interno |
-| MCP server (SSE) | 8100 | 8100 | Integración MCP (opcional / red interna) |
+| Backend API (`services/user-api`, uvicorn) | 8000 | `0.0.0.0:BACKEND_PORT` (detrás del proxy) | HTTPS API + WebSocket `/agent/ws` |
+| Frontend website (Next.js) | 3000 | `0.0.0.0:WEBSITE_PORT` (detrás del proxy) | Sitio público |
+| Frontend backoffice (Next.js) | 3001 | `0.0.0.0:BACKOFFICE_PORT` (detrás del proxy) | Consola de operaciones |
+| Redis (broker Celery) | 6379 | `127.0.0.1:REDIS_PORT` | Broker interno |
+| Flower (monitor Celery) | 5555 | `127.0.0.1:FLOWER_PORT` | Monitor interno |
+| Qdrant (vector DB) | 6333 / 6334 | `127.0.0.1` | RAG interno |
 | Scheduler (cron) | — | — | `infra/crontab` (lunes 02:00 UTC) |
+
+> Hasta el 2026-11-19, Redis, Flower y Qdrant se publicaban en `0.0.0.0`, es decir, en todas las interfaces (ver §4, aviso sobre Docker y ufw). El servidor MCP (8100) que aparecía antes en esta tabla no está en `docker-compose.yml`. Si se despliega, debe publicarse solo en `127.0.0.1`.
+>
+> ⚠ Los puertos de la API y los frontends siguen publicados en `0.0.0.0`. Como Docker se salta ufw, también son accesibles directamente, sin pasar por el proxy. Para que el proxy sea la única entrada pública hay que publicarlos en `127.0.0.1` en el compose de producción. No se cambia aquí porque afecta al entorno de desarrollo.
 
 > HTTPS hacia el exterior se termina en el reverse proxy (nginx/Caddy) en el puerto 443; los servicios de `docker-compose` no publican 80/443 directamente.
 
@@ -34,7 +48,7 @@ Los servicios del monorepo se publican según `docker-compose.yml` (puertos resu
 ## 1. Resumen de postura
 
 - **Acceso administrativo:** solo SSH por clave (nunca contraseña), usuario operativo no-root, `sudo` restringido.
-- **Red:** deny-by-default: solo se abren los puertos de la tabla anterior + 443/22; todo lo demás cerrado.
+- **Red:** deny-by-default. Solo 443 (proxy) y 22 (SSH de operaciones) son públicos; los puertos de la tabla anterior quedan detrás del proxy o en loopback.
 - **Secretos:** nunca en repo; `.env` delegado (ver `services/*/.env.example`), JWT y API keys desde entorno (evidencia en `services/user-api/app/security.py:12`).
 - **Cargas automatizadas:** el cron (`infra/crontab`) corre como el usuario operativo, no como root.
 
@@ -178,20 +192,22 @@ sudo ufw allow from 127.0.0.1 to any port 6379
 sudo ufw allow from 127.0.0.1 to any port 5555
 ```
 
-**Verificación reproducible (script de auditoría):**
+> ⚠ **Docker se salta ufw.** Los puertos publicados por `docker-compose` (`"HOST:CONT"`) se insertan en la cadena `DOCKER` de iptables *antes* que las reglas de ufw. Un `ufw status` limpio **no** prueba que Redis/Flower/Qdrant estén cerrados. Por eso `docker-compose.yml` los publica solo en `127.0.0.1` y la verificación usa `ss -ltn` + `docker ps`, no solo ufw.
+
+**Verificación reproducible:** [`infra/scripts/collect-hardening-evidence.sh`](./scripts/collect-hardening-evidence.sh) (sustituye al snippet anterior, que tenía dos fallos: `ufw status` sin `verbose` nunca imprime la política por defecto, y el grep sobre el fichero no refleja la config **efectiva** de sshd). Comprueba:
+
+- `sshd -T` → `permitrootlogin no`, `passwordauthentication no`
+- `id trackflow-ops` → uid ≠ 0, sin grupos `sudo`/`wheel`/`docker`; `sudo -l -U`, `stat` de `/opt/trackflow/*`
+- `ufw status verbose` → activo + `deny (incoming)`
+- `ss -ltnp` → ningún socket fuera de loopback salvo 22/443
+- `docker ps` → ningún contenedor publicado en `0.0.0.0`/`::`
 
 ```bash
-PASS=PASS; FAIL=FAIL
-# 1) root SSH no permitido
-grep -q '^PermitRootLogin no' /etc/ssh/sshd_config.d/10-trackflow.conf && echo "$PASS root" || echo "$FAIL root"
-# 2) usuario no-root existe
-id trackflow-ops >/dev/null 2>&1 && echo "$PASS usuario no-root" || echo "$FAIL usuario no-root"
-# 3) firewall deny-by-default + solo puertos permitidos
-ufw status | grep -q 'default: deny (incoming)' && echo "$PASS deny-by-default" || echo "$FAIL deny-by-default"
-for p in 443 22; do ufw status | grep -q "^$p/tcp" && echo "$PASS puerto $p abierto" || echo "$FAIL puerto $p"; done
-# Redis/Flower no deben ser públicos:
-ufw status | grep -qE '^(6379|5555)/tcp' && echo "$FAIL redis/flower publico" || echo "$PASS internos no publicos"
+sudo infra/scripts/collect-hardening-evidence.sh \
+  > docs/security/evidence/$(hostname)-$(date -u +%Y%m%dT%H%M%SZ).txt
 ```
+
+Complementar con un escaneo **desde fuera** (`nmap -Pn -p- <IP pública>`), que es la única prueba de lo que realmente ve un atacante.
 
 > Si el entorno usa cloud (AWS SG / GCP firewall), aplicar la misma tabla: solo 443/22 + puertos de app tras proxy; nunca 6379/5555/8000 al mundo.
 
@@ -201,7 +217,7 @@ ufw status | grep -qE '^(6379|5555)/tcp' && echo "$FAIL redis/flower publico" ||
 
 - **TLS:** certificado Let's Encrypt en el proxy; HSTS; redirigir HTTP→HTTPS. TLS en rutas al cliente (requisito A02 del OWASP).
 - **Secretos:** `.env` nunca en el repo (solo `.env.example`); rotación de `JWT_SECRET_KEY` y claves de carrier/documentada en el runbook.
-- **Container:** los `Dockerfile` corren con `init: true` y sin ejecutar como root (ver `docker-compose.yml`); evitar `--privileged`.
+- **Container:** ⚠ **pendiente.** Ningún Dockerfile (`services/Dockerfile`, `uis/Dockerfile`, `infra/worker.Dockerfile`, `infra/scheduler.Dockerfile`) declara `USER`, así que todos los contenedores corren como root. `init: true` (en `docker-compose.yml`) solo reenvía señales y recoge procesos zombi; no es una medida de privilegios. Corrección: crear un usuario sin privilegios en cada imagen y añadir `USER`. Además, no usar nunca `--privileged`.
 - **Backups:** `infra/crontab` (lunes 02:00 UTC) como `trackflow-ops`, no root.
 - **Escaneo de componentes (A06):** añadir a CI `pip-audit` + `npm audit` semanal y revisión de `pyproject.toml` pins.
 - **Monitorización (A09):** enviar `data/audit/guardrail_events.jsonl` y logs de la API a un agregador (p. ej. transporte de Supabase/telemetría ya existente) y alertar ante `403`/`4403` anómalos o `jailbreak` repetidos.
@@ -210,10 +226,43 @@ ufw status | grep -qE '^(6379|5555)/tcp' && echo "$FAIL redis/flower publico" ||
 
 ## 6. Estado de cumplimiento (mapping con la verificación)
 
-| Requisito | Estado | Evidencia en este doc |
-|---|---|---|
-| 1. SSH sin root | ✔ config especificada | §2 (+script de auditoría) |
-| 2. Usuario no-root con permisos | ✔ config especificada | §3 (ACL por carpeta + sudo restringido) |
-| 3. Firewall deny-by-default | ✔ config especificada | §4 (+verificación) |
+| Requisito | Configuración | Aplicado en LA | Aplicado en Zaragoza |
+|---|---|---|---|
+| 1. SSH sin root | ✔ especificada (§2) | ⏳ **sin evidencia** | ⏳ **sin evidencia** |
+| 2. Usuario no-root con permisos | ✔ especificada (§3) | ⏳ **sin evidencia** | ⏳ **sin evidencia** |
+| 3. Firewall / puertos mínimos | ✔ especificada (§4) + compose en loopback | ⏳ **sin evidencia** | ⏳ **sin evidencia** |
 
-> **Nota de despliegue:** estas son las **configuraciones de referencia** del endurecimiento. Su aplicación real en Los Ángeles y Zaragoza debe quedar registrada por el equipo de infraestructura (playbook/Ansible) y verificada con los scripts de auditoría de las secciones anteriores.
+> **Este documento NO es evidencia de aplicación.** Hasta que exista la evidencia descrita en §6.4, la auditoría debe tratar los requisitos 1-3 como **no verificados**.
+
+### 6.1 Qué está hecho
+
+| Elemento | Dónde | Tipo |
+|---|---|---|
+| Configuración objetivo de SSH, usuario operativo, sudo y firewall | §2-§4 | Documentación |
+| Script de recogida de evidencia, que devuelve un código de salida ≠ 0 si algo falla | [`scripts/collect-hardening-evidence.sh`](./scripts/collect-hardening-evidence.sh) | Herramienta (sintaxis validada, sin ejecutar en un servidor real) |
+| Carpeta para la evidencia, con reglas de uso | [`docs/security/evidence/`](../docs/security/evidence/README.md) | Vacía |
+| Redis, Flower y Qdrant publicados solo en loopback | `docker-compose.yml` | **Cambio aplicado en el repo** |
+
+### 6.2 Qué no está hecho y por qué
+
+- **No se ha aplicado ni verificado nada en los servidores de Los Ángeles ni de Zaragoza.** Quien redactó esta auditoría no tiene acceso a esos servidores. Ejecutar los comandos en un entorno de desarrollo (codespace, portátil) no prueba nada sobre producción, así que no se ha hecho para no presentarlo como evidencia.
+- **No hay registro de aplicación** (playbook de Ansible, log de sesión, ticket de cambio) por parte del equipo de infraestructura.
+
+### 6.3 Riesgo residual mientras siga sin verificar
+
+| Si en realidad no estuviera aplicado… | Consecuencia |
+|---|---|
+| Req. 1: `PermitRootLogin` ≠ `no` | Fuerza bruta o robo de clave dan acceso root directo, sin rastro de un usuario nominal |
+| Req. 2: ops trabaja como root | Un error o un script comprometido tiene el control total del host |
+| Req. 3: Redis, Flower o Qdrant accesibles | Redis sin autenticación permite leer y encolar tareas de Celery (posible ejecución remota de código en los workers). Flower expone y controla esas tareas. Qdrant expone los datos del RAG |
+| Req. 3: imágenes desplegadas antes del 2026-11-19 | Ese compose publicaba los servicios internos en `0.0.0.0`. **Si no se ha vuelto a desplegar, la exposición es probable aunque ufw esté bien** |
+
+### 6.4 Cómo se cierra (criterio de aceptación)
+
+Un requisito pasa a ✔ en un servidor solo cuando se cumplen las tres condiciones:
+
+1. En `docs/security/evidence/` está la salida **sin editar** de `sudo infra/scripts/collect-hardening-evidence.sh` ejecutado en ese servidor, y termina en `RESULTADO: PASS`.
+2. Junto a ella está un `nmap -Pn -p- <IP pública>` lanzado **desde fuera** de la red del servidor, que muestra solo los puertos 22 y 443 abiertos.
+3. Ambas salidas son posteriores al último despliegue del `docker-compose.yml` con los puertos en loopback.
+
+Responsable: el equipo de infraestructura u operaciones con acceso a los servidores. Hay que repetirlo tras cualquier cambio de SSH, usuarios, firewall o compose.

@@ -9,4 +9,5 @@ This folder contains **infrastructure configurations** for the monorepo (for exa
 
 ## Seguridad — endurecimiento del servidor
 
-- [hardening.md](./hardening.md) — SSH sin root, usuario no-root con permisos explícitos y firewall deny-by-default (requisitos 1-3 de la auditoría de seguridad).
+- [hardening.md](./hardening.md) — configuración de referencia: SSH sin root, usuario no-root y firewall deny-by-default (requisitos 1-3). **Aún sin evidencia aplicada.**
+- [scripts/collect-hardening-evidence.sh](./scripts/collect-hardening-evidence.sh) — recoge la evidencia real en cada servidor → [docs/security/evidence/](../docs/security/evidence/).
