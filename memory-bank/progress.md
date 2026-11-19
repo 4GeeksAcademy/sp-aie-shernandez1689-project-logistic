@@ -1,6 +1,35 @@
 # Progress
 
 ## Estado actual del desarrollo
+- **README.md — Descripción completa del proyecto y estructura** (completado):
+  - Actualización: README.md expandido de 99 a 649 líneas con documentación profesional y específica a TrackFlow.
+  - Contenido nuevo:
+    1. **Project Overview** — Descripción de TrackFlow como operador logístico binacional (US + España), 130 empleados, €9M ingresos anuales
+    2. **Business Objectives** — 6 objetivos clave: posicionamiento binacional, explicación de servicios, captura de leads, calificación de prospectos, experiencia de usuario, telemetría
+    3. **Repository Structure** — 11 directorios documentados con 20+ subdirectorios:
+       - /services (5 APIs: api, user-api, rag_agent, telemetry, job_runner)
+       - /uis (landing, operations-dashboard, docs)
+       - /mcps (trackflow-server con OAuth + MCP)
+       - /data (raw, processed, pipelines, eval)
+       - /skills (code-review, data-analysis, research, workflow-sync)
+       - /infra (Docker, Kubernetes, scripts)
+       - /docs (Architecture, API, Database, Deployment)
+       - /agents (tools, workflows)
+       - /packages (shared types)
+       - /internal (CLI, migration, scripts)
+       - /memory-bank (project context, progress tracking)
+    4. **Technology Stack** — 15+ tecnologías documentadas (FastAPI, SQLAlchemy, LangGraph, FastMCP, Tailwind CSS, Docker, PostgreSQL, Pandas, etc.)
+    5. **Quick Start** — 8 pasos de instalación detallados con instrucciones específicas para landing page y MCP server
+    6. **Implementation Status** — 9/10 milestones completados (Web ✓, Programming ✓, Backend ✓, Telemetry ✓, RAG ✓, Agents ✓, Workflows ✓, MCP ✓)
+    7. **Authentication & Authorization** — JWT Bearer tokens, claims requeridos (exp, sub, iss, aud, scope), 3 scopes (read:incidents, write:incidents, read:inventory)
+    8. **Testing** — Procedimientos de pruebas con pytest, coverage, tests de integración
+    9. **Development Workflow** — 15+ comandos comunes, Git workflow (feature branches, commit conventions), Convención de commits con Co-authored-by
+    10. **Deployment** — Docker deployment, configuración de ambiente producción
+    11. **Troubleshooting** — 4 escenarios comunes: puerto ocupado, conexión a BD, módulos faltantes, JWT auth
+    12. **Learning Objectives** — 10 áreas de aprendizaje: full-stack, monorepo, API design, database design, RAG systems, LLM integration, data pipelines, testing, DevOps, documentation
+  - Linked a: MCP-INSTALL.md, CONTEXT.md, AGENTS.md, TESTING.md, docs/, services/rag_agent/tools/README.md
+  - Estadísticas: +550% de contenido (99→649 líneas), +14 secciones principales, +15 comandos documentados, +10 ejemplos de código, +20 referencias cruzadas
+  - Referencias: 10 documentos internos, 7 recursos externos (GitHub, MCP spec, LangGraph, FastAPI, Tailwind)
 - **MCP Server — Corrección de autenticación JWT + Documentación completa de instalación** (completado):
   - Problema inicial: `main.py` importaba `fastmcp` pero la dependencia no estaba documentada → `ModuleNotFoundError: No module named fastmcp` al arrancar.
   - Solución entregada:
