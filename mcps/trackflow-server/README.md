@@ -17,10 +17,263 @@ cp .env.example .env
 # 3. Install
 pip install -r requirements.txt
 # 4. Launch
-python -m mcps.trackflow-server.main
+python main.py
 ```
 
 The server listens on `http://0.0.0.0:8100` (SSE transport).
+
+## Installation & Setup
+
+### Prerequisites
+
+- **Python**: 3.12+ (required by dependencies)
+- **pip** or **uv**: Package manager
+- **Environment variables**: JWT_SECRET_KEY and backend API endpoints
+
+### Step-by-step installation
+
+#### 1. Navigate to MCP server directory
+
+```bash
+cd mcps/trackflow-server
+```
+
+#### 2. Create environment file
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your configuration:
+
+```env
+# REQUIRED: Shared HS256 secret (must match services/user-api/.env)
+JWT_SECRET_KEY=your-secret-key-here
+
+# API endpoints (defaults shown)
+API_BASE_URL=http://127.0.0.1:8000           # Operations API
+INVENTORY_API_BASE_URL=http://127.0.0.1:8001 # User API
+
+# MCP config (defaults shown)
+MCP_RESOURCE_ID=https://mcp.trackflow.dev
+MCP_ISSUER=http://127.0.0.1:8001
+
+# Server binding (defaults shown)
+HOST=0.0.0.0
+PORT=8100
+```
+
+#### 3. Install dependencies
+
+**Option A: Using pip** (standalone)
+
+```bash
+pip install -r requirements.txt
+```
+
+**Option B: Using uv** (from monorepo root)
+
+```bash
+# From monorepo root
+uv pip install --directory mcps/trackflow-server -r mcps/trackflow-server/requirements.txt
+```
+
+**Option C: Using uv sync** (if monorepo has pyproject.toml)
+
+```bash
+# From monorepo root (if configured with workspaces)
+uv sync
+```
+
+#### 4. Verify installation
+
+```bash
+python -c "import fastmcp; print(f'✓ fastmcp {fastmcp.__version__}')"
+python -c "import httpx; print(f'✓ httpx {httpx.__version__}')"
+python -c "import jwt; print(f'✓ PyJWT installed')"
+```
+
+#### 5. Start the server
+
+```bash
+# Option A: Direct Python
+export JWT_SECRET_KEY="your-secret-key"
+python main.py
+
+# Option B: Module execution
+export JWT_SECRET_KEY="your-secret-key"
+python -m mcps.trackflow_server.main
+```
+
+You should see:
+
+```
+2026-11-19 20:04:15,528 [INFO] trackflow-mcp: Starting TrackFlow MCP Server on 0.0.0.0:8100
+INFO:     Uvicorn running on http://0.0.0.0:8100
+```
+
+#### 6. Verify server is running
+
+```bash
+# Check OAuth metadata endpoint (public, no auth required)
+curl http://localhost:8100/.well-known/oauth-protected-resource | jq .
+
+# Expected output:
+# {
+#   "resource": "https://mcp.trackflow.dev",
+#   "authorization_servers": [...],
+#   "bearer_methods_supported": ["header"],
+#   "scopes_supported": ["read:incidents", "write:incidents", "read:inventory"]
+# }
+```
+
+### Dependencies
+
+#### Core dependencies (in `requirements.txt`)
+
+| Package      | Version    | Purpose                                 |
+| ------------ | ---------- | --------------------------------------- |
+| `fastmcp`    | `>=4.1.0`  | MCP server framework with SSE transport |
+| `httpx`      | `>=0.28.0` | Async HTTP client for backend APIs      |
+| `python-dotenv` | `>=1.0.1` | Environment variable management         |
+| `PyJWT[crypto]` | `>=2.9.0` | JWT token encoding/decoding (HS256)     |
+
+#### Transitive dependencies (installed with above)
+
+- **uvicorn**: ASGI server for HTTP handling
+- **starlette**: Web framework (used by FastMCP)
+- **pydantic**: Data validation
+- **cryptography**: For JWT crypto operations
+
+#### Verification of installed versions
+
+```bash
+pip show fastmcp httpx python-dotenv PyJWT | grep -E "Name|Version"
+```
+
+Expected output:
+
+```
+Name: fastmcp
+Version: 4.2.2
+---
+Name: httpx
+Version: 0.28.1
+---
+Name: python-dotenv
+Version: 1.0.1
+---
+Name: PyJWT
+Version: 2.9.0
+```
+
+### Environment configuration
+
+Required variables:
+
+| Variable            | Type   | Example                        | Notes                                      |
+| ------------------- | ------ | ------------------------------ | ------------------------------------------ |
+| `JWT_SECRET_KEY`    | string | `abc123...` (min 32 bytes)     | **REQUIRED** — Must match `services/user-api` |
+| `API_BASE_URL`      | URL    | `http://127.0.0.1:8000`        | Operations API endpoint                    |
+| `INVENTORY_API_BASE_URL` | URL | `http://127.0.0.1:8001`        | User API endpoint                          |
+| `MCP_RESOURCE_ID`   | URL    | `https://mcp.trackflow.dev`    | OAuth resource identifier                  |
+| `MCP_ISSUER`        | URL    | `http://127.0.0.1:8001`        | OAuth authorization server                 |
+| `HOST`              | string | `0.0.0.0`                      | Listen address (0.0.0.0 = all interfaces)  |
+| `PORT`              | int    | `8100`                         | Listen port                                |
+
+### Troubleshooting installation
+
+#### Error: `ModuleNotFoundError: No module named 'fastmcp'`
+
+**Solution**:
+```bash
+pip install -r requirements.txt
+# Or reinstall specific package:
+pip install 'fastmcp>=4.1.0'
+```
+
+#### Error: `ModuleNotFoundError: No module named 'jwt'`
+
+**Solution**:
+```bash
+pip install 'PyJWT[crypto]>=2.9.0'
+```
+
+#### Error: `No module named 'uvicorn'`
+
+**Solution**: This is a transitive dependency. Reinstall fastmcp:
+```bash
+pip install --force-reinstall 'fastmcp>=4.1.0'
+```
+
+#### Error: `OSError: [Errno 98] Address already in use`
+
+**Solution**: Port 8100 is in use. Either:
+
+```bash
+# Option 1: Use a different port
+export PORT=8101
+python main.py
+
+# Option 2: Kill the existing process
+lsof -i :8100           # Find process
+kill -9 <PID>           # Kill it
+```
+
+#### Error: `ValueError: Invalid token: Invalid audience`
+
+**Solution**: The JWT token must have matching `aud` claim:
+
+```bash
+# When creating tokens, ensure:
+# - "aud" claim = "https://mcp.trackflow.dev" (default MCP_RESOURCE_ID)
+# Or set MCP_RESOURCE_ID to match your token's "aud"
+export MCP_RESOURCE_ID="your-aud-claim"
+python main.py
+```
+
+### Development setup
+
+For development with hot-reload:
+
+```bash
+# Install with dev tools
+pip install -r requirements.txt
+pip install watchdog[watchmedo]
+
+# Run with auto-reload on file changes
+watchmedo auto-restart -d mcps/trackflow-server -p '*.py' -- python mcps/trackflow-server/main.py
+```
+
+### Docker setup (optional)
+
+Create `mcps/trackflow-server/Dockerfile`:
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+ENV HOST=0.0.0.0
+ENV PORT=8100
+EXPOSE 8100
+
+CMD ["python", "main.py"]
+```
+
+Build and run:
+
+```bash
+docker build -t trackflow-mcp .
+docker run -p 8100:8100 \
+  -e JWT_SECRET_KEY="your-secret" \
+  -e API_BASE_URL="http://host.docker.internal:8000" \
+  trackflow-mcp
+```
 
 ## Architecture
 

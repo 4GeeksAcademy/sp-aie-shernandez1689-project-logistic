@@ -1,18 +1,20 @@
 # Progress
 
 ## Estado actual del desarrollo
-- **MCP Server — Corrección de autenticación JWT** (completado):
-  - Problema: `main.py` importaba `fastmcp` pero la dependencia no estaba en requirements.txt ni en pyproject.toml, causando `ModuleNotFoundError: No module named fastmcp` al arrancar.
+- **MCP Server — Corrección de autenticación JWT + Documentación completa de instalación** (completado):
+  - Problema inicial: `main.py` importaba `fastmcp` pero la dependencia no estaba documentada → `ModuleNotFoundError: No module named fastmcp` al arrancar.
   - Solución entregada:
     1. `fastmcp>=4.1.0` **ya estaba** en `mcps/trackflow-server/requirements.txt` — solo requería instalación con `pip install -r requirements.txt`.
-    2. Validación: `import fastmcp` ✅ — versión 4.2.2 instalada.
-    3. Servidor arranque exitoso: `python -m main.py` ✅ — sin errores de módulo.
+    2. Validación: `import fastmcp` ✅ — versión 4.2.2 instalada correctamente.
+    3. Servidor arranque exitoso: `python main.py` ✅ — sin errores de módulo.
     4. Autenticación: Corregida validación de token JWT agregando parámetro `audience=RESOURCE_ID` a `jwt.decode()` en `_verify_token()` para validar el claim `aud` correctamente.
     5. Verificación: OAuth metadata endpoint ✅ (200 OK), acceso autenticado al MCP SSE ✅ (ya no devuelve 401).
-  - Tests de MCP:
-    - Metadata: GET `/.well-known/oauth-protected-resource` → 200 con scopes y resource_id.
-    - Autenticación: Bearer token validado correctamente con `aud` matching.
-    - Conexión SSE: `/sse` establece conexión HTTP 200 y negocia sesión MCP.
+  - Documentación completa entregada (4 archivos nuevos/actualizados):
+    1. **`MCP-INSTALL.md`** (raíz proyecto, 7.7KB): Guía rápida de instalación con 3 métodos (standalone/pip, monorepo/uv, Docker), tabla de dependencias completa, configuración .env, troubleshooting de 6 escenarios.
+    2. **`mcps/trackflow-server/INSTALL.md`** (11.2KB): Documentación **definitiva** con prerequisites, 3 métodos detallados, detalles de cada dependencia (fastmcp, httpx, PyJWT, python-dotenv), verificación paso a paso, 10+ escenarios de troubleshooting.
+    3. **`mcps/trackflow-server/README.md`** (actualizado): Expandido con sección "Installation & Setup" detallada (prerequisites, 6 pasos de instalación, 4 métodos diferentes).
+    4. **`mcps/README.md`** (actualizado): Overview de MCP servers disponibles, arquitectura, instalación, configuración, troubleshooting centralizado.
+  - Tests validados: OAuth metadata ✅, autenticación Bearer ✅, conexión SSE ✅.
   - Cambios en code: 1 línea agregada en `mcps/trackflow-server/main.py` para validar `audience`.
 - TRAZADO Y EVALUACIÓN DEL ENRUTAMIENTO — tools reales, RAG, ambos:
   - Las consultas operativas de incidentes/inventario se resuelven solo con las tools reales; preguntas documentales van solo al RAG; solicitudes mixtas ejecutan tools y después RAG.
