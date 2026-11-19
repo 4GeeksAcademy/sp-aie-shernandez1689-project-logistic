@@ -56,7 +56,7 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--maxmemory-policy", "noeviction"]
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"  # interno: nunca público (Docker se salta ufw)
     restart: unless-stopped
     networks:
       - development
@@ -70,7 +70,7 @@ services:
       - --broker=${REDIS_URL:-redis://redis:6379/0}
       - --port=5555
     ports:
-      - "${FLOWER_PORT:-5555}:5555"
+      - "127.0.0.1:${FLOWER_PORT:-5555}:5555"  # interno: nunca público
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     depends_on:
@@ -116,8 +116,8 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     ports:
-      - "${QDRANT_PORT:-6333}:6333"
-      - "${QDRANT_DASHBOARD_PORT:-6334}:6334"
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"  # interno: nunca público
+      - "127.0.0.1:${QDRANT_DASHBOARD_PORT:-6334}:6334"
     volumes:
       - qdrant_storage:/qdrant/storage
     restart: unless-stopped

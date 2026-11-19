@@ -115,7 +115,12 @@
   - `docker-compose.yml` — todas las variables críticas se inyectan desde `.env` con `:?Define ... in .env` (fallo si faltan): `JWT_SECRET_KEY`, `ACCESS_TOKEN_EXPIRE_MINUTES`, `CORS_ALLOW_ORIGINS`, `DATABASE_URL`, `RESEND_API_KEY`, `REDIS_URL`.
   - CORS: `CORSMiddleware` con `CORS_ALLOW_ORIGINS` (mismo contrato que user-api).
   - `.env` no versionado (solo `.env.example`) → secretos no llegan al repo.
-- **Estado:** ✔ Mitigado.
+- **Hallazgo (2026-11-19):** `docker-compose.yml` publicaba Redis (6379), Flower (5555) y Qdrant (6333/6334) en `0.0.0.0`. Docker inserta sus reglas de iptables antes que las de ufw, así que el firewall no los protegía. **Corregido en el repo** (`127.0.0.1:`). Queda pendiente:
+  - Volver a desplegar en los servidores para que la corrección tenga efecto.
+  - Publicar la API y los frontends también en loopback detrás del proxy.
+  - Añadir `USER` sin privilegios a los Dockerfiles: hoy todos los contenedores corren como root.
+- **Endurecimiento del servidor** (SSH sin root, usuario no-root, firewall): configuración definida en `infra/hardening.md`, **sin evidencia de aplicación** en Los Ángeles ni en Zaragoza (ver `infra/hardening.md` §6).
+- **Estado:** ⚠ Parcial. La configuración de la aplicación es correcta. La del servidor y los contenedores está definida o corregida en el repo, pero no verificada en producción.
 
 ### Carril agente
 - **Hallazgo:** "Motor de devoluciones confirmando envíos sin reglas" / "agente con permiso de cambio de carrier" (chequeo del briefing) — **no existe** en el agente CX.
