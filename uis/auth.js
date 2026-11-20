@@ -1,4 +1,7 @@
-const TRACKFLOW_API_URL = (window.TRACKFLOW_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+const TRACKFLOW_API_URL = (window.TRACKFLOW_API_URL || (/-\d+\.app\.github\.dev$/.test(window.location.hostname)
+  ? `${window.location.protocol}//${window.location.hostname.replace(/-\d+(\.app\.github\.dev)$/, "-8000$1")}`
+  : "http://127.0.0.1:8000")).replace(/\/$/, "");
+// En GitHub Codespaces la API se resuelve al puerto 8000 reenviado del mismo codespace.
 const TRACKFLOW_TOKEN_KEY = "trackflow_access_token";
 
 function setElementText(id, text) {

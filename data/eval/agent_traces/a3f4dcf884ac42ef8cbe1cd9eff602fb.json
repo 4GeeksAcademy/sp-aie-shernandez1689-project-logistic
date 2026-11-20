@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "thread_id": "a3f4dcf884ac42ef8cbe1cd9eff602fb",
+  "started_at": "2026-11-20T12:04:24+00:00",
+  "completed_at": null,
+  "question": "¿Cuál es el SLA de entrega?",
+  "steps": [
+    {
+      "seq": 1,
+      "node": "validate",
+      "started_at": "2026-11-20T12:04:24+00:00",
+      "output": {
+        "question": "¿Cuál es el SLA de entrega?"
+      }
+    },
+    {
+      "seq": 2,
+      "node": "guardrail",
+      "started_at": "2026-11-20T12:04:24+00:00",
+      "output": {
+        "state": "domain",
+        "answer": "continue"
+      }
+    }
+  ],
+  "final_state": {}
+}
