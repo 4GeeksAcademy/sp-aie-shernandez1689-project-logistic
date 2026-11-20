@@ -3,7 +3,10 @@ const successMessage = document.getElementById("formSuccess");
 const volumeWarning = document.getElementById("volumeWarning");
 const commentsCounter = document.getElementById("commentsCounter");
 const submitButton = form?.querySelector('button[type="submit"]');
-const API_BASE_URL = (window.TRACKFLOW_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+const API_BASE_URL = (window.TRACKFLOW_API_URL || (/-\d+\.app\.github\.dev$/.test(window.location.hostname)
+  ? `${window.location.protocol}//${window.location.hostname.replace(/-\d+(\.app\.github\.dev)$/, "-8000$1")}`
+  : "http://127.0.0.1:8000")).replace(/\/$/, "");
+// En GitHub Codespaces la API se resuelve al puerto 8000 reenviado del mismo codespace.
 let keepSuccessOnReset = false;
 
 const inputs = {
